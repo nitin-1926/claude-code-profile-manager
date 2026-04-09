@@ -1,5 +1,5 @@
 # Binary output
-bin/
+cli/bin/
 
 # OS files
 .DS_Store
@@ -12,3 +12,15 @@ bin/
 
 # Test coverage
 coverage.out
+
+# Docs site
+docs/node_modules/
+docs/.next/
+docs/out/
+
+# npm wrapper
+npm/bin/
+npm/node_modules/
+
+# GoReleaser
+dist/
