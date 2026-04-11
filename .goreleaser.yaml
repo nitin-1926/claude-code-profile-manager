@@ -1,0 +1,45 @@
+version: 2
+
+project_name: ccpm
+
+before:
+  hooks:
+    - cd cli && go mod tidy
+
+builds:
+  - dir: cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/nitin-1926/ccpm/cmd.version={{.Version}}
+    binary: ccpm
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+
+release:
+  github:
+    owner: nitin-1926
+    name: claude-code-profile-manager

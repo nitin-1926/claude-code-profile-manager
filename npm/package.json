@@ -1,0 +1,35 @@
+{
+  "name": "ccpm",
+  "version": "0.1.0",
+  "description": "Claude Code Profile Manager — manage multiple Claude Code accounts with isolated profiles",
+  "bin": {
+    "ccpm": "bin/ccpm"
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test-local": "echo 'To test locally: npm pack && npm install -g ccpm-0.1.0.tgz'"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "profile-manager",
+    "multi-account",
+    "anthropic",
+    "cli"
+  ],
+  "author": "Nitin Gupta",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nitin-1926/claude-code-profile-manager.git"
+  },
+  "homepage": "https://github.com/nitin-1926/claude-code-profile-manager",
+  "bugs": {
+    "url": "https://github.com/nitin-1926/claude-code-profile-manager/issues"
+  },
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"],
+  "engines": {
+    "node": ">=16"
+  }
+}
