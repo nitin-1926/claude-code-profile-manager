@@ -18,9 +18,12 @@ docs/node_modules/
 docs/.next/
 docs/out/
 
-# npm wrapper
-npm/bin/
+# npm wrapper — ignore downloaded native binaries, not the JS shim
+npm/bin/ccpm-native
+npm/bin/ccpm-native.exe
+npm/bin/.extract/
 npm/node_modules/
+npm/*.tgz
 
 # GoReleaser
 dist/
