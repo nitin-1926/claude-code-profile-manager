@@ -82,24 +82,41 @@ async function main() {
   const binDir = path.join(__dirname, "bin");
   fs.mkdirSync(binDir, { recursive: true });
 
-  const archivePath = path.join(binDir, `archive.${ext}`);
+  // Extract into a temp subdirectory so the archive's `ccpm` binary doesn't
+  // overwrite the JS shim that npm uses to create the global `ccpm` command.
+  const tmpDir = path.join(binDir, ".extract");
+  if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const archivePath = path.join(tmpDir, `archive.${ext}`);
   await download(url, archivePath);
 
-  // Extract
   if (ext === "zip") {
-    execSync(`unzip -o -q "${archivePath}" -d "${binDir}"`, { stdio: "inherit" });
+    execSync(`unzip -o -q "${archivePath}" -d "${tmpDir}"`, { stdio: "inherit" });
   } else {
-    execSync(`tar -xzf "${archivePath}" -C "${binDir}"`, { stdio: "inherit" });
+    execSync(`tar -xzf "${archivePath}" -C "${tmpDir}"`, { stdio: "inherit" });
   }
 
-  // Clean up archive
-  fs.unlinkSync(archivePath);
+  // Move the native binary to bin/ccpm-native (or ccpm-native.exe on Windows).
+  // The JS shim at bin/ccpm execs this at runtime.
+  const extractedName = os === "windows" ? `${BINARY}.exe` : BINARY;
+  const nativeName = os === "windows" ? "ccpm-native.exe" : "ccpm-native";
+  const extractedPath = path.join(tmpDir, extractedName);
+  const nativePath = path.join(binDir, nativeName);
 
-  // Make executable
-  const binaryPath = path.join(binDir, os === "windows" ? `${BINARY}.exe` : BINARY);
+  if (!fs.existsSync(extractedPath)) {
+    throw new Error(`extracted binary not found at ${extractedPath}`);
+  }
+
+  if (fs.existsSync(nativePath)) fs.unlinkSync(nativePath);
+  fs.renameSync(extractedPath, nativePath);
+
   if (os !== "windows") {
-    fs.chmodSync(binaryPath, 0o755);
+    fs.chmodSync(nativePath, 0o755);
   }
+
+  // Clean up temp dir
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 
   console.log(`ccpm v${version} installed successfully!`);
 }

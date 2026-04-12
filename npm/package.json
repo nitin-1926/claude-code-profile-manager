@@ -1,13 +1,22 @@
 {
-  "name": "ccpm",
+  "name": "@nitin-1926/ccpm",
   "version": "0.1.0",
   "description": "Claude Code Profile Manager — manage multiple Claude Code accounts with isolated profiles",
   "bin": {
     "ccpm": "bin/ccpm"
   },
+  "files": [
+    "install.js",
+    "bin/ccpm",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "postinstall": "node install.js",
-    "test-local": "echo 'To test locally: npm pack && npm install -g ccpm-0.1.0.tgz'"
+    "test-local": "echo 'To test locally: npm pack && npm install -g nitin-1926-ccpm-0.1.0.tgz'"
   },
   "keywords": [
     "claude",
