@@ -2,8 +2,6 @@
 
 **Run multiple Claude Code accounts in parallel. Fully isolated. One command.**
 
-[![CI](https://github.com/nitin-1926/claude-code-profile-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/nitin-1926/claude-code-profile-manager/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nitin-1926/ccpm)](https://goreportcard.com/report/github.com/nitin-1926/ccpm)
 [![npm](https://img.shields.io/npm/v/@ngcodes/ccpm)](https://www.npmjs.com/package/@ngcodes/ccpm)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
