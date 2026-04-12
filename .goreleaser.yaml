@@ -4,7 +4,7 @@ project_name: ccpm
 
 before:
   hooks:
-    - cd cli && go mod tidy
+    - sh -c "cd cli && go mod tidy"
 
 builds:
   - dir: cli
@@ -22,11 +22,13 @@ builds:
     binary: ccpm
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 
 checksum:
   name_template: 'checksums.txt'
