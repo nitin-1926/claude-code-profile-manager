@@ -122,7 +122,10 @@ func TestRemoveNonExistent(t *testing.T) {
 }
 
 func TestPathNeverContainsTilde(t *testing.T) {
-	// This is critical — Claude Code has a bug with ~/ paths
+	// This is critical: Claude Code has a bug with ~/ paths.
+	// We check that ccpm never introduces a tilde prefix. On Windows CI
+	// the temp dir itself can contain ~ (e.g., RUNNER~1) due to 8.3
+	// short names, so we only check the prefix.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -134,9 +137,5 @@ func TestPathNeverContainsTilde(t *testing.T) {
 
 	if strings.HasPrefix(dir, "~") {
 		t.Errorf("Path starts with ~, this will break Claude Code: %s", dir)
-	}
-
-	if strings.Contains(dir, "~") {
-		t.Errorf("Path contains ~, this may break Claude Code: %s", dir)
 	}
 }
