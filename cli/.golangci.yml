@@ -7,3 +7,20 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+    paths:
+      - third_party$
+      - builtin$
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - fmt.Printf
+        - fmt.Println
+        - fmt.Print
+        - (fmt.Stringer).String
+        - (*github.com/fatih/color.Color).Println
+        - (*github.com/fatih/color.Color).Printf
+        - (*github.com/fatih/color.Color).Print
+        - (*github.com/fatih/color.Color).Fprintf
