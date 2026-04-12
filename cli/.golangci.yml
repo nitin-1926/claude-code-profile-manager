@@ -7,6 +7,9 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      - path: cmd/
+        linters:
+          - errcheck
     paths:
       - third_party$
       - builtin$
@@ -24,3 +27,5 @@ linters:
         - (*github.com/fatih/color.Color).Printf
         - (*github.com/fatih/color.Color).Print
         - (*github.com/fatih/color.Color).Fprintf
+        - (*github.com/fatih/color.Color).Fprintln
+        - (*os.File).Close
