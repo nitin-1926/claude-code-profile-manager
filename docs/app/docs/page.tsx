@@ -70,7 +70,7 @@ export default async function DocsPage() {
           <H2 id="installation">Installation</H2>
 
           <H3 id="install-npm">npm</H3>
-          <CodeBlock code="npm install -g @nitin-1926/ccpm" lang="bash" />
+          <CodeBlock code="npm install -g @ngcodes/ccpm" lang="bash" />
 
           <H3 id="install-curl">curl (macOS / Linux)</H3>
           <CodeBlock

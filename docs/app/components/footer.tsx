@@ -74,7 +74,7 @@ export function Footer() {
             </li>
             <li>
               <a
-                href="https://www.npmjs.com/package/@nitin-1926/ccpm"
+                href="https://www.npmjs.com/package/@ngcodes/ccpm"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-fg-muted hover:text-fg transition-colors"

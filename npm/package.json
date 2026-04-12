@@ -1,5 +1,5 @@
 {
-  "name": "@nitin-1926/ccpm",
+  "name": "@ngcodes/ccpm",
   "version": "0.1.0",
   "description": "Claude Code Profile Manager — manage multiple Claude Code accounts with isolated profiles",
   "bin": {

@@ -58,7 +58,7 @@ function Hero() {
                   label: "npm",
                   content: (
                     <CodeBlock
-                      code="npm i -g @nitin-1926/ccpm"
+                      code="npm i -g @ngcodes/ccpm"
                       lang="bash"
                     />
                   ),

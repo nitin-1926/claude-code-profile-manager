@@ -10,7 +10,7 @@ const binary = path.join(__dirname, isWin ? "ccpm-native.exe" : "ccpm-native");
 if (!fs.existsSync(binary)) {
   console.error("ccpm: native binary not found at " + binary);
   console.error(
-    "The postinstall step may have failed. Reinstall with `npm i -g @nitin-1926/ccpm`"
+    "The postinstall step may have failed. Reinstall with `npm i -g @ngcodes/ccpm`"
   );
   console.error(
     "Or download manually: https://github.com/nitin-1926/claude-code-profile-manager/releases"
