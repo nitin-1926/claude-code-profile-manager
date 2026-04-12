@@ -100,7 +100,8 @@ function Hero() {
             className="font-semibold tracking-[-0.025em] leading-[1.05] text-fg"
             style={{ fontSize: "var(--t-display)" }}
           >
-            Multiple Claude accounts.{" "}
+            Multiple Claude Code accounts.
+            <br />
             <span className="accent-gradient-text">In parallel.</span>
           </h1>
           <p
@@ -363,8 +364,8 @@ async function HowItWorks() {
             Three steps. No daemons, no patches.
           </h2>
           <p className="mt-3 text-fg-muted leading-relaxed">
-            Built on a single official primitive:{" "}
-            <code>CLAUDE_CONFIG_DIR</code>. That is it.
+            Built on a single official primitive: <code>CLAUDE_CONFIG_DIR</code>
+            . That is it.
           </p>
         </div>
 
@@ -378,22 +379,16 @@ async function HowItWorks() {
                   reverse ? "lg:[&>*:first-child]:col-start-7" : ""
                 }`}
               >
-                <div
-                  className={`lg:col-span-6 ${reverse ? "lg:order-2" : ""}`}
-                >
+                <div className={`lg:col-span-6 ${reverse ? "lg:order-2" : ""}`}>
                   <div className="font-mono text-[2.5rem] font-semibold leading-none mb-4 accent-gradient-text inline-block opacity-40">
                     {step.n}
                   </div>
                   <h3 className="text-2xl font-semibold tracking-tight text-fg mb-3">
                     {step.title}
                   </h3>
-                  <p className="text-fg-muted leading-relaxed">
-                    {step.desc}
-                  </p>
+                  <p className="text-fg-muted leading-relaxed">{step.desc}</p>
                 </div>
-                <div
-                  className={`lg:col-span-6 ${reverse ? "lg:order-1" : ""}`}
-                >
+                <div className={`lg:col-span-6 ${reverse ? "lg:order-1" : ""}`}>
                   <CodeBlock code={step.code} lang="bash" />
                 </div>
               </div>
@@ -411,10 +406,16 @@ async function HowItWorks() {
 const privacyPoints = [
   { icon: EyeOff, text: "Zero telemetry, analytics, or tracking" },
   { icon: UserCheck, text: "No data collection. We do not know you exist" },
-  { icon: KeyRound, text: "API keys stored in your OS keychain, never plaintext" },
+  {
+    icon: KeyRound,
+    text: "API keys stored in your OS keychain, never plaintext",
+  },
   { icon: ShieldCheck, text: "Vault backups encrypted with AES-256-GCM" },
   { icon: HardDrive, text: "Everything lives in ~/.ccpm/ on your machine" },
-  { icon: BookOpenCheck, text: "Fully open source. MIT licensed. Audit the code" },
+  {
+    icon: BookOpenCheck,
+    text: "Fully open source. MIT licensed. Audit the code",
+  },
 ];
 
 function Privacy() {
@@ -449,7 +450,11 @@ function Privacy() {
                   style={{ animationDelay: `${i * 60}ms` }}
                 >
                   <div className="mt-0.5 shrink-0 w-7 h-7 rounded-md bg-accent-muted flex items-center justify-center">
-                    <p.icon size={14} strokeWidth={1.75} className="text-accent" />
+                    <p.icon
+                      size={14}
+                      strokeWidth={1.75}
+                      className="text-accent"
+                    />
                   </div>
                   <p className="text-sm text-fg-muted leading-relaxed">
                     {p.text}
