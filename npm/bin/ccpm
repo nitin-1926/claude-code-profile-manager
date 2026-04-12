@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// JS shim that execs the native ccpm binary downloaded by install.js
+const { spawnSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const isWin = process.platform === "win32";
+const binary = path.join(__dirname, isWin ? "ccpm-native.exe" : "ccpm-native");
+
+if (!fs.existsSync(binary)) {
+  console.error("ccpm: native binary not found at " + binary);
+  console.error(
+    "The postinstall step may have failed. Reinstall with `npm i -g @nitin-1926/ccpm`"
+  );
+  console.error(
+    "Or download manually: https://github.com/nitin-1926/claude-code-profile-manager/releases"
+  );
+  process.exit(1);
+}
+
+const result = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });
+if (result.error) {
+  console.error("ccpm: failed to launch native binary:", result.error.message);
+  process.exit(1);
+}
+process.exit(result.status ?? 1);
