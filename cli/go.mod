@@ -1,6 +1,6 @@
 module github.com/nitin-1926/ccpm
 
-go 1.26.2
+go 1.24
 
 require (
 	github.com/fatih/color v1.19.0
