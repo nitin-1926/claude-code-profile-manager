@@ -25,7 +25,7 @@ import { BentoTile } from "./components/bento-tile";
 import { DotGrid, AccentOrb } from "./components/dot-grid";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Mini terminal component for the hero showcase
+   Mini terminal for hero showcase
    ───────────────────────────────────────────────────────────────────────── */
 function MiniTerminal({
   title,
@@ -40,10 +40,10 @@ function MiniTerminal({
 }) {
   return (
     <div
-      className={`rounded-xl overflow-hidden border border-[color:var(--c-code-border)] bg-[color:var(--c-code-bg)] shadow-2xl shadow-black/40 animate-fade-up ${className}`}
+      className={`rounded-xl overflow-hidden border border-[color:var(--c-code-border)] bg-[color:var(--c-code-bg)] shadow-2xl shadow-black/40 animate-fade-up accent-border-glow ${className}`}
       style={{ animationDelay: `${delay}ms` }}
     >
-      <div className="flex items-center gap-1.5 px-3.5 py-2 border-b border-[color:var(--c-code-border)] bg-black/40">
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[color:var(--c-code-border)] bg-black/40">
         <span className="w-2.5 h-2.5 rounded-full bg-[#FF5F56]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[#27C93F]" />
@@ -51,14 +51,14 @@ function MiniTerminal({
           {title}
         </span>
       </div>
-      <div className="px-4 py-3 font-mono text-[12px] leading-6 min-h-[120px]">
+      <div className="px-4 py-3 font-mono text-[11px] leading-[1.7] min-h-0">
         {children}
       </div>
     </div>
   );
 }
 
-function TermLine({
+function T({
   prompt,
   color = "fg",
   children,
@@ -67,51 +67,52 @@ function TermLine({
   color?: "fg" | "muted" | "accent" | "success";
   children: React.ReactNode;
 }) {
-  const colors = {
+  const c = {
     fg: "text-zinc-100",
     muted: "text-zinc-400",
-    accent: "text-orange-400",
+    accent: "text-[#d77757]",
     success: "text-green-400",
   };
   return (
-    <div className={colors[color]}>
-      {prompt && <span className="text-orange-400 select-none">$ </span>}
+    <div className={c[color]}>
+      {prompt && <span className="text-[#d77757] select-none">$ </span>}
       {children}
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Hero
+   Hero: left-aligned text + 3 diagonal terminals on right
    ───────────────────────────────────────────────────────────────────────── */
 function Hero() {
   return (
-    <section className="relative pt-20 pb-8 px-6 overflow-hidden">
+    <section className="relative pt-20 pb-16 px-6 overflow-hidden">
       <DotGrid className="opacity-60" />
-      <AccentOrb className="top-10 right-[-10%] w-[600px] h-[600px]" />
+      <AccentOrb className="top-0 right-[-15%] w-[700px] h-[700px]" />
 
-      <div className="relative max-w-6xl mx-auto text-center">
-        <div className="mb-5">
-          <Eyebrow>{"// v0.1 . open source . cross-platform"}</Eyebrow>
-        </div>
-        <h1
-          className="font-semibold tracking-[-0.025em] leading-[1.05] text-fg max-w-4xl mx-auto"
-          style={{ fontSize: "var(--t-display)" }}
-        >
-          Run multiple Claude Code accounts.{" "}
-          <span className="text-accent">In parallel.</span>
-        </h1>
-        <p
-          className="mt-6 text-fg-muted leading-relaxed max-w-2xl mx-auto"
-          style={{ fontSize: "var(--t-body-lg)" }}
-        >
-          Personal account in one terminal. Work account in another. Each with
-          its own credentials, MCP servers, settings, and memory. Fully
-          isolated. One command to switch.
-        </p>
+      <div className="relative max-w-6xl mx-auto grid lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+        {/* Left: text content */}
+        <div className="lg:col-span-6">
+          <div className="mb-5">
+            <Eyebrow>{"// v0.1 . open source . cross-platform"}</Eyebrow>
+          </div>
+          <h1
+            className="font-semibold tracking-[-0.025em] leading-[1.05] text-fg"
+            style={{ fontSize: "var(--t-display)" }}
+          >
+            Multiple Claude accounts.{" "}
+            <span className="accent-gradient-text">In parallel.</span>
+          </h1>
+          <p
+            className="mt-6 text-fg-muted leading-relaxed max-w-lg"
+            style={{ fontSize: "var(--t-body-lg)" }}
+          >
+            Personal account in one terminal, work account in another. Each with
+            its own credentials, MCP servers, settings, and memory. Fully
+            isolated. One command to switch.
+          </p>
 
-        <div className="mt-8 flex justify-center">
-          <div className="max-w-md w-full">
+          <div className="mt-8 max-w-md">
             <Tabs
               tabs={[
                 {
@@ -144,91 +145,78 @@ function Hero() {
               ]}
             />
           </div>
+
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <Button href="/docs" variant="primary" size="md">
+              Get started
+              <ArrowUpRight size={15} strokeWidth={2} />
+            </Button>
+            <Button
+              href="https://github.com/nitin-1926/claude-code-profile-manager"
+              external
+              variant="secondary"
+              size="md"
+            >
+              View on GitHub
+            </Button>
+          </div>
         </div>
 
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Button href="/docs" variant="primary" size="md">
-            Get started
-            <ArrowUpRight size={15} strokeWidth={2} />
-          </Button>
-          <Button
-            href="https://github.com/nitin-1926/claude-code-profile-manager"
-            external
-            variant="secondary"
-            size="md"
-          >
-            View on GitHub
-          </Button>
+        {/* Right: 3 terminals in a diagonal cascade */}
+        <div className="lg:col-span-6 relative min-h-[420px] hidden lg:block">
+          {/* Terminal 1: top-left of the group */}
+          <div className="absolute top-0 left-0 w-[85%] z-30">
+            <MiniTerminal title="terminal 1 : personal" delay={200}>
+              <T prompt>ccpm run personal</T>
+              <T color="accent">→ activated personal (oauth)</T>
+              <T color="fg">Claude Code v1.0</T>
+              <T color="muted">nitin@gmail.com | mcp: github, slack</T>
+              <T color="fg">&gt; Review my PR #42...</T>
+            </MiniTerminal>
+          </div>
+
+          {/* Terminal 2: center-right, offset down */}
+          <div className="absolute top-[140px] left-[15%] w-[85%] z-20">
+            <MiniTerminal title="terminal 2 : work" delay={450}>
+              <T prompt>ccpm run work</T>
+              <T color="accent">→ activated work (api key)</T>
+              <T color="fg">Claude Code v1.0</T>
+              <T color="muted">sk-ant-...7f2k | mcp: jira, datadog</T>
+              <T color="fg">&gt; Debug the auth service...</T>
+            </MiniTerminal>
+          </div>
+
+          {/* Terminal 3: bottom-right, peeking below */}
+          <div className="absolute top-[280px] left-[8%] w-[80%] z-10 opacity-60">
+            <MiniTerminal title="terminal 3 : staging" delay={650}>
+              <T prompt>ccpm run staging</T>
+              <T color="accent">→ activated staging (api key)</T>
+              <T color="fg">Claude Code v1.0</T>
+              <T color="muted">sk-ant-...9x1m | mcp: aws, sentry</T>
+            </MiniTerminal>
+          </div>
         </div>
-      </div>
 
-      {/* Multi-terminal showcase */}
-      <div className="relative max-w-6xl mx-auto mt-16">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Terminal 1: Setup */}
-          <MiniTerminal title="setup" delay={100}>
-            <TermLine prompt>ccpm add personal</TermLine>
-            <TermLine color="muted">Auth: OAuth (browser login)</TermLine>
-            <TermLine color="success">
-              ✓ Profile &quot;personal&quot; created
-            </TermLine>
-            <TermLine prompt>ccpm add work</TermLine>
-            <TermLine color="muted">Auth: API key</TermLine>
-            <TermLine color="success">
-              ✓ Profile &quot;work&quot; created
-            </TermLine>
+        {/* Mobile: show terminals stacked */}
+        <div className="lg:hidden space-y-3">
+          <MiniTerminal title="terminal 1 : personal" delay={200}>
+            <T prompt>ccpm run personal</T>
+            <T color="accent">→ activated personal (oauth)</T>
+            <T color="muted">nitin@gmail.com | mcp: github, slack</T>
           </MiniTerminal>
-
-          {/* Terminal 2: Personal session */}
-          <MiniTerminal title="terminal 1 — personal" delay={300}>
-            <TermLine prompt>ccpm run personal</TermLine>
-            <TermLine color="accent">
-              → activated personal (oauth)
-            </TermLine>
-            <TermLine color="fg">
-              Claude Code v1.0
-            </TermLine>
-            <TermLine color="muted">
-              nitin@gmail.com
-            </TermLine>
-            <TermLine color="muted">
-              mcp: github, slack
-            </TermLine>
-            <TermLine color="fg">
-              &gt; Review my PR #42...
-            </TermLine>
-          </MiniTerminal>
-
-          {/* Terminal 3: Work session */}
-          <MiniTerminal title="terminal 2 — work" delay={500}>
-            <TermLine prompt>ccpm run work</TermLine>
-            <TermLine color="accent">
-              → activated work (api key)
-            </TermLine>
-            <TermLine color="fg">
-              Claude Code v1.0
-            </TermLine>
-            <TermLine color="muted">
-              key: sk-ant-...7f2k
-            </TermLine>
-            <TermLine color="muted">
-              mcp: jira, datadog
-            </TermLine>
-            <TermLine color="fg">
-              &gt; Debug the auth service...
-            </TermLine>
+          <MiniTerminal title="terminal 2 : work" delay={400}>
+            <T prompt>ccpm run work</T>
+            <T color="accent">→ activated work (api key)</T>
+            <T color="muted">sk-ant-...7f2k | mcp: jira, datadog</T>
           </MiniTerminal>
         </div>
-        <p className="text-center text-xs text-fg-subtle mt-4 font-mono">
-          Two accounts. Two terminals. Zero conflicts.
-        </p>
       </div>
     </section>
   );
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Features — bento grid with stagger animation
+   Features: bento grid with stagger + gradient accent border
    ───────────────────────────────────────────────────────────────────────── */
 function Features() {
   return (
@@ -244,8 +232,8 @@ function Features() {
             Built for developers who juggle accounts.
           </h2>
           <p className="mt-3 text-fg-muted leading-relaxed">
-            One binary. Zero dependencies. Every feature exists because profile
-            isolation should be a first-class primitive, not a workaround.
+            One binary. Zero dependencies. Profile isolation as a first-class
+            primitive, not a workaround.
           </p>
         </div>
 
@@ -253,44 +241,42 @@ function Features() {
           <BentoTile
             className="lg:col-span-3 lg:row-span-1 animate-fade-up stagger-1"
             title="True parallel sessions"
-            description="Run personal and work Claude Code instances in separate terminals at the same time. Each session is completely isolated with its own config, memory, and MCP servers."
+            description="Run personal and work Claude Code instances in separate terminals simultaneously. Each session has its own config, memory, and MCP servers. No leaking, no conflicts."
             icon={Layers}
           >
             <pre className="font-mono text-[11px] leading-6 text-fg-muted mt-2 p-3 rounded-lg bg-bg/50 border border-border">
-              <span className="text-orange-400">$</span> ccpm run personal{"  "}
+              <span className="text-[#d77757]">$</span> ccpm run personal{"  "}
               <span className="opacity-50"># terminal 1</span>
               {"\n"}
-              <span className="text-orange-400">$</span> ccpm run work{"      "}
+              <span className="text-[#d77757]">$</span> ccpm run work{"      "}
               <span className="opacity-50"># terminal 2</span>
-              {"\n"}
-              <span className="opacity-50"># both running simultaneously, zero conflicts</span>
             </pre>
           </BentoTile>
 
           <BentoTile
             className="lg:col-span-2 lg:row-span-1 animate-fade-up stagger-2"
             title="Encrypted vault"
-            description="AES-256-GCM encrypted backups of your credentials. Master key stored in your OS keychain. Migrate between machines without exposing secrets."
+            description="AES-256-GCM encrypted credential backups. Master key stored in your OS keychain. Migrate machines without exposing secrets."
             icon={KeyRound}
           />
 
           <BentoTile
             className="lg:col-span-1 lg:row-span-2 animate-fade-up stagger-3"
             title="Both auth modes"
-            description="OAuth login or API key per profile. Mix and match however you need."
+            description="OAuth login or API key per profile. Mix and match."
             icon={Zap}
           >
             <div className="mt-3 space-y-2.5 font-mono text-[11px]">
               <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#d77757]" />
                 <span className="text-fg-muted">oauth login</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#d77757]" />
                 <span className="text-fg-muted">api key</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#d77757]" />
                 <span className="text-fg-muted">per-profile</span>
               </div>
             </div>
@@ -299,14 +285,14 @@ function Features() {
           <BentoTile
             className="lg:col-span-2 lg:row-span-1 animate-fade-up stagger-4"
             title="Isolated MCP servers"
-            description="Different MCP configurations per profile. Your work Jira integration never leaks into your personal setup."
+            description="Different MCP configurations per profile. Work Jira stays in work, personal GitHub stays in personal."
             icon={Plug}
           />
 
           <BentoTile
             className="lg:col-span-2 lg:row-span-1 animate-fade-up stagger-5"
             title="IDE-aware defaults"
-            description="Set the active profile for VS Code with one command. The Claude extension picks up the right credentials instantly."
+            description="Set the active profile for VS Code with one command. The Claude extension picks up the right credentials."
             icon={Code2}
           />
         </div>
@@ -316,13 +302,13 @@ function Features() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   How it works — alternating layout
+   How it works
    ───────────────────────────────────────────────────────────────────────── */
 const steps = [
   {
     n: "01",
     title: "Create your profiles",
-    desc: "ccpm add creates an isolated directory for each account under ~/.ccpm/profiles/. Every profile has its own credentials, settings, memory, and MCP config. Add as many as you need.",
+    desc: "ccpm add creates an isolated directory for each account under ~/.ccpm/profiles/. Every profile has its own credentials, settings, memory, and MCP config.",
     code: `$ ccpm add personal
 Choose authentication method:
   1) OAuth (browser login)
@@ -338,7 +324,7 @@ Enter your Anthropic API key: sk-ant-...
   {
     n: "02",
     title: "Run them side by side",
-    desc: "ccpm run sets CLAUDE_CONFIG_DIR to the right profile directory and launches Claude Code. Open two terminals, run two profiles. They never interfere with each other.",
+    desc: "ccpm run sets CLAUDE_CONFIG_DIR to the right profile directory and launches Claude Code. Open two terminals, run two profiles. They never interfere.",
     code: `# Terminal 1
 $ ccpm run personal
 → activated personal (oauth, mcp: github)
@@ -351,8 +337,8 @@ Welcome to Claude Code`,
   },
   {
     n: "03",
-    title: "Manage everything from one place",
-    desc: "See all your profiles, their auth status, and which one is the IDE default. One CLI to manage credentials, switch contexts, and keep everything organized.",
+    title: "Manage from one place",
+    desc: "See all profiles, their auth status, and the IDE default. One CLI to manage credentials, switch contexts, and keep everything organized.",
     code: `$ ccpm list
 NAME       AUTH      STATUS
 personal   oauth     ✓ nitin@gmail.com
@@ -395,7 +381,7 @@ async function HowItWorks() {
                 <div
                   className={`lg:col-span-6 ${reverse ? "lg:order-2" : ""}`}
                 >
-                  <div className="font-mono text-[2.5rem] font-semibold text-fg-subtle/30 leading-none mb-4">
+                  <div className="font-mono text-[2.5rem] font-semibold leading-none mb-4 accent-gradient-text inline-block opacity-40">
                     {step.n}
                   </div>
                   <h3 className="text-2xl font-semibold tracking-tight text-fg mb-3">
@@ -420,15 +406,15 @@ async function HowItWorks() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Privacy — compact, visually distinct from features
+   Privacy: visually distinct centered layout with gradient border card
    ───────────────────────────────────────────────────────────────────────── */
 const privacyPoints = [
-  { icon: EyeOff, text: "Zero telemetry, analytics, or tracking of any kind" },
+  { icon: EyeOff, text: "Zero telemetry, analytics, or tracking" },
   { icon: UserCheck, text: "No data collection. We do not know you exist" },
-  { icon: KeyRound, text: "API keys stored in your OS keychain, never in plaintext" },
-  { icon: ShieldCheck, text: "Vault backups use AES-256-GCM encryption" },
+  { icon: KeyRound, text: "API keys stored in your OS keychain, never plaintext" },
+  { icon: ShieldCheck, text: "Vault backups encrypted with AES-256-GCM" },
   { icon: HardDrive, text: "Everything lives in ~/.ccpm/ on your machine" },
-  { icon: BookOpenCheck, text: "Fully open source, MIT licensed. Audit the code yourself" },
+  { icon: BookOpenCheck, text: "Fully open source. MIT licensed. Audit the code" },
 ];
 
 function Privacy() {
@@ -445,34 +431,32 @@ function Privacy() {
         </h2>
         <p className="mt-3 text-fg-muted leading-relaxed mb-12">
           ccpm never makes network requests. Your credentials, config, and data
-          never leave your machine.
+          stay on your machine. Always.
         </p>
 
-        <div className="relative p-8 rounded-2xl border border-border bg-surface">
-          <Lock
-            size={40}
-            strokeWidth={1.25}
-            className="text-accent mx-auto mb-6 opacity-80"
-          />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5 text-left max-w-2xl mx-auto">
-            {privacyPoints.map((p, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-3 animate-fade-up"
-                style={{ animationDelay: `${i * 60}ms` }}
-              >
-                <div className="mt-0.5 shrink-0">
-                  <p.icon
-                    size={16}
-                    strokeWidth={1.75}
-                    className="text-accent"
-                  />
+        <div className="relative p-[1px] rounded-2xl bg-gradient-to-br from-[var(--c-accent-light)] via-[var(--c-accent)] to-[var(--c-accent-dark)] opacity-90">
+          <div className="rounded-2xl bg-surface p-8 sm:p-10">
+            <Lock
+              size={36}
+              strokeWidth={1.25}
+              className="text-accent mx-auto mb-8 opacity-70"
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-6 text-left max-w-2xl mx-auto">
+              {privacyPoints.map((p, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 animate-fade-up"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  <div className="mt-0.5 shrink-0 w-7 h-7 rounded-md bg-accent-muted flex items-center justify-center">
+                    <p.icon size={14} strokeWidth={1.75} className="text-accent" />
+                  </div>
+                  <p className="text-sm text-fg-muted leading-relaxed">
+                    {p.text}
+                  </p>
                 </div>
-                <p className="text-sm text-fg-muted leading-relaxed">
-                  {p.text}
-                </p>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -481,7 +465,7 @@ function Privacy() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Community / support — star on github, contribute, etc.
+   Community
    ───────────────────────────────────────────────────────────────────────── */
 function Community() {
   return (
@@ -497,8 +481,8 @@ function Community() {
             Built in the open. Actively maintained.
           </h2>
           <p className="mt-3 text-fg-muted leading-relaxed max-w-xl mx-auto">
-            ccpm is a solo project that I use every day. If it helps you too, I
-            would love to hear about it.
+            ccpm is a solo project I use every day. If it saves you time too, I
+            would love your support.
           </p>
         </div>
 
@@ -516,7 +500,7 @@ function Community() {
             />
             <span className="font-semibold text-fg">Star on GitHub</span>
             <span className="text-xs text-fg-muted text-center">
-              Show your support. Stars help others discover ccpm.
+              Stars help others discover ccpm.
             </span>
           </a>
 
@@ -533,7 +517,7 @@ function Community() {
             />
             <span className="font-semibold text-fg">Report issues</span>
             <span className="text-xs text-fg-muted text-center">
-              Found a bug? Have a feature request? Open an issue.
+              Bug? Feature request? Open an issue.
             </span>
           </a>
 
@@ -550,7 +534,7 @@ function Community() {
             />
             <span className="font-semibold text-fg">Contribute</span>
             <span className="text-xs text-fg-muted text-center">
-              PRs welcome. Check the contributing guide to get started.
+              PRs welcome. Check the contributing guide.
             </span>
           </a>
         </div>
@@ -560,7 +544,7 @@ function Community() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Final CTA
+   CTA
    ───────────────────────────────────────────────────────────────────────── */
 function CTA() {
   return (

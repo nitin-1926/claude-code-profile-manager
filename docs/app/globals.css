@@ -22,11 +22,13 @@
   --c-border: #27272a;
   --c-border-strong: #3f3f46;
 
-  /* Accent (Claude orange) */
-  --c-accent: #F97316;
+  /* Accent (Claude terracotta) */
+  --c-accent: #d77757;
   --c-accent-fg: #ffffff;
-  --c-accent-muted: rgba(249, 115, 22, 0.12);
-  --c-ring: #F97316;
+  --c-accent-muted: rgba(215, 119, 87, 0.12);
+  --c-ring: #d77757;
+  --c-accent-light: #e8a990;
+  --c-accent-dark: #b85a3a;
 
   /* Code */
   --c-code-bg: #08080a;
@@ -71,10 +73,12 @@
   --c-border: #e4e4e7;
   --c-border-strong: #d4d4d8;
 
-  --c-accent: #EA580C;
+  --c-accent: #c4613f;
   --c-accent-fg: #ffffff;
-  --c-accent-muted: rgba(234, 88, 12, 0.1);
-  --c-ring: #EA580C;
+  --c-accent-muted: rgba(196, 97, 63, 0.1);
+  --c-ring: #c4613f;
+  --c-accent-light: #d77757;
+  --c-accent-dark: #a84e30;
 
   --c-code-bg: #0a0a0b;
   --c-code-fg: #e4e4e7;
@@ -104,6 +108,8 @@
   --color-accent-fg: var(--c-accent-fg);
   --color-accent-muted: var(--c-accent-muted);
   --color-ring: var(--c-ring);
+  --color-accent-light: var(--c-accent-light);
+  --color-accent-dark: var(--c-accent-dark);
   --color-code-bg: var(--c-code-bg);
   --color-code-fg: var(--c-code-fg);
   --color-code-border: var(--c-code-border);
@@ -176,9 +182,25 @@ body {
 }
 
 .accent-orb {
-  background: radial-gradient(circle, var(--c-accent) 0%, transparent 60%);
+  background: radial-gradient(
+    circle,
+    var(--c-accent-light) 0%,
+    var(--c-accent) 40%,
+    transparent 70%
+  );
   filter: blur(80px);
-  opacity: 0.18;
+  opacity: 0.15;
+}
+
+.accent-gradient-text {
+  background: linear-gradient(135deg, var(--c-accent-light), var(--c-accent), var(--c-accent-dark));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.accent-border-glow {
+  box-shadow: 0 0 0 1px var(--c-accent-muted), 0 4px 24px -4px rgba(215, 119, 87, 0.15);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -438,7 +460,9 @@ code:not(pre code):not(.code-block code) {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--c-accent) 50%,
+    var(--c-accent-dark) 30%,
+    var(--c-accent-light) 50%,
+    var(--c-accent-dark) 70%,
     transparent 100%
   );
   opacity: 0.3;
