@@ -98,11 +98,19 @@ export function Footer() {
 
       <div className="border-t border-border">
         <div className="max-w-6xl mx-auto px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-fg-subtle">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap justify-center sm:justify-start">
             <span>MIT License</span>
             <span className="text-fg-subtle/50">•</span>
             <span className="inline-flex items-center gap-1">
-              Built with <Heart size={11} strokeWidth={2.25} className="text-accent" /> by Nitin Gupta
+              Built with <Heart size={11} strokeWidth={2.25} className="text-accent" /> by{" "}
+              <a
+                href="https://x.com/nitingupta__7"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-fg-muted hover:text-fg transition-colors underline underline-offset-2"
+              >
+                Nitin Gupta
+              </a>
             </span>
           </div>
           <span className="font-mono">v0.1.0</span>

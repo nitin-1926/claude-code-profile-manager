@@ -22,11 +22,11 @@
   --c-border: #27272a;
   --c-border-strong: #3f3f46;
 
-  /* Accent (emerald) */
-  --c-accent: #34d399;
-  --c-accent-fg: #0a0a0b;
-  --c-accent-muted: rgba(52, 211, 153, 0.12);
-  --c-ring: #34d399;
+  /* Accent (Claude orange) */
+  --c-accent: #F97316;
+  --c-accent-fg: #ffffff;
+  --c-accent-muted: rgba(249, 115, 22, 0.12);
+  --c-ring: #F97316;
 
   /* Code */
   --c-code-bg: #08080a;
@@ -34,7 +34,7 @@
   --c-code-border: #1f1f23;
 
   /* Status */
-  --c-success: #34d399;
+  --c-success: #22c55e;
   --c-warning: #fbbf24;
   --c-danger: #f87171;
 
@@ -71,16 +71,16 @@
   --c-border: #e4e4e7;
   --c-border-strong: #d4d4d8;
 
-  --c-accent: #10b981;
+  --c-accent: #EA580C;
   --c-accent-fg: #ffffff;
-  --c-accent-muted: rgba(16, 185, 129, 0.1);
-  --c-ring: #10b981;
+  --c-accent-muted: rgba(234, 88, 12, 0.1);
+  --c-ring: #EA580C;
 
   --c-code-bg: #0a0a0b;
   --c-code-fg: #e4e4e7;
   --c-code-border: #27272a;
 
-  --c-success: #10b981;
+  --c-success: #16a34a;
   --c-warning: #f59e0b;
   --c-danger: #ef4444;
 
@@ -393,4 +393,53 @@ code:not(pre code):not(.code-block code) {
 .prose-doc h2:hover .heading-anchor,
 .prose-doc h3:hover .heading-anchor {
   opacity: 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Stagger & entrance animations
+   ───────────────────────────────────────────────────────────────────────── */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.5s var(--ease-out) both;
+}
+
+.stagger-1 { animation-delay: 0ms; }
+.stagger-2 { animation-delay: 80ms; }
+.stagger-3 { animation-delay: 160ms; }
+.stagger-4 { animation-delay: 240ms; }
+.stagger-5 { animation-delay: 320ms; }
+.stagger-6 { animation-delay: 400ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Gradient line separator
+   ───────────────────────────────────────────────────────────────────────── */
+
+.gradient-line {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--c-accent) 50%,
+    transparent 100%
+  );
+  opacity: 0.3;
 }

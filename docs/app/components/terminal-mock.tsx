@@ -34,7 +34,7 @@ const lines: Line[] = [
 const colorMap = {
   fg: "text-zinc-100",
   muted: "text-zinc-400",
-  accent: "text-emerald-400",
+  accent: "text-orange-400",
   warning: "text-amber-300",
 };
 
@@ -66,7 +66,7 @@ export function TerminalMock() {
                 }}
               >
                 {line.prompt && (
-                  <span className="text-emerald-400 select-none">$ </span>
+                  <span className="text-orange-400 select-none">$ </span>
                 )}
                 {line.text}
                 {(line as Line & { cursor?: boolean }).cursor && (

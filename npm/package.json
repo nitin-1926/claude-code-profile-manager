@@ -16,7 +16,7 @@
   },
   "scripts": {
     "postinstall": "node install.js",
-    "test-local": "echo 'To test locally: npm pack && npm install -g nitin-1926-ccpm-0.1.0.tgz'"
+    "test-local": "echo 'To test locally: npm pack && npm install -g ngcodes-ccpm-0.1.0.tgz'"
   },
   "keywords": [
     "claude",
