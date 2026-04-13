@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
 type Theme = "light" | "dark";
@@ -12,7 +12,11 @@ function getInitialTheme(): Theme {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [theme, setTheme] = useState<Theme>("dark");
+
+  useLayoutEffect(() => {
+    setTheme(getInitialTheme());
+  }, []);
 
   function toggle() {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -31,7 +35,6 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
       className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
-      suppressHydrationWarning
     >
       {theme === "dark" ? (
         <Sun size={18} strokeWidth={1.75} />

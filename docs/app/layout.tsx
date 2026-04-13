@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -25,16 +26,23 @@ export const metadata: Metadata = {
   },
 };
 
-// Inline script that runs before paint to set the theme from localStorage,
-// preventing FOUC. Must run synchronously in <head>.
+// Inline script that runs before paint: saved preference, else system
+// (prefers-color-scheme), else dark. Loaded via next/script beforeInteractive.
 const themeInitScript = `
 (function() {
+  function systemOrDark() {
+    try {
+      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    } catch (e) {
+      return 'dark';
+    }
+  }
   try {
     var stored = localStorage.getItem('theme');
-    var theme = stored === 'light' || stored === 'dark' ? stored : 'dark';
+    var theme = stored === 'light' || stored === 'dark' ? stored : systemOrDark();
     document.documentElement.setAttribute('data-theme', theme);
   } catch (e) {
-    document.documentElement.setAttribute('data-theme', 'dark');
+    document.documentElement.setAttribute('data-theme', systemOrDark());
   }
 })();
 `;
@@ -51,10 +59,14 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-      </head>
-      <body className="min-h-full flex flex-col bg-bg text-fg">{children}</body>
+      <body className="min-h-full flex flex-col bg-bg text-fg">
+        <Script
+          id="ccpm-theme-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: themeInitScript }}
+        />
+        {children}
+      </body>
     </html>
   );
 }
