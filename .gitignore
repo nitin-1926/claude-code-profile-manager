@@ -27,3 +27,8 @@ npm/*.tgz
 
 # GoReleaser
 dist/
+
+# Personal local files
+SUMMARY.md
+demo.*
+.claude/*
