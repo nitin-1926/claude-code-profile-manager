@@ -22,10 +22,15 @@ type ProfileConfig struct {
 	LastUsed   string `json:"last_used"`
 }
 
+type Settings struct {
+	CheckDefaultDrift bool `json:"check_default_drift,omitempty"`
+}
+
 type Config struct {
 	Version        string                   `json:"version"`
 	DefaultProfile string                   `json:"default_profile"`
 	Profiles       map[string]ProfileConfig `json:"profiles"`
+	Settings       Settings                 `json:"settings,omitempty"`
 }
 
 func BaseDir() (string, error) {
@@ -60,6 +65,14 @@ func VaultDir() (string, error) {
 	return filepath.Join(base, "vault"), nil
 }
 
+func ShareDir() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "share"), nil
+}
+
 func EnsureDirs() error {
 	base, err := BaseDir()
 	if err != nil {
@@ -69,6 +82,10 @@ func EnsureDirs() error {
 		base,
 		filepath.Join(base, "profiles"),
 		filepath.Join(base, "vault"),
+		filepath.Join(base, "share"),
+		filepath.Join(base, "share", "skills"),
+		filepath.Join(base, "share", "mcp"),
+		filepath.Join(base, "share", "settings"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0755); err != nil {
@@ -76,6 +93,14 @@ func EnsureDirs() error {
 		}
 	}
 	return nil
+}
+
+func ProfileNames(cfg *Config) []string {
+	names := make([]string, 0, len(cfg.Profiles))
+	for n := range cfg.Profiles {
+		names = append(names, n)
+	}
+	return names
 }
 
 func Load() (*Config, error) {
