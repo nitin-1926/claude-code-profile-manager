@@ -168,7 +168,7 @@ func TestEnsureDirs(t *testing.T) {
 		t.Fatalf("EnsureDirs() error: %v", err)
 	}
 
-	for _, sub := range []string{"", "profiles", "vault"} {
+	for _, sub := range []string{"", "profiles", "vault", "share", "share/skills", "share/mcp", "share/settings"} {
 		dir := filepath.Join(tmp, ".ccpm", sub)
 		info, err := os.Stat(dir)
 		if err != nil {
@@ -178,6 +178,29 @@ func TestEnsureDirs(t *testing.T) {
 		if !info.IsDir() {
 			t.Errorf("%q should be a directory", dir)
 		}
+	}
+}
+
+func TestProfileNames(t *testing.T) {
+	cfg := &Config{
+		Version: "1",
+		Profiles: map[string]ProfileConfig{
+			"work":     {Name: "work"},
+			"personal": {Name: "personal"},
+		},
+	}
+
+	names := ProfileNames(cfg)
+	if len(names) != 2 {
+		t.Fatalf("expected 2 names, got %d", len(names))
+	}
+
+	found := make(map[string]bool)
+	for _, n := range names {
+		found[n] = true
+	}
+	if !found["work"] || !found["personal"] {
+		t.Errorf("expected work and personal, got %v", names)
 	}
 }
 
