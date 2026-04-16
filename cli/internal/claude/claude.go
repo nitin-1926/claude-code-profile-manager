@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"syscall"
+	"strings"
 )
 
 func FindBinary() (string, error) {
@@ -94,25 +94,40 @@ func Spawn(profileDir string, extraEnv ...string) error {
 	return nil
 }
 
-// Exec replaces the current process with claude.
-// Used for `ccpm run` so signals and TTY pass through cleanly.
-func Exec(profileDir string, apiKey string, args []string) error {
-	bin, err := FindBinary()
+// execEnv builds the env slice for launching claude with a given profile.
+func execEnv(profileDir, apiKey string) (bin, absProfileDir string, env []string, err error) {
+	bin, err = FindBinary()
 	if err != nil {
-		return err
+		return "", "", nil, err
 	}
 
-	abs, err := filepath.Abs(profileDir)
+	absProfileDir, err = filepath.Abs(profileDir)
 	if err != nil {
-		return fmt.Errorf("resolving profile path: %w", err)
+		return "", "", nil, fmt.Errorf("resolving profile path: %w", err)
 	}
 
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", abs))
+	env = os.Environ()
+	env = append(env, fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", absProfileDir))
 	if apiKey != "" {
 		env = append(env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", apiKey))
 	}
+	return bin, absProfileDir, env, nil
+}
 
-	argv := append([]string{bin}, args...)
-	return syscall.Exec(bin, argv, env)
+// Version runs `<bin> --version` and returns the first line of output,
+// trimmed. Returns an empty string if the binary is not found or fails.
+func Version() string {
+	bin, err := FindBinary()
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(out))
+	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
+		line = line[:idx]
+	}
+	return line
 }
