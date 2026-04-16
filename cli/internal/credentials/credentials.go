@@ -67,51 +67,101 @@ func (c *Checker) checkAPIKey(profileName string) CredStatus {
 }
 
 func (c *Checker) checkOAuth(profileDir string) CredStatus {
-	// Strategy 1: Check .claude.json for oauthAccount (macOS primary method)
 	claudeFile := filepath.Join(profileDir, ".claude.json")
-	if data, err := os.ReadFile(claudeFile); err == nil {
-		var cj claudeJSON
-		if err := json.Unmarshal(data, &cj); err == nil && cj.OAuthAccount != nil {
-			email := cj.OAuthAccount.EmailAddress
-			name := cj.OAuthAccount.DisplayName
-			detail := fmt.Sprintf("%s (%s)", email, name)
-			if name == "" {
-				detail = email
+
+	// Strategy 1 (macOS): read the namespaced keychain entry Claude Code
+	// writes in v2.1.56+. Gives us the real access token and expiry.
+	if runtime.GOOS == "darwin" {
+		if kc, err := ReadMacKeychainOAuth(profileDir); err == nil && kc != nil && kc.AccessToken != "" {
+			detail := accountDetailFromClaudeJSON(claudeFile)
+			if detail == "" {
+				detail = kc.Email
 			}
-			return CredStatus{Valid: true, Method: "oauth", Detail: detail}
+			return buildOAuthStatus(detail, kc.ExpiresAt, "keychain")
 		}
 	}
 
-	// Strategy 2: Check .credentials.json (Linux/Windows primary method)
+	// Strategy 2: .credentials.json (Linux/Windows primary method, and a
+	// legacy fallback on older macOS Claude Code releases).
 	credFile := filepath.Join(profileDir, ".credentials.json")
 	if data, err := os.ReadFile(credFile); err == nil {
 		var creds credentialsJSON
 		if err := json.Unmarshal(data, &creds); err == nil && creds.AccessToken != "" {
+			var expiry time.Time
 			if creds.ExpiresAt != "" {
-				expiry, err := time.Parse(time.RFC3339, creds.ExpiresAt)
-				if err == nil {
-					if time.Now().After(expiry) {
-						return CredStatus{Valid: false, Method: "oauth", Detail: "token expired", ExpireAt: creds.ExpiresAt}
-					}
-					remaining := time.Until(expiry)
-					if remaining < 7*24*time.Hour {
-						return CredStatus{Valid: true, Method: "oauth", Detail: fmt.Sprintf("expires in %s", remaining.Round(time.Hour)), ExpireAt: creds.ExpiresAt}
-					}
+				if parsed, perr := time.Parse(time.RFC3339, creds.ExpiresAt); perr == nil {
+					expiry = parsed
 				}
 			}
-			return CredStatus{Valid: true, Method: "oauth", Detail: "authenticated", ExpireAt: creds.ExpiresAt}
+			return buildOAuthStatus(accountDetailFromClaudeJSON(claudeFile), expiry, "file")
 		}
 	}
 
-	// Strategy 3: Check if userID exists in .claude.json (weaker signal but still valid)
+	// Strategy 3: fall back to .claude.json metadata. Lower fidelity — no
+	// expiry information — but at least confirms "someone logged in here".
 	if data, err := os.ReadFile(claudeFile); err == nil {
 		var cj claudeJSON
-		if err := json.Unmarshal(data, &cj); err == nil && cj.UserID != "" {
-			if runtime.GOOS == "darwin" {
+		if err := json.Unmarshal(data, &cj); err == nil {
+			if cj.OAuthAccount != nil {
+				email := cj.OAuthAccount.EmailAddress
+				name := cj.OAuthAccount.DisplayName
+				detail := email
+				if name != "" {
+					detail = fmt.Sprintf("%s (%s)", email, name)
+				}
+				return CredStatus{Valid: true, Method: "oauth", Detail: detail}
+			}
+			if cj.UserID != "" && runtime.GOOS == "darwin" {
 				return CredStatus{Valid: true, Method: "oauth", Detail: "authenticated (keychain)"}
 			}
 		}
 	}
 
 	return CredStatus{Valid: false, Method: "oauth", Detail: "not authenticated"}
+}
+
+// accountDetailFromClaudeJSON returns the "email (display name)" string for a
+// profile when the .claude.json file has oauthAccount metadata. Empty string
+// if the file is missing or malformed.
+func accountDetailFromClaudeJSON(claudeFile string) string {
+	data, err := os.ReadFile(claudeFile)
+	if err != nil {
+		return ""
+	}
+	var cj claudeJSON
+	if err := json.Unmarshal(data, &cj); err != nil || cj.OAuthAccount == nil {
+		return ""
+	}
+	email := cj.OAuthAccount.EmailAddress
+	name := cj.OAuthAccount.DisplayName
+	if name != "" && email != "" {
+		return fmt.Sprintf("%s (%s)", email, name)
+	}
+	if email != "" {
+		return email
+	}
+	return name
+}
+
+// buildOAuthStatus assembles a CredStatus with a friendly detail line,
+// including expiry warnings when the expiry time is known.
+func buildOAuthStatus(account string, expiry time.Time, source string) CredStatus {
+	detail := account
+	if detail == "" {
+		detail = "authenticated"
+	}
+	if !expiry.IsZero() {
+		if time.Now().After(expiry) {
+			return CredStatus{Valid: false, Method: "oauth", Detail: fmt.Sprintf("%s — token expired", detail), ExpireAt: expiry.Format(time.RFC3339)}
+		}
+		remaining := time.Until(expiry)
+		if remaining < 7*24*time.Hour {
+			detail = fmt.Sprintf("%s — expires in %s", detail, remaining.Round(time.Hour))
+		}
+		return CredStatus{Valid: true, Method: "oauth", Detail: detail, ExpireAt: expiry.Format(time.RFC3339)}
+	}
+	if source == "keychain" {
+		detail = fmt.Sprintf("%s (keychain)", detail)
+	}
+	return CredStatus{Valid: true, Method: "oauth", Detail: detail}
 }
