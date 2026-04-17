@@ -32,3 +32,4 @@ dist/
 SUMMARY.md
 demo.*
 .claude/*
+graphify-out/*
