@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/ccpm/internal/config"
+	"github.com/nitin-1926/ccpm/internal/credentials"
 )
 
 var setDefaultCmd = &cobra.Command{
@@ -44,11 +45,23 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("profile %q not found", name)
 	}
 
-	// On Linux/Windows, copy .credentials.json to ~/.claude/
-	if runtime.GOOS != "darwin" && p.AuthMethod == "oauth" {
-		if err := copyCredentialsToDefault(p.Dir); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not copy credentials to ~/.claude/: %v\n", err)
+	yellow := color.New(color.FgYellow)
+
+	switch p.AuthMethod {
+	case "oauth":
+		if runtime.GOOS == "darwin" {
+			if err := copyKeychainToDefaultMac(p.Dir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not copy macOS keychain entry into the default slot: %v\n", err)
+				yellow.Println("  → IDE extensions on macOS may keep using the previous default until the next `set-default`.")
+			}
+		} else {
+			if err := copyCredentialsToDefault(p.Dir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not copy credentials to ~/.claude/: %v\n", err)
+			}
 		}
+	case "api_key":
+		yellow.Println("  Note: VS Code and other IDEs read ANTHROPIC_API_KEY from your environment,")
+		yellow.Println("        not from ccpm. `set-default` only affects OAuth profiles.")
 	}
 
 	cfg.DefaultProfile = name
@@ -103,4 +116,29 @@ func copyCredentialsToDefault(profileDir string) error {
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err
+}
+
+// copyKeychainToDefaultMac copies a profile's namespaced keychain OAuth entry
+// into the "plain" Claude Code-credentials entry that IDE extensions read.
+// Both entries are written via go-keyring so ACLs stay permissive.
+func copyKeychainToDefaultMac(profileDir string) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	kc, err := credentials.ReadMacKeychainOAuth(profileDir)
+	if err != nil {
+		return fmt.Errorf("reading namespaced keychain entry: %w", err)
+	}
+	if kc == nil || kc.Raw == "" {
+		return fmt.Errorf("profile has no OAuth entry in the keychain — login first with `ccpm auth refresh`")
+	}
+	// The "default" slot is the same service name but without the per-dir
+	// hash. We write using the ccpm keychain helpers by targeting the home
+	// directory (equivalent to ~/.claude).
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	defaultDir := filepath.Join(home, ".claude")
+	return credentials.WriteMacKeychainOAuth(defaultDir, kc.Raw)
 }

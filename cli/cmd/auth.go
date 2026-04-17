@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -196,10 +197,9 @@ func runAuthBackup(cmd *cobra.Command, args []string) error {
 	var data []byte
 	switch p.AuthMethod {
 	case "oauth":
-		credFile := filepath.Join(p.Dir, ".credentials.json")
-		data, err = os.ReadFile(credFile)
+		data, err = readOAuthCredentialsForBackup(p.Dir)
 		if err != nil {
-			return fmt.Errorf("reading credentials file: %w", err)
+			return err
 		}
 	case "api_key":
 		key, err := store.GetAPIKey(name)
@@ -240,9 +240,8 @@ func runAuthRestore(cmd *cobra.Command, args []string) error {
 
 	switch p.AuthMethod {
 	case "oauth":
-		credFile := filepath.Join(p.Dir, ".credentials.json")
-		if err := os.WriteFile(credFile, data, 0600); err != nil {
-			return fmt.Errorf("writing credentials file: %w", err)
+		if err := writeOAuthCredentialsForRestore(p.Dir, data); err != nil {
+			return err
 		}
 	case "api_key":
 		if err := store.SetAPIKey(name, string(data)); err != nil {
@@ -251,5 +250,42 @@ func runAuthRestore(cmd *cobra.Command, args []string) error {
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Credentials restored for profile %q\n", name)
+	return nil
+}
+
+// readOAuthCredentialsForBackup returns the raw bytes to stuff in the vault
+// for an OAuth profile. On macOS we pull from the namespaced keychain entry
+// Claude Code writes; on Linux/Windows we read the legacy .credentials.json.
+func readOAuthCredentialsForBackup(profileDir string) ([]byte, error) {
+	if runtime.GOOS == "darwin" {
+		kc, err := credentials.ReadMacKeychainOAuth(profileDir)
+		if err != nil {
+			return nil, fmt.Errorf("reading macOS keychain OAuth entry: %w", err)
+		}
+		if kc == nil || kc.Raw == "" {
+			return nil, fmt.Errorf("no OAuth entry found in macOS keychain for this profile; log in with `ccpm auth refresh` first")
+		}
+		return []byte(kc.Raw), nil
+	}
+	credFile := filepath.Join(profileDir, ".credentials.json")
+	data, err := os.ReadFile(credFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading credentials file: %w", err)
+	}
+	return data, nil
+}
+
+// writeOAuthCredentialsForRestore is the inverse of readOAuthCredentialsForBackup.
+func writeOAuthCredentialsForRestore(profileDir string, data []byte) error {
+	if runtime.GOOS == "darwin" {
+		if err := credentials.WriteMacKeychainOAuth(profileDir, string(data)); err != nil {
+			return fmt.Errorf("writing macOS keychain OAuth entry: %w", err)
+		}
+		return nil
+	}
+	credFile := filepath.Join(profileDir, ".credentials.json")
+	if err := os.WriteFile(credFile, data, 0600); err != nil {
+		return fmt.Errorf("writing credentials file: %w", err)
+	}
 	return nil
 }
