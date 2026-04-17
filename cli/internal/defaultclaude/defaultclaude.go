@@ -496,7 +496,7 @@ func Snapshot(targets []Target) (*Fingerprint, error) {
 				return nil, err
 			}
 			rel, _ := filepath.Rel(root, sub)
-			fp.Files[rel] = hash
+			fp.Files[filepath.ToSlash(rel)] = hash
 			continue
 		}
 
@@ -515,7 +515,7 @@ func Snapshot(targets []Target) (*Fingerprint, error) {
 			if err != nil {
 				return err
 			}
-			fp.Files[rel] = hash
+			fp.Files[filepath.ToSlash(rel)] = hash
 			return nil
 		}); err != nil {
 			return nil, err
