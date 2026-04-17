@@ -1,6 +1,6 @@
 {
   "name": "@ngcodes/ccpm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claude Code Profile Manager — manage multiple Claude Code accounts with isolated profiles",
   "bin": {
     "ccpm": "bin/ccpm"
@@ -36,8 +36,15 @@
   "bugs": {
     "url": "https://github.com/nitin-1926/claude-code-profile-manager/issues"
   },
-  "os": ["darwin", "linux", "win32"],
-  "cpu": ["x64", "arm64"],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "engines": {
     "node": ">=16"
   }
