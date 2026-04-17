@@ -12,8 +12,12 @@ import (
 
 	"github.com/nitin-1926/ccpm/internal/claude"
 	"github.com/nitin-1926/ccpm/internal/config"
+	"github.com/nitin-1926/ccpm/internal/defaultclaude"
 	"github.com/nitin-1926/ccpm/internal/keystore"
 	"github.com/nitin-1926/ccpm/internal/profile"
+	"github.com/nitin-1926/ccpm/internal/settingsmerge"
+	profilesync "github.com/nitin-1926/ccpm/internal/sync"
+	"github.com/nitin-1926/ccpm/internal/wizard"
 )
 
 var addCmd = &cobra.Command{
@@ -75,6 +79,23 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	bold := color.New(color.Bold)
 	green := color.New(color.FgGreen, color.Bold)
+
+	// Import-source wizard: offer to seed the new profile from ~/.claude or
+	// another existing profile before we hit the auth step. Failures here
+	// are surfaced as warnings — the profile is already created and the
+	// user can still import later.
+	existing := config.ProfileNames(cfg)
+	if defaultclaude.Exists() || len(existing) > 0 {
+		fmt.Println()
+		decision, err := wizard.PromptImportSource(os.Stdin, os.Stdout, existing, defaultclaude.Exists())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: import wizard failed: %v\n", err)
+		} else if decision.Source != wizard.SourceScratch {
+			if err := applyImportDecision(dir, name, decision, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: import step failed: %v\n", err)
+			}
+		}
+	}
 
 	switch authMethod {
 	case "oauth":
@@ -147,6 +168,46 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		green.Printf("✓ Set as default profile (first profile)\n")
 	}
 
+	// Apply global installs (skills, etc.) to the new profile
+	if err := profilesync.ApplyGlobals(dir, name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not apply global installs: %v\n", err)
+	}
+
 	fmt.Printf("\nRun claude with this profile:\n  ccpm run %s\n", name)
+	return nil
+}
+
+// applyImportDecision runs the import the wizard selected against the newly
+// created profile directory. After any successful import we re-materialize
+// settings + MCP so the new profile is launch-ready.
+func applyImportDecision(profileDir, profileName string, d wizard.Decision, cfg *config.Config) error {
+	switch d.Source {
+	case wizard.SourceDefault:
+		if _, err := defaultclaude.Import(profileDir, defaultclaude.ImportOptions{
+			Targets:     d.Targets,
+			Dedupe:      true,
+			ProfileName: profileName,
+		}); err != nil {
+			return err
+		}
+		if err := mergeImportedSettings(profileDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: settings merge failed: %v\n", err)
+		}
+	case wizard.SourceProfile:
+		srcProfile, ok := cfg.Profiles[d.ProfileName]
+		if !ok {
+			return fmt.Errorf("source profile %q not found", d.ProfileName)
+		}
+		if err := importFromProfile(srcProfile.Dir, profileDir, d.Targets, false); err != nil {
+			return err
+		}
+	}
+
+	if err := settingsmerge.Materialize(profileDir, profileName); err != nil {
+		return fmt.Errorf("materializing settings: %w", err)
+	}
+	if err := settingsmerge.MaterializeMCP(profileDir, profileName); err != nil {
+		return fmt.Errorf("materializing MCP: %w", err)
+	}
 	return nil
 }
