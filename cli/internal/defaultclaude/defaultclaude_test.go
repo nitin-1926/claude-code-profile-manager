@@ -3,22 +3,21 @@ package defaultclaude
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func withHome(t *testing.T, home string) {
 	t.Helper()
-	prev, had := os.LookupEnv("HOME")
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("setenv HOME: %v", err)
+	// os.UserHomeDir() reads different env vars per platform:
+	//   * Unix/macOS: $HOME
+	//   * Windows: %USERPROFILE% (falls back to %HOMEDRIVE%%HOMEPATH%)
+	// t.Setenv handles restore + parallel-safety and fails the test if
+	// the env can't be set.
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
 	}
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv("HOME", prev)
-		} else {
-			_ = os.Unsetenv("HOME")
-		}
-	})
 }
 
 func writeFile(t *testing.T, path, content string) {
