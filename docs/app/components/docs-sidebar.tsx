@@ -22,10 +22,19 @@ const groups: Group[] = [
     ],
   },
   {
-    title: "Security",
+    title: "Sharing & sync",
     items: [
+      { id: "import", label: "Import & wizard" },
+      { id: "skills", label: "Skills, MCP, settings" },
+      { id: "mcp-auth", label: "MCP auth model" },
+      { id: "settings-precedence", label: "Settings precedence" },
+    ],
+  },
+  {
+    title: "Operations",
+    items: [
+      { id: "doctor", label: "Doctor" },
       { id: "vault", label: "Vault backup" },
-      { id: "privacy", label: "Privacy & security" },
     ],
   },
   {
@@ -33,6 +42,7 @@ const groups: Group[] = [
     items: [
       { id: "shell", label: "Shell integration" },
       { id: "ide", label: "IDE / VS Code" },
+      { id: "privacy", label: "Privacy & security" },
       { id: "platforms", label: "Platform support" },
       { id: "limitations", label: "Known limitations" },
     ],
@@ -61,7 +71,7 @@ export function DocsSidebar() {
         const firstVisible = allIds.find((id) => visible.has(id));
         if (firstVisible) setActive(firstVisible);
       },
-      { rootMargin: "-72px 0px -70% 0px", threshold: 0 }
+      { rootMargin: "-72px 0px -70% 0px", threshold: 0 },
     );
 
     for (const id of allIds) {

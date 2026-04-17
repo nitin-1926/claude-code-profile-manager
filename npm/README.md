@@ -55,6 +55,7 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 - **Parallel sessions**: run different Claude Code accounts in different terminals simultaneously
 - **Full isolation**: each profile has its own credentials, settings, MCP servers, projects, and memory
 - **OAuth + API key**: supports both authentication methods per profile
+- **Skills, MCP, and settings management**: install globally or per-profile with `--global` / `--profile`
 - **Encrypted vault**: AES-256-GCM encrypted credential backups with master key in your OS keychain
 - **IDE support**: set the default profile for VS Code with `ccpm set-default`
 - **Shell integration**: `ccpm use` sets the profile for your entire shell session
@@ -62,28 +63,33 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `ccpm add <name>` | Create a new profile (OAuth or API key) |
-| `ccpm run <name>` | Launch Claude Code with a profile |
-| `ccpm use <name>` | Set profile for the current shell session |
-| `ccpm list` | List all profiles and their status |
-| `ccpm status` | Show system overview |
-| `ccpm set-default <name>` | Set the default profile for IDEs |
-| `ccpm auth status` | Check credential validity for all profiles |
-| `ccpm auth refresh <name>` | Re-authenticate a profile |
-| `ccpm auth backup <name>` | Create encrypted credential backup |
-| `ccpm auth restore <name>` | Restore credentials from backup |
-| `ccpm remove <name>` | Delete a profile |
-| `ccpm shell-init` | Print shell hook for `ccpm use` support |
+| Command                                   | Description                                                               |
+| ----------------------------------------- | ------------------------------------------------------------------------- |
+| `ccpm add <name>`                         | Create a new profile (OAuth or API key) with an interactive import wizard |
+| `ccpm run <name>`                         | Launch Claude Code with a profile                                         |
+| `ccpm use <name>`                         | Set profile for the current shell session                                 |
+| `ccpm list`                               | List all profiles and their status                                        |
+| `ccpm status`                             | Show system overview                                                      |
+| `ccpm doctor`                             | Diagnose env, auth health, root-vs-profile drift, symlink integrity       |
+| `ccpm set-default <name>`                 | Set the default profile for IDEs                                          |
+| `ccpm remove <name>`                      | Delete a profile                                                          |
+| `ccpm sync`                               | Sync global installs into profiles                                        |
+| `ccpm import default`                     | Import assets from `~/.claude` (symlinked via shared store)               |
+| `ccpm import from-profile`                | Clone assets from one ccpm profile to another                             |
+| `ccpm skill add/remove/list/link`         | Manage Claude Code skills                                                 |
+| `ccpm mcp add/remove/list/import`         | Manage MCP servers                                                        |
+| `ccpm settings set/get/apply/show`        | Manage Claude Code settings                                               |
+| `ccpm auth status/refresh/backup/restore` | Manage authentication                                                     |
 
 ## How it works
 
 ccpm uses one official mechanism: the `CLAUDE_CONFIG_DIR` environment variable.
 
 1. `ccpm add` creates `~/.ccpm/profiles/<name>/` with its own config and credentials
-2. `ccpm run` sets `CLAUDE_CONFIG_DIR` to that directory and execs `claude`
+2. `ccpm run` merges shared settings/MCP fragments, sets `CLAUDE_CONFIG_DIR`, and execs `claude`
 3. Each terminal gets a completely isolated Claude Code instance
+
+Skills, MCP servers, and settings can be installed globally (`--global`) to apply across all profiles, or per-profile (`--profile <name>`). Global skills are symlinked into each profile from `~/.ccpm/share/`; settings and MCP definitions are stored as JSON fragments and merged into each profile's `settings.json` at launch time.
 
 No daemons. No patches. No magic.
 
@@ -98,16 +104,29 @@ ccpm is 100% local. It never makes network requests, never collects data, and ne
 
 ## Platform support
 
-| Feature | macOS | Linux | Windows |
-|---|---|---|---|
-| OAuth | Keychain (per profile) | .credentials.json | .credentials.json |
-| API key storage | Keychain | Secret Service | Credential Manager |
-| Parallel sessions | Yes | Yes | Yes |
-| Shell hook | zsh, bash, fish | zsh, bash, fish | PowerShell |
+| Feature            | macOS                                    | Linux             | Windows                           |
+| ------------------ | ---------------------------------------- | ----------------- | --------------------------------- |
+| OAuth per-profile  | Keychain entry namespaced by profile dir | .credentials.json | .credentials.json                 |
+| API key storage    | Keychain                                 | Secret Service    | Credential Manager                |
+| Parallel sessions  | Yes                                      | Yes               | Yes                               |
+| Shared skill dedup | Symlinks                                 | Symlinks          | Symlinks (Developer Mode) or copy |
+| Shell hook         | zsh, bash, fish                          | zsh, bash, fish   | PowerShell                        |
+
+> **Requires Claude Code `v2.1.56` or newer for macOS OAuth isolation.** Earlier versions share a single keychain entry across all profiles. `ccpm doctor` warns on older versions.
+
+## MCP authentication model
+
+MCP servers authenticate in one of three ways, and ccpm isolates each differently:
+
+1. **Env-var-based (isolated)** — tokens live in the per-profile MCP fragment. Each profile can carry a different value. Use `ccpm mcp add <name> --env KEY=VALUE --profile <name>`.
+2. **OAuth MCPs (isolated)** — Claude Code caches OAuth tokens inside `<CLAUDE_CONFIG_DIR>/.claude.json`, which is per-profile.
+3. **Globally-cached MCPs (shared)** — MCPs that write to `~/.config/<service>` or a fixed-name keychain entry are shared across every profile. ccpm cannot isolate them without upstream changes.
 
 ## Known limitations
 
-- **VS Code extension**: The Claude VS Code extension always reads from `~/.claude`. Use `ccpm set-default` to set which account it uses.
+- **VS Code extension**: The Claude VS Code extension always reads from `~/.claude`. Use `ccpm set-default` to point it at a ccpm profile. On macOS this copies the namespaced keychain entry into the default slot.
+- **Windows without Developer Mode**: ccpm falls back to copying shared assets instead of symlinking, and writes a marker at `~/.ccpm/.windows-copy-fallback`. Turn on Developer Mode for true deduplication.
+- **Globally-cached MCP servers** (see the MCP auth model above) cannot be isolated per profile.
 - **Linux headless**: `go-keyring` requires D-Bus and a secret service (gnome-keyring or kwallet). On headless servers, API key profiles need a running secret service.
 
 ## Build from source
