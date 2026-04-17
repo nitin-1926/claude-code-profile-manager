@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	claudepkg "github.com/nitin-1926/ccpm/internal/claude"
 	"github.com/nitin-1926/ccpm/internal/config"
 	"github.com/nitin-1926/ccpm/internal/keystore"
+	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 )
 
 var runCmd = &cobra.Command{
@@ -39,6 +41,16 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Update last used
 	cfg.UpdateLastUsed(name)
 	_ = config.Save(cfg)
+
+	maybeNudgeDefaultDrift(cfg)
+
+	// Materialize shared settings/MCP into the profile dir before launch
+	if err := settingsmerge.Materialize(p.Dir, name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize settings: %v\n", err)
+	}
+	if err := settingsmerge.MaterializeMCP(p.Dir, name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
+	}
 
 	// Get API key if needed
 	var apiKey string

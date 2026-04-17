@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/ccpm/internal/config"
+	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/ccpm/internal/shell"
 )
 
@@ -42,6 +43,16 @@ func runUse(cmd *cobra.Command, args []string) error {
 	p, exists := cfg.Profiles[name]
 	if !exists {
 		return fmt.Errorf("profile %q not found", name)
+	}
+
+	maybeNudgeDefaultDrift(cfg)
+
+	// Materialize shared settings/MCP before activating
+	if err := settingsmerge.Materialize(p.Dir, name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize settings: %v\n", err)
+	}
+	if err := settingsmerge.MaterializeMCP(p.Dir, name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
 	}
 
 	// Update last used
