@@ -9,6 +9,37 @@ import (
 	"github.com/nitin-1926/ccpm/internal/share"
 )
 
+// loadHostClaudeJSONMCP reads the user's host ~/.claude.json (the one Claude
+// Code maintains without CLAUDE_CONFIG_DIR set) and returns its top-level
+// mcpServers map. Missing file or absent key returns an empty map. Kept local
+// to this package so the defaultclaude import pipeline doesn't need to grow a
+// dependency on the live host state.
+func loadHostClaudeJSONMCP() (map[string]interface{}, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return map[string]interface{}{}, nil
+	}
+	path := filepath.Join(home, ".claude.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]interface{}{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		// Malformed host state shouldn't break profile materialization —
+		// the same file has its own parse error recovery inside Claude Code.
+		return map[string]interface{}{}, nil
+	}
+	servers, _ := doc["mcpServers"].(map[string]interface{})
+	if servers == nil {
+		return map[string]interface{}{}, nil
+	}
+	return servers, nil
+}
+
 // DeepMerge merges src into dst recursively.
 // Objects merge key-by-key; all other types (arrays, scalars) in src overwrite dst.
 func DeepMerge(dst, src map[string]interface{}) map[string]interface{} {
@@ -115,51 +146,96 @@ func Materialize(profileDir, profileName string) error {
 	return WriteJSON(targetPath, merged)
 }
 
-// MaterializeMCP merges MCP server definitions from the global and profile
-// fragments into the profile's settings.json under the "mcpServers" key.
+// MaterializeMCP merges MCP server definitions into the profile's .claude.json
+// under the top-level "mcpServers" key — that's where Claude Code actually
+// reads user-scope MCP config from. settings.json#mcpServers is a no-op as far
+// as Claude Code is concerned, so any stale entries left there by earlier ccpm
+// versions are cleaned up here.
+//
+// Merge precedence (later wins):
+//  1. Host top-level ~/.claude.json#mcpServers
+//     — so any MCP installed via `claude mcp add --scope user`, `npx <thing>
+//       setup`, etc. auto-propagates into every profile. "Install anywhere,
+//       ccpm picks it up."
+//  2. ccpm global fragment ~/.ccpm/share/mcp/global.json
+//     — ccpm-managed servers shared across profiles.
+//  3. ccpm profile fragment ~/.ccpm/share/mcp/<profile>.json
+//     — profile-specific overrides win over everything else.
+//  4. Servers already present in <profile>/.claude.json#mcpServers that none
+//     of the above sources overwrote are preserved (e.g. the user ran
+//     `claude mcp add --scope user` *inside* a ccpm session).
 func MaterializeMCP(profileDir, profileName string) error {
 	mcpDir, err := share.MCPDir()
 	if err != nil {
 		return err
 	}
 
-	targetPath := filepath.Join(profileDir, "settings.json")
-	existing, err := LoadJSON(targetPath)
+	claudeJSONPath := filepath.Join(profileDir, ".claude.json")
+	existing, err := LoadJSON(claudeJSONPath)
 	if err != nil {
-		return fmt.Errorf("loading profile settings: %w", err)
+		return fmt.Errorf("loading profile .claude.json: %w", err)
 	}
 
+	// Layer 4 (lowest implicit priority — gets overwritten by everything else):
+	// preserve whatever the profile already had.
 	mcpServers := make(map[string]interface{})
 	if v, ok := existing["mcpServers"].(map[string]interface{}); ok {
-		mcpServers = v
+		for k, v := range v {
+			mcpServers[k] = v
+		}
 	}
 
-	// Only merge the global fragment and this profile's fragment. Reading
-	// every *.json in the directory would leak other profiles' MCP servers
-	// into this profile's settings.json.
-	if _, err := os.Stat(mcpDir); os.IsNotExist(err) {
-		return nil
+	// Layer 1: host ~/.claude.json top-level mcpServers.
+	if hostMCP, err := loadHostClaudeJSONMCP(); err != nil {
+		return fmt.Errorf("loading host ~/.claude.json mcpServers: %w", err)
+	} else {
+		for k, v := range hostMCP {
+			mcpServers[k] = v
+		}
 	}
 
-	globalMCP, err := LoadJSON(filepath.Join(mcpDir, "global.json"))
-	if err != nil {
-		return fmt.Errorf("loading global MCP fragment: %w", err)
-	}
-	for k, v := range globalMCP {
-		mcpServers[k] = v
-	}
+	// Layers 2 + 3: ccpm fragments. Only merge the global fragment and this
+	// profile's fragment — reading every *.json in the directory would leak
+	// other profiles' MCP servers into this profile's config.
+	if _, err := os.Stat(mcpDir); !os.IsNotExist(err) {
+		globalMCP, err := LoadJSON(filepath.Join(mcpDir, "global.json"))
+		if err != nil {
+			return fmt.Errorf("loading global MCP fragment: %w", err)
+		}
+		for k, v := range globalMCP {
+			mcpServers[k] = v
+		}
 
-	profileMCP, err := LoadJSON(filepath.Join(mcpDir, profileName+".json"))
-	if err != nil {
-		return fmt.Errorf("loading profile MCP fragment: %w", err)
-	}
-	for k, v := range profileMCP {
-		mcpServers[k] = v
+		profileMCP, err := LoadJSON(filepath.Join(mcpDir, profileName+".json"))
+		if err != nil {
+			return fmt.Errorf("loading profile MCP fragment: %w", err)
+		}
+		for k, v := range profileMCP {
+			mcpServers[k] = v
+		}
 	}
 
 	if len(mcpServers) > 0 {
 		existing["mcpServers"] = mcpServers
+		if err := WriteJSON(claudeJSONPath, existing); err != nil {
+			return fmt.Errorf("writing profile .claude.json: %w", err)
+		}
 	}
 
-	return WriteJSON(targetPath, existing)
+	// Clean up stale mcpServers left in settings.json by older ccpm versions.
+	// Claude Code never read that location, so any data there is either
+	// already-migrated (duplicated in .claude.json now) or was ineffective
+	// from the start.
+	settingsPath := filepath.Join(profileDir, "settings.json")
+	settings, serr := LoadJSON(settingsPath)
+	if serr == nil {
+		if _, present := settings["mcpServers"]; present {
+			delete(settings, "mcpServers")
+			if err := WriteJSON(settingsPath, settings); err != nil {
+				return fmt.Errorf("cleaning stale mcpServers from settings.json: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
