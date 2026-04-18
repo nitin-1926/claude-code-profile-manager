@@ -139,6 +139,27 @@ func DeleteMacKeychainOAuth(profileDir string) error {
 	return firstErr
 }
 
+// DeleteMacKeychainOAuthDefault removes every entry under every known account
+// name from the keychain slot that IDE extensions read (the service name
+// derived from ~/.claude itself). Used by `ccpm set-default` when switching
+// to an API-key profile, so the VSCode extension cannot silently keep using a
+// stale OAuth token from a previous default.
+func DeleteMacKeychainOAuthDefault(homeClaudeDir string) error {
+	service, err := KeychainService(homeClaudeDir)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, account := range commonKeychainAccounts {
+		if err := keyring.Delete(service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
 func readKeychainAnyAccount(service string) (string, error) {
 	raw, _, err := readKeychainAnyAccountWithName(service)
 	return raw, err

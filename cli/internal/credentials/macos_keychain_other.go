@@ -34,3 +34,7 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 func DeleteMacKeychainOAuth(profileDir string) error {
 	return nil
 }
+
+func DeleteMacKeychainOAuthDefault(homeClaudeDir string) error {
+	return nil
+}
