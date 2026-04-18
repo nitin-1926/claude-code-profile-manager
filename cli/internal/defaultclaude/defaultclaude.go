@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/nitin-1926/ccpm/internal/config"
+	"github.com/nitin-1926/ccpm/internal/filetree"
 	"github.com/nitin-1926/ccpm/internal/manifest"
+	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/ccpm/internal/share"
 )
 
@@ -29,7 +31,14 @@ const (
 	TargetHooks    Target = "hooks"
 	TargetAgents   Target = "agents"
 	TargetSettings Target = "settings"
+	TargetMCP      Target = "mcp"
 	TargetPlugins  Target = "plugins"
+)
+
+// MCP scope values for ImportOptions.MCPScope.
+const (
+	MCPImportScopeGlobal  = "global"
+	MCPImportScopeProfile = "profile"
 )
 
 // DefaultTargets returns the safe, opinionated default set (excludes plugins).
