@@ -130,6 +130,24 @@ type ImportOptions struct {
 	// ProfileName is used only for manifest tracking when Dedupe is true.
 	// Leave empty to skip manifest updates.
 	ProfileName string
+	// LiveSymlinks, when used with Dedupe on skills/agents/commands, makes each
+	// top-level entry that is a symlink-to-directory become a symlink in the
+	// share store (to the resolved absolute path) instead of a file copy, so
+	// edits in the original tree are visible through profiles without re-import.
+	LiveSymlinks bool
+	// ItemFilter restricts imports within a given target to a specific set of
+	// top-level entry names. A nil or missing map for a target means "import
+	// everything under this target". Keys:
+	//   - directory targets (skills/agents/commands/hooks/rules): the top-level
+	//     entry name as it appears in ~/.claude/<target>/.
+	//   - TargetMCP: the MCPEntry.ID() value (name for user-scope, "name@project"
+	//     for project-scope entries).
+	ItemFilter map[Target]map[string]bool
+	// MCPScope controls where imported MCP servers land:
+	//   "global"  -> ~/.ccpm/share/mcp/global.json   (all profiles see them)
+	//   "profile" -> ~/.ccpm/share/mcp/<profile>.json (only ProfileName sees them)
+	// Empty string defaults to "profile".
+	MCPScope string
 }
 
 // dedupableTargets is the set of directory targets we can safely symlink
@@ -175,6 +193,13 @@ func Import(profileDir string, opts ImportOptions) (*ImportPlan, error) {
 	plan := &ImportPlan{Profile: filepath.Base(profileDir)}
 
 	for _, t := range opts.Targets {
+		if t == TargetMCP {
+			if err := importMCP(plan, opts); err != nil {
+				return plan, err
+			}
+			continue
+		}
+
 		srcPath := targetPath(src, t)
 		dstPath := targetPath(profileDir, t)
 
