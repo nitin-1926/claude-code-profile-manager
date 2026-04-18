@@ -215,8 +215,11 @@ func TestMaterializeMCP(t *testing.T) {
 	globalBytes, _ := json.MarshalIndent(globalMCP, "", "  ")
 	os.WriteFile(filepath.Join(mcpDir, "global.json"), globalBytes, 0644)
 
-	// Existing profile settings with a pre-existing MCP server
+	// Existing profile .claude.json with a pre-existing user-scope MCP server
+	// and unrelated Claude Code state that must be preserved.
 	existing := map[string]interface{}{
+		"numStartups":   7,
+		"installMethod": "native",
 		"mcpServers": map[string]interface{}{
 			"slack": map[string]interface{}{
 				"command": "npx",
@@ -224,27 +227,156 @@ func TestMaterializeMCP(t *testing.T) {
 		},
 	}
 	existingBytes, _ := json.MarshalIndent(existing, "", "  ")
-	os.WriteFile(filepath.Join(profileDir, "settings.json"), existingBytes, 0644)
+	os.WriteFile(filepath.Join(profileDir, ".claude.json"), existingBytes, 0644)
 
 	if err := MaterializeMCP(profileDir, "work"); err != nil {
 		t.Fatalf("MaterializeMCP error: %v", err)
 	}
 
-	result, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
+	result, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
 	if err != nil {
 		t.Fatalf("LoadJSON error: %v", err)
 	}
 
-	servers, ok := result["mcpServers"].(map[string]interface{})
-	if !ok {
-		t.Fatal("mcpServers should be a map")
+	if result["installMethod"] != "native" {
+		t.Errorf("unrelated .claude.json keys must survive, got installMethod=%v", result["installMethod"])
 	}
 
+	servers, ok := result["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("mcpServers should be a map in .claude.json")
+	}
 	if _, ok := servers["github"]; !ok {
 		t.Error("github should be present from global MCP fragment")
 	}
 	if _, ok := servers["slack"]; !ok {
-		t.Error("slack should be preserved from existing settings")
+		t.Error("slack should be preserved from existing .claude.json")
+	}
+
+	// settings.json must NOT carry mcpServers — Claude Code never reads it there.
+	settings, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
+	if _, leaked := settings["mcpServers"]; leaked {
+		t.Error("mcpServers should not be written to settings.json")
+	}
+}
+
+// TestMaterializeMCPMergesHostClaudeJSON ensures MCPs installed at the host
+// level (via `claude mcp add --scope user`, `npx <x> setup`, etc.) flow into
+// every ccpm profile's materialized .claude.json automatically — so users
+// don't have to re-run `ccpm import default --only mcp` every time they add
+// a new server.
+func TestMaterializeMCPMergesHostClaudeJSON(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	// Host state: one user-scope MCP that exists outside ccpm.
+	hostClaude := map[string]interface{}{
+		"numStartups": 42,
+		"mcpServers": map[string]interface{}{
+			"gitnexus": map[string]interface{}{
+				"type":    "stdio",
+				"command": "npx",
+				"args":    []interface{}{"-y", "gitnexus", "mcp"},
+			},
+		},
+	}
+	hostBytes, _ := json.MarshalIndent(hostClaude, "", "  ")
+	os.WriteFile(filepath.Join(tmp, ".claude.json"), hostBytes, 0644)
+
+	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
+	os.MkdirAll(profileDir, 0755)
+
+	if err := MaterializeMCP(profileDir, "work"); err != nil {
+		t.Fatalf("MaterializeMCP: %v", err)
+	}
+
+	got, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("LoadJSON: %v", err)
+	}
+	servers, _ := got["mcpServers"].(map[string]interface{})
+	if _, ok := servers["gitnexus"]; !ok {
+		t.Fatalf("expected host-scope gitnexus to flow into profile; got %v", servers)
+	}
+}
+
+// TestMaterializeMCPProfileFragmentOverridesHost asserts the precedence:
+// a profile-specific fragment wins over the host ~/.claude.json entry with
+// the same name.
+func TestMaterializeMCPProfileFragmentOverridesHost(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	// Host defines gitnexus as v1.
+	hostClaude := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"gitnexus": map[string]interface{}{"version": "host"},
+		},
+	}
+	hb, _ := json.MarshalIndent(hostClaude, "", "  ")
+	os.WriteFile(filepath.Join(tmp, ".claude.json"), hb, 0644)
+
+	// Profile fragment overrides it.
+	mcpDir := filepath.Join(tmp, ".ccpm", "share", "mcp")
+	os.MkdirAll(mcpDir, 0755)
+	os.WriteFile(filepath.Join(mcpDir, "work.json"),
+		[]byte(`{"gitnexus":{"version":"profile"}}`), 0644)
+
+	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
+	os.MkdirAll(profileDir, 0755)
+
+	if err := MaterializeMCP(profileDir, "work"); err != nil {
+		t.Fatalf("MaterializeMCP: %v", err)
+	}
+	got, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
+	servers, _ := got["mcpServers"].(map[string]interface{})
+	entry, _ := servers["gitnexus"].(map[string]interface{})
+	if entry["version"] != "profile" {
+		t.Fatalf("profile fragment should win over host; got version=%v", entry["version"])
+	}
+}
+
+// TestMaterializeMCPCleansStaleSettings makes sure older ccpm versions that
+// wrote mcpServers into settings.json get cleaned up when the profile is
+// re-materialized. Stale data there is confusing — Claude Code never read it.
+func TestMaterializeMCPCleansStaleSettings(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	mcpDir := filepath.Join(tmp, ".ccpm", "share", "mcp")
+	os.MkdirAll(mcpDir, 0755)
+	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
+	os.MkdirAll(profileDir, 0755)
+
+	// Seed a fragment so MaterializeMCP has something to do.
+	os.WriteFile(filepath.Join(mcpDir, "global.json"), []byte(`{"gh":{"command":"npx"}}`), 0644)
+
+	// Stale settings.json shaped like what pre-fix ccpm wrote.
+	stale := map[string]interface{}{
+		"effortLevel": "high",
+		"mcpServers": map[string]interface{}{
+			"legacy": map[string]interface{}{"command": "old"},
+		},
+	}
+	staleBytes, _ := json.MarshalIndent(stale, "", "  ")
+	os.WriteFile(filepath.Join(profileDir, "settings.json"), staleBytes, 0644)
+
+	if err := MaterializeMCP(profileDir, "work"); err != nil {
+		t.Fatalf("MaterializeMCP: %v", err)
+	}
+
+	settings, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("LoadJSON settings: %v", err)
+	}
+	if _, present := settings["mcpServers"]; present {
+		t.Error("stale mcpServers should be stripped from settings.json")
+	}
+	if settings["effortLevel"] != "high" {
+		t.Errorf("non-MCP settings keys must survive cleanup, got %v", settings["effortLevel"])
 	}
 }
 
@@ -352,7 +484,7 @@ func TestMaterializeMCPIsolation(t *testing.T) {
 		t.Fatalf("MaterializeMCP error: %v", err)
 	}
 
-	result, err := LoadJSON(filepath.Join(personalDir, "settings.json"))
+	result, err := LoadJSON(filepath.Join(personalDir, ".claude.json"))
 	if err != nil {
 		t.Fatalf("LoadJSON error: %v", err)
 	}
