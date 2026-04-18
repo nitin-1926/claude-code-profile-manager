@@ -50,6 +50,7 @@ func DefaultTargets() []Target {
 		TargetHooks,
 		TargetAgents,
 		TargetSettings,
+		TargetMCP,
 	}
 }
 
@@ -71,13 +72,14 @@ func ParseTargets(values []string) ([]Target, error) {
 		"hooks":    TargetHooks,
 		"agents":   TargetAgents,
 		"settings": TargetSettings,
+		"mcp":      TargetMCP,
 		"plugins":  TargetPlugins,
 	}
 	result := make([]Target, 0, len(values))
 	for _, v := range values {
 		t, ok := known[v]
 		if !ok {
-			return nil, fmt.Errorf("unknown target %q (valid: skills, commands, rules, hooks, agents, settings, plugins)", v)
+			return nil, fmt.Errorf("unknown target %q (valid: skills, commands, rules, hooks, agents, settings, mcp, plugins)", v)
 		}
 		result = append(result, t)
 	}
