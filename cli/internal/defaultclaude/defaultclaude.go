@@ -235,9 +235,10 @@ func Import(profileDir string, opts ImportOptions) (*ImportPlan, error) {
 
 		// Directory target.
 		if info.IsDir() {
+			allow := opts.ItemFilter[t]
 			if opts.Dedupe && dedupableTargets()[t] {
 				if !opts.DryRun {
-					if err := importDirDeduped(srcPath, dstPath, t, opts); err != nil {
+					if err := importDirDeduped(srcPath, dstPath, t, opts, allow); err != nil {
 						return plan, fmt.Errorf("dedup-importing %s: %w", srcPath, err)
 					}
 				}
@@ -246,12 +247,12 @@ func Import(profileDir string, opts ImportOptions) (*ImportPlan, error) {
 					SourcePath: srcPath,
 					TargetPath: dstPath,
 					Kind:       "link",
-					Note:       "deduped via ~/.ccpm/share/" + string(t),
+					Note:       filterNote(allow, "deduped via ~/.ccpm/share/"+string(t)),
 				})
 				continue
 			}
 			if !opts.DryRun {
-				if err := copyTreeMerging(srcPath, dstPath, opts.Force); err != nil {
+				if err := copyDirFiltered(srcPath, dstPath, opts.Force, allow); err != nil {
 					return plan, fmt.Errorf("copying %s: %w", srcPath, err)
 				}
 			}
