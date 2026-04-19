@@ -369,17 +369,8 @@ func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions
 			storeExists = true
 		}
 		if !storeExists || opts.Force {
-			if err := os.RemoveAll(storePath); err != nil {
+			if _, err := filetree.SeedStoreEntry(srcPath, storePath, opts.LiveSymlinks); err != nil {
 				return err
-			}
-			if entry.IsDir() {
-				if err := copyTreeMerging(srcPath, storePath, true); err != nil {
-					return err
-				}
-			} else {
-				if err := copyFile(srcPath, storePath); err != nil {
-					return err
-				}
 			}
 		}
 
@@ -423,33 +414,177 @@ func containsString(xs []string, target string) bool {
 // copyTreeMerging walks src and copies files into dst. Existing files are
 // preserved unless force=true.
 func copyTreeMerging(src, dst string, force bool) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
+	return filetree.CopyTree(src, dst, !force)
+}
 
+// copyDirFiltered copies top-level entries of srcDir into dstDir. When allow
+// is nil every entry is copied (equivalent to copyTreeMerging). When allow is
+// set only matching top-level entry names are copied; each selected entry is
+// walked recursively with the same preserve-existing-unless-force semantics as
+// copyTreeMerging.
+func copyDirFiltered(srcDir, dstDir string, force bool, allow map[string]bool) error {
+	if allow == nil {
+		return copyTreeMerging(srcDir, dstDir, force)
+	}
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !allow[name] {
+			continue
+		}
+		srcPath := filepath.Join(srcDir, name)
+		dstPath := filepath.Join(dstDir, name)
+
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			return err
+		}
 		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
+			if err := filetree.CopyTree(srcPath, dstPath, !force); err != nil {
+				return err
+			}
+			continue
 		}
-
-		if _, err := os.Stat(target); err == nil && !force {
-			return nil
+		if !force {
+			if _, err := os.Stat(dstPath); err == nil {
+				continue
+			}
 		}
-
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		if err := copyFile(srcPath, dstPath); err != nil {
 			return err
 		}
-		data, err := os.ReadFile(path)
+	}
+	return nil
+}
+
+// importMCP reads MCP server definitions from ~/.claude.json and writes the
+// selected ones into a ccpm MCP fragment. Destination is determined by
+// opts.MCPScope: "global" writes to ~/.ccpm/share/mcp/global.json; anything
+// else falls back to the profile-scoped fragment for opts.ProfileName.
+func importMCP(plan *ImportPlan, opts ImportOptions) error {
+	if !ClaudeJSONExists() {
+		path, _ := ClaudeJSONPath()
+		plan.Actions = append(plan.Actions, ImportAction{
+			Target:     TargetMCP,
+			SourcePath: path,
+			Kind:       "skip-missing",
+			Note:       "~/.claude.json not found",
+		})
+		return nil
+	}
+
+	entries, err := LoadMCPEntries()
+	if err != nil {
+		return fmt.Errorf("reading MCP entries: %w", err)
+	}
+	allow := opts.ItemFilter[TargetMCP]
+
+	scope := opts.MCPScope
+	if scope == "" {
+		scope = MCPImportScopeProfile
+	}
+	fragmentName := "global"
+	if scope != MCPImportScopeGlobal {
+		fragmentName = opts.ProfileName
+		if fragmentName == "" {
+			return fmt.Errorf("profile-scoped MCP import requires ProfileName")
+		}
+	}
+
+	selected := make([]MCPEntry, 0, len(entries))
+	for _, e := range entries {
+		if allow != nil && !allow[e.ID()] {
+			continue
+		}
+		selected = append(selected, e)
+	}
+
+	if len(selected) == 0 {
+		plan.Actions = append(plan.Actions, ImportAction{
+			Target: TargetMCP,
+			Kind:   "skip-missing",
+			Note:   "no MCP entries selected",
+		})
+		return nil
+	}
+
+	mcpDir, err := share.MCPDir()
+	if err != nil {
+		return err
+	}
+	fragPath := filepath.Join(mcpDir, fragmentName+".json")
+
+	if !opts.DryRun {
+		if err := share.EnsureDirs(); err != nil {
+			return err
+		}
+		frag, err := settingsmerge.LoadJSON(fragPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("loading MCP fragment %s: %w", fragPath, err)
 		}
-		return os.WriteFile(target, data, info.Mode())
-	})
+		for _, e := range selected {
+			if _, exists := frag[e.Name]; exists && !opts.Force {
+				// Preserve existing definitions — matches the "don't clobber
+				// without --force" rule used elsewhere in Import.
+				continue
+			}
+			frag[e.Name] = e.Definition
+		}
+		if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
+			return fmt.Errorf("writing MCP fragment %s: %w", fragPath, err)
+		}
+
+		if opts.ProfileName != "" {
+			if err := recordMCPInstalls(selected, scope, opts.ProfileName); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, e := range selected {
+		plan.Actions = append(plan.Actions, ImportAction{
+			Target:     TargetMCP,
+			SourcePath: e.Source(),
+			TargetPath: fragPath,
+			Kind:       "mcp-add",
+			Note:       fmt.Sprintf("%s → %s scope", e.Name, scope),
+		})
+	}
+	return nil
+}
+
+// recordMCPInstalls updates the ccpm manifest so `ccpm mcp list` shows the
+// imported servers alongside ones added via `ccpm mcp add`. Scope+Profiles are
+// set to match where the fragment actually lives.
+func recordMCPInstalls(entries []MCPEntry, scope, profileName string) error {
+	m, err := manifest.Load()
+	if err != nil {
+		return fmt.Errorf("loading manifest: %w", err)
+	}
+	for _, e := range entries {
+		if existing := m.Find(e.Name, manifest.KindMCP); existing != nil {
+			m.Remove(e.Name, manifest.KindMCP)
+		}
+		inst := manifest.Install{
+			ID:     e.Name,
+			Kind:   manifest.KindMCP,
+			Source: e.Source(),
+		}
+		if scope == MCPImportScopeGlobal {
+			inst.Scope = manifest.ScopeGlobal
+		} else {
+			inst.Scope = manifest.ScopeProfile
+			inst.Profiles = []string{profileName}
+		}
+		m.Add(inst)
+	}
+	return manifest.Save(m)
 }
 
 // Fingerprint is a compact snapshot of the default ~/.claude tree used
@@ -556,29 +691,76 @@ func Snapshot(targets []Target) (*Fingerprint, error) {
 			continue
 		}
 
-		if err := filepath.Walk(sub, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				return nil
-			}
-			hash, err := hashFile(path)
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			fp.Files[filepath.ToSlash(rel)] = hash
-			return nil
-		}); err != nil {
+		if err := hashWalk(root, sub, sub, fp.Files); err != nil {
 			return nil, err
 		}
 	}
 
 	return fp, nil
+}
+
+// hashWalk adds every regular file reachable from physDir to files, keyed by
+// its logical path relative to root. Symlink-to-directory entries are
+// transparently followed (filepath.Walk uses Lstat and would misclassify them
+// as files, causing hashFile -> os.Open to fail with EISDIR — same bug class
+// as was fixed in CopyTree on 2026-04-17).
+//
+// logDir tracks the logical path under root so the fingerprint keys stay
+// pinned to ~/.claude/<...> even when the walk crosses into a resolved
+// symlink target that lives elsewhere on disk.
+func hashWalk(root, physDir, logDir string, files map[string]string) error {
+	entries, err := os.ReadDir(physDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		physPath := filepath.Join(physDir, e.Name())
+		logPath := filepath.Join(logDir, e.Name())
+
+		info, err := os.Lstat(physPath)
+		if err != nil {
+			return err
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Stat(physPath)
+			if err != nil {
+				// Broken symlinks are silently skipped — they can't be
+				// hashed and aren't a drift signal on their own.
+				continue
+			}
+			if target.IsDir() {
+				resolved, err := filepath.EvalSymlinks(physPath)
+				if err != nil {
+					return err
+				}
+				if err := hashWalk(root, resolved, logPath, files); err != nil {
+					return err
+				}
+				continue
+			}
+			// Symlink to regular file: fall through to the file-hash path
+			// below; os.Open will follow the link naturally.
+		}
+
+		if info.IsDir() {
+			if err := hashWalk(root, physPath, logPath, files); err != nil {
+				return err
+			}
+			continue
+		}
+
+		hash, err := hashFile(physPath)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, logPath)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = hash
+	}
+	return nil
 }
 
 func hashFile(path string) (string, error) {
