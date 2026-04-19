@@ -261,6 +261,7 @@ func Import(profileDir string, opts ImportOptions) (*ImportPlan, error) {
 				SourcePath: srcPath,
 				TargetPath: dstPath,
 				Kind:       "copy",
+				Note:       filterNote(allow, ""),
 			})
 			continue
 		}
@@ -280,6 +281,19 @@ func Import(profileDir string, opts ImportOptions) (*ImportPlan, error) {
 	}
 
 	return plan, nil
+}
+
+// filterNote annotates a plan action when a non-nil filter was applied so it's
+// clear to the user that only a subset was imported.
+func filterNote(allow map[string]bool, base string) string {
+	if allow == nil {
+		return base
+	}
+	note := fmt.Sprintf("filtered (%d selected)", len(allow))
+	if base == "" {
+		return note
+	}
+	return base + "; " + note
 }
 
 func copyFile(src, dst string) error {
