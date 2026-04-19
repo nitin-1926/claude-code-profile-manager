@@ -160,6 +160,237 @@ func TestImportForceOverwrites(t *testing.T) {
 	}
 }
 
+func TestImportDedupeLiveSymlinks(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home)
+	ccpmBase := filepath.Join(home, ".ccpm")
+	if err := os.MkdirAll(ccpmBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeSkills := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(claudeSkills, 0755); err != nil {
+		t.Fatal(err)
+	}
+	realSkill := filepath.Join(t.TempDir(), "myskill")
+	if err := os.MkdirAll(realSkill, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(realSkill, "SKILL.md"), "live-body\n")
+	link := filepath.Join(claudeSkills, "myskill")
+	if err := os.Symlink(realSkill, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	profile := filepath.Join(t.TempDir(), "prof")
+	if err := os.MkdirAll(profile, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Import(profile, ImportOptions{
+		Targets:      []Target{TargetSkills},
+		Dedupe:       true,
+		ProfileName:  "prof",
+		LiveSymlinks: true,
+	}); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	storePath := filepath.Join(ccpmBase, "share", "skills", "myskill")
+	fi, err := os.Lstat(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("expected store path to be a symlink")
+	}
+	gotResolved, err := filepath.EvalSymlinks(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(realSkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotResolved != wantResolved {
+		t.Fatalf("store resolves to %q, want %q", gotResolved, wantResolved)
+	}
+
+	profSkill := filepath.Join(profile, "skills", "myskill", "SKILL.md")
+	data, err := os.ReadFile(profSkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "live-body\n" {
+		t.Fatalf("via profile chain read %q", data)
+	}
+
+	writeFile(t, filepath.Join(realSkill, "SKILL.md"), "updated\n")
+	data2, err := os.ReadFile(profSkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data2) != "updated\n" {
+		t.Fatalf("after live edit read %q", data2)
+	}
+}
+
+func TestImportItemFilterSkills(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home)
+	claudeSkills := filepath.Join(home, ".claude", "skills")
+	writeFile(t, filepath.Join(claudeSkills, "keep", "SKILL.md"), "keep-body\n")
+	writeFile(t, filepath.Join(claudeSkills, "drop", "SKILL.md"), "drop-body\n")
+
+	profile := filepath.Join(t.TempDir(), "p")
+	if err := os.MkdirAll(profile, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Import(profile, ImportOptions{
+		Targets: []Target{TargetSkills},
+		ItemFilter: map[Target]map[string]bool{
+			TargetSkills: {"keep": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(profile, "skills", "keep", "SKILL.md")); err != nil {
+		t.Fatalf("selected skill missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(profile, "skills", "drop")); !os.IsNotExist(err) {
+		t.Fatal("filtered-out skill should not have been copied")
+	}
+}
+
+func TestImportMCPFromClaudeJSON(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".claude.json"), `{
+		"mcpServers": {
+			"gitnexus": {"type": "stdio", "command": "npx", "args": ["-y", "gitnexus"]}
+		},
+		"projects": {
+			"/some/project": {
+				"mcpServers": {
+					"playwright": {"type": "stdio", "command": "npx", "args": ["@playwright/mcp"]}
+				}
+			}
+		}
+	}`)
+
+	profile := filepath.Join(t.TempDir(), "work")
+	if err := os.MkdirAll(profile, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Import(profile, ImportOptions{
+		Targets:     []Target{TargetMCP},
+		ProfileName: "work",
+		MCPScope:    MCPImportScopeGlobal,
+	})
+	if err != nil {
+		t.Fatalf("Import MCP: %v", err)
+	}
+
+	fragPath := filepath.Join(home, ".ccpm", "share", "mcp", "global.json")
+	data, err := os.ReadFile(fragPath)
+	if err != nil {
+		t.Fatalf("reading fragment: %v", err)
+	}
+	body := string(data)
+	if !contains(body, "gitnexus") || !contains(body, "playwright") {
+		t.Fatalf("fragment missing entries: %s", body)
+	}
+}
+
+func TestImportMCPFilter(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".claude.json"), `{
+		"mcpServers": {
+			"gitnexus":   {"type": "stdio", "command": "npx"},
+			"playwright": {"type": "stdio", "command": "npx"}
+		}
+	}`)
+
+	profile := filepath.Join(t.TempDir(), "work")
+	if err := os.MkdirAll(profile, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Import(profile, ImportOptions{
+		Targets:     []Target{TargetMCP},
+		ProfileName: "work",
+		MCPScope:    MCPImportScopeProfile,
+		ItemFilter: map[Target]map[string]bool{
+			TargetMCP: {"gitnexus": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Import MCP filter: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".ccpm", "share", "mcp", "work.json"))
+	if err != nil {
+		t.Fatalf("reading fragment: %v", err)
+	}
+	body := string(data)
+	if !contains(body, "gitnexus") {
+		t.Fatalf("expected gitnexus in fragment, got %s", body)
+	}
+	if contains(body, "playwright") {
+		t.Fatalf("did not expect playwright in fragment, got %s", body)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSnapshotFollowsSymlinkedDirectory(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home)
+
+	claudeSkills := filepath.Join(home, ".claude", "skills")
+	writeFile(t, filepath.Join(claudeSkills, "plain", "SKILL.md"), "plain-body")
+
+	realSkill := filepath.Join(t.TempDir(), "external")
+	writeFile(t, filepath.Join(realSkill, "SKILL.md"), "linked-body")
+	writeFile(t, filepath.Join(realSkill, "nested", "note.md"), "nested-body")
+
+	link := filepath.Join(claudeSkills, "linked")
+	if err := os.Symlink(realSkill, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	fp, err := Snapshot([]Target{TargetSkills})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	want := []string{
+		"skills/plain/SKILL.md",
+		"skills/linked/SKILL.md",
+		"skills/linked/nested/note.md",
+	}
+	for _, k := range want {
+		if _, ok := fp.Files[k]; !ok {
+			t.Fatalf("missing fingerprint key %q; got %v", k, fp.Files)
+		}
+	}
+}
+
 func TestSnapshotAndCompare(t *testing.T) {
 	home := t.TempDir()
 	withHome(t, home)
