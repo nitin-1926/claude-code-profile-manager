@@ -326,7 +326,9 @@ func copyFile(src, dst string) error {
 // copy with a symlink back to the store. Existing shared entries are left
 // alone unless opts.Force is set. The manifest is updated so that later
 // `ccpm sync` / `ccpm doctor` calls know which installs are profile-scoped.
-func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions) error {
+// If allow is non-nil, only top-level entries whose name is in the set are
+// processed; unselected entries are silently skipped.
+func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions, allow map[string]bool) error {
 	shareBase, err := share.Dir()
 	if err != nil {
 		return err
@@ -354,6 +356,9 @@ func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions
 
 	for _, entry := range entries {
 		name := entry.Name()
+		if allow != nil && !allow[name] {
+			continue
+		}
 		srcPath := filepath.Join(srcDir, name)
 		storePath := filepath.Join(storeDir, name)
 		linkPath := filepath.Join(dstProfileDir, name)
