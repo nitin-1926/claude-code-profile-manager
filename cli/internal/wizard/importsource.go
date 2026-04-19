@@ -5,12 +5,14 @@ package wizard
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
 	"github.com/nitin-1926/ccpm/internal/defaultclaude"
+	"github.com/nitin-1926/ccpm/internal/picker"
 )
 
 // Source enumerates where a new profile can pull pre-existing assets from.
@@ -18,8 +20,8 @@ type Source int
 
 const (
 	SourceScratch Source = iota // start empty — no import
-	SourceDefault                // import from ~/.claude
-	SourceProfile                // import from another ccpm profile
+	SourceDefault               // import from ~/.claude
+	SourceProfile               // import from another ccpm profile
 )
 
 // Decision describes what the user picked in the wizard.
@@ -33,44 +35,60 @@ type Decision struct {
 // new profile should start empty, import from ~/.claude, or clone another
 // profile's assets. Non-interactive callers (no TTY / empty input) receive
 // SourceScratch so add never blocks CI.
+//
+// The r/w parameters are retained for the numeric-menu fallback used when
+// stdin is not a TTY; in interactive mode the real terminal is driven by the
+// picker library regardless of these writers.
 func PromptImportSource(r io.Reader, w io.Writer, existingProfiles []string, hasDefault bool) (Decision, error) {
-	reader := bufio.NewReader(r)
-
-	options := []string{"Start empty (no import)"}
-	sourceMap := []Source{SourceScratch}
+	var (
+		sourceOpts []picker.Option
+		sourceMap  []Source
+		labels     []string
+	)
+	sourceOpts = append(sourceOpts, picker.Option{Value: "scratch", Label: "Start empty", Description: "no import"})
+	sourceMap = append(sourceMap, SourceScratch)
+	labels = append(labels, "Start empty (no import)")
 	if hasDefault {
-		options = append(options, "Import from ~/.claude (your current Claude Code setup)")
+		sourceOpts = append(sourceOpts, picker.Option{Value: "default", Label: "Import from ~/.claude", Description: "your current Claude Code setup"})
 		sourceMap = append(sourceMap, SourceDefault)
+		labels = append(labels, "Import from ~/.claude (your current Claude Code setup)")
 	}
 	if len(existingProfiles) > 0 {
-		options = append(options, "Copy from another ccpm profile")
+		sourceOpts = append(sourceOpts, picker.Option{Value: "profile", Label: "Copy from another ccpm profile"})
 		sourceMap = append(sourceMap, SourceProfile)
+		labels = append(labels, "Copy from another ccpm profile")
 	}
 
-	// Nothing to import from — quietly return scratch.
-	if len(options) == 1 {
+	if len(sourceOpts) == 1 {
 		return Decision{Source: SourceScratch}, nil
 	}
 
-	fmt.Fprintln(w, "Where should this profile inherit assets from?")
-	for i, opt := range options {
-		fmt.Fprintf(w, "  %d) %s\n", i+1, opt)
-	}
-	fmt.Fprintf(w, "Enter choice [1-%d, default 1]: ", len(options))
+	// Single shared reader so the numeric-menu fallback can consume
+	// multiple lines (source choice, then profile name) without losing
+	// buffered bytes.
+	reader := bufio.NewReader(r)
 
-	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return Decision{}, fmt.Errorf("reading choice: %w", err)
+	choice, err := picker.Select("Where should this profile inherit assets from?", sourceOpts)
+	if err != nil && !errors.Is(err, picker.ErrNonInteractive) {
+		return Decision{}, err
 	}
-	choice := strings.TrimSpace(line)
-	if choice == "" {
-		return Decision{Source: SourceScratch}, nil
+
+	var picked Source
+	if err == nil {
+		for i, o := range sourceOpts {
+			if o.Value == choice {
+				picked = sourceMap[i]
+				break
+			}
+		}
+	} else {
+		// Non-interactive fallback: keep the numeric menu for scripts.
+		p, err := promptSourceTextMenu(reader, w, labels, sourceMap)
+		if err != nil {
+			return Decision{}, err
+		}
+		picked = p
 	}
-	idx, err := strconv.Atoi(choice)
-	if err != nil || idx < 1 || idx > len(options) {
-		return Decision{}, fmt.Errorf("invalid choice %q", choice)
-	}
-	picked := sourceMap[idx-1]
 
 	decision := Decision{Source: picked, Targets: defaultclaude.DefaultTargets()}
 
@@ -85,7 +103,37 @@ func PromptImportSource(r io.Reader, w io.Writer, existingProfiles []string, has
 	return decision, nil
 }
 
+func promptSourceTextMenu(reader *bufio.Reader, w io.Writer, labels []string, sourceMap []Source) (Source, error) {
+	fmt.Fprintln(w, "Where should this profile inherit assets from?")
+	for i, opt := range labels {
+		fmt.Fprintf(w, "  %d) %s\n", i+1, opt)
+	}
+	fmt.Fprintf(w, "Enter choice [1-%d, default 1]: ", len(labels))
+
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return 0, fmt.Errorf("reading choice: %w", err)
+	}
+	raw := strings.TrimSpace(line)
+	if raw == "" {
+		return SourceScratch, nil
+	}
+	idx, err := strconv.Atoi(raw)
+	if err != nil || idx < 1 || idx > len(labels) {
+		return 0, fmt.Errorf("invalid choice %q", raw)
+	}
+	return sourceMap[idx-1], nil
+}
+
 func promptProfileName(reader *bufio.Reader, w io.Writer, existing []string) (string, error) {
+	if picker.IsInteractive() {
+		opts := make([]picker.Option, len(existing))
+		for i, n := range existing {
+			opts[i] = picker.Option{Value: n, Label: n}
+		}
+		return picker.Select("Pick a profile to copy from", opts)
+	}
+
 	fmt.Fprintln(w, "Available profiles:")
 	for i, n := range existing {
 		fmt.Fprintf(w, "  %d) %s\n", i+1, n)
