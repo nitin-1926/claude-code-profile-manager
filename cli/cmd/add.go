@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/nitin-1926/ccpm/internal/config"
 	"github.com/nitin-1926/ccpm/internal/defaultclaude"
 	"github.com/nitin-1926/ccpm/internal/keystore"
+	"github.com/nitin-1926/ccpm/internal/picker"
 	"github.com/nitin-1926/ccpm/internal/profile"
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	profilesync "github.com/nitin-1926/ccpm/internal/sync"
@@ -50,25 +52,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// Prompt for auth method
-	fmt.Println("Choose authentication method:")
-	fmt.Println("  1) OAuth (browser login via claude /login)")
-	fmt.Println("  2) API Key (enter your Anthropic API key)")
-	fmt.Print("Enter choice [1/2]: ")
-
-	var authMethod string
-	if scanner.Scan() {
-		choice := strings.TrimSpace(scanner.Text())
-		switch choice {
-		case "1", "oauth", "":
-			authMethod = "oauth"
-		case "2", "api_key", "api-key", "apikey":
-			authMethod = "api_key"
-		default:
-			return fmt.Errorf("invalid choice %q, expected 1 or 2", choice)
-		}
-	} else {
-		return fmt.Errorf("no input received")
+	authMethod, err := pickAuthMethod(scanner)
+	if err != nil {
+		return err
 	}
 
 	// Create profile directory
@@ -175,6 +161,39 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nRun claude with this profile:\n  ccpm run %s\n", name)
 	return nil
+}
+
+// pickAuthMethod asks the user to choose OAuth vs API key. Uses the interactive
+// picker in a TTY; falls back to the legacy 1/2 numeric prompt when not, so CI
+// and piped-stdin callers keep working.
+func pickAuthMethod(scanner *bufio.Scanner) (string, error) {
+	choice, err := picker.Select("Choose authentication method", []picker.Option{
+		{Value: "oauth", Label: "OAuth", Description: "browser login via `claude /login`"},
+		{Value: "api_key", Label: "API Key", Description: "paste an Anthropic API key"},
+	})
+	if err == nil {
+		return choice, nil
+	}
+	if !errors.Is(err, picker.ErrNonInteractive) {
+		return "", err
+	}
+
+	fmt.Println("Choose authentication method:")
+	fmt.Println("  1) OAuth (browser login via claude /login)")
+	fmt.Println("  2) API Key (enter your Anthropic API key)")
+	fmt.Print("Enter choice [1/2]: ")
+	if !scanner.Scan() {
+		return "", fmt.Errorf("no input received")
+	}
+	raw := strings.TrimSpace(scanner.Text())
+	switch raw {
+	case "1", "oauth", "":
+		return "oauth", nil
+	case "2", "api_key", "api-key", "apikey":
+		return "api_key", nil
+	default:
+		return "", fmt.Errorf("invalid choice %q, expected 1 or 2", raw)
+	}
 }
 
 // applyImportDecision runs the import the wizard selected against the newly
