@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/nitin-1926/ccpm/internal/config"
 	"github.com/nitin-1926/ccpm/internal/manifest"
+	"github.com/nitin-1926/ccpm/internal/picker"
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/ccpm/internal/share"
 )
@@ -98,7 +100,9 @@ func runMCPAdd(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 
 	if !mcpGlobal && mcpProfile == "" {
-		return fmt.Errorf("specify --global or --profile <name>")
+		if err := pickMCPScope(); err != nil {
+			return err
+		}
 	}
 
 	serverDef := map[string]interface{}{
@@ -192,7 +196,9 @@ func runMCPRemove(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 
 	if !mcpGlobal && mcpProfile == "" {
-		return fmt.Errorf("specify --global or --profile <name>")
+		if err := pickMCPScope(); err != nil {
+			return err
+		}
 	}
 
 	mcpDir, err := share.MCPDir()
@@ -250,7 +256,9 @@ func runMCPImport(cmd *cobra.Command, args []string) error {
 	filePath := args[0]
 
 	if !mcpGlobal && mcpProfile == "" {
-		return fmt.Errorf("specify --global or --profile <name>")
+		if err := pickMCPScope(); err != nil {
+			return err
+		}
 	}
 
 	data, err := os.ReadFile(filePath)
@@ -317,6 +325,43 @@ func runMCPImport(cmd *cobra.Command, args []string) error {
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Imported %d MCP servers from %s\n", len(servers), filePath)
+	return nil
+}
+
+// pickMCPScope resolves --global / --profile when neither was given, using an
+// interactive picker in a TTY and the existing required-flag error in CI.
+func pickMCPScope() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	scope, err := picker.Select("Install scope", []picker.Option{
+		{Value: "global", Label: "Global", Description: "all profiles now and any created later"},
+		{Value: "profile", Label: "A single profile", Description: "pick one profile"},
+	})
+	if err != nil {
+		if errors.Is(err, picker.ErrNonInteractive) {
+			return fmt.Errorf("specify --global or --profile <name>")
+		}
+		return err
+	}
+	if scope == "global" {
+		mcpGlobal = true
+		return nil
+	}
+	names := config.ProfileNames(cfg)
+	if len(names) == 0 {
+		return fmt.Errorf("no profiles exist yet — create one with `ccpm add <name>`")
+	}
+	opts := make([]picker.Option, len(names))
+	for i, n := range names {
+		opts[i] = picker.Option{Value: n, Label: n}
+	}
+	name, err := picker.Select("Target profile", opts)
+	if err != nil {
+		return err
+	}
+	mcpProfile = name
 	return nil
 }
 
