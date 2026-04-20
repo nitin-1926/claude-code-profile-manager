@@ -242,15 +242,25 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 	cyan := color.New(color.FgCyan)
 	dim := color.New(color.Faint)
 
-	for _, name := range names {
+	for idx, name := range names {
 		p := cfg.Profiles[name]
 
+		// When MCP scope is "global", only materialize it on the first iteration
+		// so the action log doesn't repeat identical writes once per profile.
+		perProfileTargets := targets
+		if mcpScope == defaultclaude.MCPImportScopeGlobal && idx > 0 {
+			perProfileTargets = filterOutTarget(targets, defaultclaude.TargetMCP)
+		}
+
 		plan, err := defaultclaude.Import(p.Dir, defaultclaude.ImportOptions{
-			Targets:     targets,
-			DryRun:      importDryRun,
-			Force:       importForce,
-			Dedupe:      !importNoShare,
-			ProfileName: name,
+			Targets:      perProfileTargets,
+			DryRun:       importDryRun,
+			Force:        importForce,
+			Dedupe:       !importNoShare,
+			ProfileName:  name,
+			LiveSymlinks: importLiveSymlinks && !importNoShare,
+			ItemFilter:   itemFilter,
+			MCPScope:     mcpScope,
 		})
 		if err != nil {
 			return fmt.Errorf("import into %q: %w", name, err)
