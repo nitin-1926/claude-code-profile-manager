@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -8,12 +9,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/ccpm/internal/config"
+	"github.com/nitin-1926/ccpm/internal/picker"
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/ccpm/internal/shell"
 )
 
 var useCmd = &cobra.Command{
-	Use:   "use <name>",
+	Use:   "use [name]",
 	Short: "Set profile for current shell session",
 	Long: `Set the active Claude Code profile for the current shell session.
 
@@ -24,7 +26,7 @@ Then reload your shell:
   source ~/.zshrc
 
 Alternatively, use 'ccpm run <name>' which works without any shell setup.`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runUse,
 }
 
@@ -33,11 +35,35 @@ func init() {
 }
 
 func runUse(cmd *cobra.Command, args []string) error {
-	name := args[0]
-
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var name string
+	if len(args) == 1 {
+		name = args[0]
+	} else {
+		names := config.ProfileNames(cfg)
+		if len(names) == 0 {
+			return fmt.Errorf("no profiles exist yet — create one with `ccpm add <name>`")
+		}
+		opts := make([]picker.Option, len(names))
+		for i, n := range names {
+			desc := ""
+			if n == cfg.DefaultProfile {
+				desc = "default"
+			}
+			opts[i] = picker.Option{Value: n, Label: n, Description: desc}
+		}
+		choice, err := picker.Select("Which profile should this shell session use?", opts)
+		if err != nil {
+			if errors.Is(err, picker.ErrNonInteractive) {
+				return fmt.Errorf("profile name is required (e.g. `ccpm use %s`)", names[0])
+			}
+			return err
+		}
+		name = choice
 	}
 
 	p, exists := cfg.Profiles[name]
