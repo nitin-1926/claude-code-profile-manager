@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/nitin-1926/ccpm/internal/config"
 	"github.com/nitin-1926/ccpm/internal/defaultclaude"
+	"github.com/nitin-1926/ccpm/internal/filetree"
+	"github.com/nitin-1926/ccpm/internal/picker"
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 )
 
