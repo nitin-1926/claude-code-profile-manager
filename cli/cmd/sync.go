@@ -1,17 +1,22 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/ccpm/internal/config"
+	"github.com/nitin-1926/ccpm/internal/picker"
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	profilesync "github.com/nitin-1926/ccpm/internal/sync"
 )
 
-var syncProfile string
+var (
+	syncProfile string
+	syncAll     bool
+)
 
 var syncCmd = &cobra.Command{
 	Use:   "sync",
@@ -23,7 +28,8 @@ but you can run it manually to force a sync.`,
 }
 
 func init() {
-	syncCmd.Flags().StringVar(&syncProfile, "profile", "", "profile to sync (syncs all if omitted)")
+	syncCmd.Flags().StringVar(&syncProfile, "profile", "", "profile to sync (prompts when omitted in a TTY)")
+	syncCmd.Flags().BoolVar(&syncAll, "all", false, "sync all profiles without prompting")
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -34,13 +40,36 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	var targets []string
-	if syncProfile != "" {
+	switch {
+	case syncProfile != "":
 		if _, exists := cfg.Profiles[syncProfile]; !exists {
 			return fmt.Errorf("profile %q not found", syncProfile)
 		}
 		targets = []string{syncProfile}
-	} else {
+	case syncAll:
 		targets = config.ProfileNames(cfg)
+	default:
+		names := config.ProfileNames(cfg)
+		if len(names) == 0 {
+			return fmt.Errorf("no profiles exist yet — create one with `ccpm add <name>`")
+		}
+		opts := make([]picker.Option, len(names))
+		for i, n := range names {
+			opts[i] = picker.Option{Value: n, Label: n}
+		}
+		chosen, err := picker.MultiSelect("Which profiles should we sync?", opts, names)
+		if err != nil {
+			if errors.Is(err, picker.ErrNonInteractive) {
+				// Preserve historical behavior: sync all profiles non-interactively.
+				targets = names
+			} else {
+				return err
+			}
+		} else if len(chosen) == 0 {
+			return fmt.Errorf("no profiles selected")
+		} else {
+			targets = chosen
+		}
 	}
 
 	green := color.New(color.FgGreen, color.Bold)
