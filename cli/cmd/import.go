@@ -24,9 +24,13 @@ var (
 	importOnly    []string
 	importForce   bool
 
-	importFromSrc    string
-	importFromTarget string
-	importNoShare    bool
+	importFromSrc       string
+	importFromTarget    string
+	importNoShare       bool
+	importLiveSymlinks  bool
+	importNoLiveSymlink bool
+	importSelectAll     bool
+	importMCPScope      string
 )
 
 var importCmd = &cobra.Command{
@@ -36,22 +40,37 @@ var importCmd = &cobra.Command{
 
 var importDefaultCmd = &cobra.Command{
 	Use:   "default",
-	Short: "Import skills, hooks, and settings from ~/.claude into profiles",
+	Short: "Import skills, hooks, MCP servers, and settings from ~/.claude into profiles",
 	Long: `Copy or merge selected subtrees from the default Claude Code config
 directory (~/.claude) into one or all ccpm profiles.
 
-By default, imports skills, commands, rules, hooks, agents, and settings.
-Plugins are excluded unless passed explicitly via --only plugins.
+By default, imports skills, commands, rules, hooks, agents, settings, and MCP
+servers discovered in ~/.claude.json. Plugins are excluded unless passed
+explicitly via --only plugins.
 
 Settings are deep-merged into the profile's settings.json via the same merge
-engine used by 'ccpm run'; everything else is copied file-by-file, preserving
-existing profile files unless --force is passed.
+engine used by 'ccpm run'; directory targets are copied file-by-file, preserving
+existing profile files unless --force is passed; MCP servers are written into
+the appropriate ccpm MCP fragment (~/.ccpm/share/mcp/<scope>.json) and
+materialized into settings.json#mcpServers on 'ccpm use' / 'ccpm run'.
+
+Interactive runs drill down to per-item selection for skills, commands, rules,
+hooks, agents, and MCP — pick only the entries you want. Pass --select-all to
+skip the per-item prompt and import every entry under the selected targets.
+
+Use --live-symlinks with deduped imports (--no-share not set) so top-level
+skills/agents/commands that are symlinked directories in ~/.claude stay as
+symlinks into the share store (pointing at the resolved path). Edits in the
+original tree are then visible in every linked profile without re-import.
 
 Examples:
   ccpm import default --profile work
   ccpm import default --all --dry-run
   ccpm import default --profile personal --only skills,hooks
-  ccpm import default --all --only settings --force`,
+  ccpm import default --all --only settings --force
+  ccpm import default --all --only skills --live-symlinks
+  ccpm import default --profile work --only mcp --mcp-scope global
+  ccpm import default --all --select-all`,
 	RunE: runImportDefault,
 }
 
