@@ -92,9 +92,13 @@ func init() {
 	importDefaultCmd.Flags().StringVar(&importProfile, "profile", "", "target profile name")
 	importDefaultCmd.Flags().BoolVar(&importAll, "all", false, "import into every profile")
 	importDefaultCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview without writing")
-	importDefaultCmd.Flags().StringSliceVar(&importOnly, "only", nil, "comma-separated targets (skills, commands, rules, hooks, agents, settings, plugins)")
+	importDefaultCmd.Flags().StringSliceVar(&importOnly, "only", nil, "comma-separated targets (skills, commands, rules, hooks, agents, settings, mcp, plugins)")
 	importDefaultCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files in profiles")
 	importDefaultCmd.Flags().BoolVar(&importNoShare, "no-share", false, "copy assets directly into the profile instead of symlinking from ~/.ccpm/share")
+	importDefaultCmd.Flags().BoolVar(&importLiveSymlinks, "live-symlinks", false, "for deduped skills/agents/commands, keep symlink-to-dir entries as symlinks in the share store (live updates from source)")
+	importDefaultCmd.Flags().BoolVar(&importNoLiveSymlink, "no-live-symlinks", false, "always snapshot (disable the interactive symlink prompt)")
+	importDefaultCmd.Flags().BoolVar(&importSelectAll, "select-all", false, "skip per-item prompts and import every entry under the selected targets")
+	importDefaultCmd.Flags().StringVar(&importMCPScope, "mcp-scope", "", "where imported MCP servers live: global (all profiles) or profile (selected profile only); default is interactive prompt / global when non-TTY")
 
 	importFromProfileCmd.Flags().StringVar(&importFromSrc, "src", "", "source profile to copy from (required)")
 	importFromProfileCmd.Flags().StringVar(&importFromTarget, "profile", "", "target profile to copy into (required)")
@@ -107,11 +111,17 @@ func init() {
 }
 
 func runImportDefault(cmd *cobra.Command, args []string) error {
-	if importProfile == "" && !importAll {
-		return fmt.Errorf("specify --profile <name> or --all")
-	}
 	if importProfile != "" && importAll {
 		return fmt.Errorf("use either --profile or --all, not both")
+	}
+	if importLiveSymlinks && importNoShare {
+		return fmt.Errorf("--live-symlinks only applies with deduped import; omit --no-share")
+	}
+	if importLiveSymlinks && importNoLiveSymlink {
+		return fmt.Errorf("--live-symlinks and --no-live-symlinks are mutually exclusive")
+	}
+	if importMCPScope != "" && importMCPScope != defaultclaude.MCPImportScopeGlobal && importMCPScope != defaultclaude.MCPImportScopeProfile {
+		return fmt.Errorf("--mcp-scope must be %q or %q", defaultclaude.MCPImportScopeGlobal, defaultclaude.MCPImportScopeProfile)
 	}
 
 	if !defaultclaude.Exists() {
@@ -119,14 +129,100 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no default Claude config found at %s", src)
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	if importProfile == "" && !importAll {
+		if err := pickImportTarget(cfg); err != nil {
+			return err
+		}
+	}
+
 	targets, err := defaultclaude.ParseTargets(importOnly)
 	if err != nil {
 		return err
 	}
+	if len(importOnly) == 0 {
+		picked, err := pickImportTargets()
+		if err == nil {
+			targets = picked
+		} else if !errors.Is(err, picker.ErrNonInteractive) {
+			return err
+		}
+	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+	// Prompt once for live-symlink strategy if the user didn't pass either flag
+	// and there is at least one symlinked-directory entry under a dedupable
+	// target in ~/.claude. In non-TTY contexts we silently default to copy.
+	if !importLiveSymlinks && !importNoLiveSymlink && !importNoShare {
+		if has, _ := anyLiveSymlinkCandidate(targets); has {
+			choice, err := picker.Select(
+				"Some skills/agents/commands in ~/.claude are symlinked. How should ccpm install them?",
+				[]picker.Option{
+					{Value: "symlink", Label: "Keep as symlinks (recommended)", Description: "live updates from the source repo"},
+					{Value: "copy", Label: "Snapshot (copy)", Description: "take a copy now; future source edits stay local"},
+				},
+			)
+			if err == nil {
+				importLiveSymlinks = choice == "symlink"
+			} else if !errors.Is(err, picker.ErrNonInteractive) {
+				return err
+			}
+		}
+	}
+
+	// Per-item selection: offer a multi-select for each granular target so the
+	// user can cherry-pick e.g. 3 skills + 1 MCP. Skipped when --select-all is
+	// passed or in non-interactive contexts (CI / piped stdin).
+	itemFilter := map[defaultclaude.Target]map[string]bool{}
+	if !importSelectAll {
+		for _, t := range targets {
+			picked, err := pickItemsForTarget(t)
+			if err != nil {
+				if errors.Is(err, picker.ErrNonInteractive) {
+					continue
+				}
+				return err
+			}
+			if picked != nil {
+				itemFilter[t] = picked
+			}
+		}
+	}
+
+	// Resolve MCP scope. We only need it when MCP is in the target set and the
+	// user actually selected at least one entry (otherwise the prompt is just
+	// noise). Interactive default is "global" because most users want
+	// gitnexus/playwright-style servers available everywhere.
+	mcpScope := importMCPScope
+	if containsTarget(targets, defaultclaude.TargetMCP) && mcpScope == "" {
+		mcpSelected, hasFilter := itemFilter[defaultclaude.TargetMCP]
+		// hasFilter false => user is importing all MCP entries (or --select-all);
+		// still prompt in that case as long as there are discoverable entries.
+		shouldPrompt := hasFilter && len(mcpSelected) > 0
+		if !hasFilter {
+			if entries, _ := defaultclaude.LoadMCPEntries(); len(entries) > 0 {
+				shouldPrompt = true
+			}
+		}
+		if shouldPrompt {
+			choice, err := picker.Select(
+				"Where should imported MCP servers live?",
+				[]picker.Option{
+					{Value: defaultclaude.MCPImportScopeGlobal, Label: "Global", Description: "available in every ccpm profile"},
+					{Value: defaultclaude.MCPImportScopeProfile, Label: "Selected profile only", Description: "scoped to the target profile"},
+				},
+			)
+			if err == nil {
+				mcpScope = choice
+			} else if errors.Is(err, picker.ErrNonInteractive) {
+				mcpScope = defaultclaude.MCPImportScopeGlobal
+			} else {
+				return err
+			}
+		}
 	}
 
 	var names []string
