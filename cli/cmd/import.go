@@ -600,3 +600,137 @@ func relOrAbs(p string) string {
 	}
 	return p
 }
+
+// granularTargets is the set of targets that expose per-item selection. Settings
+// is excluded because it's a single file; plugins is excluded because we don't
+// want to break opaque plugin payloads mid-flight.
+func granularTargets() map[defaultclaude.Target]bool {
+	return map[defaultclaude.Target]bool{
+		defaultclaude.TargetSkills:   true,
+		defaultclaude.TargetCommands: true,
+		defaultclaude.TargetRules:    true,
+		defaultclaude.TargetHooks:    true,
+		defaultclaude.TargetAgents:   true,
+		defaultclaude.TargetMCP:      true,
+	}
+}
+
+// pickItemsForTarget offers a multi-select listing the top-level entries of a
+// target. Returns the set of selected item IDs, or nil if the target isn't
+// granular / has no candidates / the user kept everything selected.
+//
+// "Kept everything selected" intentionally collapses to a nil filter so the
+// fast path in Import (no per-entry iteration) is preserved.
+func pickItemsForTarget(t defaultclaude.Target) (map[string]bool, error) {
+	if !granularTargets()[t] {
+		return nil, nil
+	}
+	items, err := listTargetItems(t)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	opts := make([]picker.Option, len(items))
+	defs := make([]string, len(items))
+	for i, it := range items {
+		opts[i] = picker.Option{Value: it.id, Label: it.label, Description: it.description}
+		defs[i] = it.id
+	}
+	title := fmt.Sprintf("Which %s should we import? (all selected by default)", t)
+	chosen, err := picker.MultiSelect(title, opts, defs)
+	if err != nil {
+		return nil, err
+	}
+	if len(chosen) == len(items) {
+		return nil, nil
+	}
+	m := make(map[string]bool, len(chosen))
+	for _, id := range chosen {
+		m[id] = true
+	}
+	return m, nil
+}
+
+type targetItem struct {
+	id          string
+	label       string
+	description string
+}
+
+// listTargetItems enumerates the candidates for a granular target. For
+// directory targets it lists top-level entries of ~/.claude/<target>. For MCP
+// it flattens every entry found in ~/.claude.json and annotates each with its
+// source so the user can disambiguate duplicates.
+func listTargetItems(t defaultclaude.Target) ([]targetItem, error) {
+	if t == defaultclaude.TargetMCP {
+		entries, err := defaultclaude.LoadMCPEntries()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]targetItem, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, targetItem{
+				id:          e.ID(),
+				label:       e.Name,
+				description: e.Source(),
+			})
+		}
+		return out, nil
+	}
+	root, err := defaultclaude.DefaultDir()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(root, string(t))
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]targetItem, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, targetItem{
+			id:    e.Name(),
+			label: e.Name(),
+		})
+	}
+	return out, nil
+}
+
+func containsTarget(targets []defaultclaude.Target, t defaultclaude.Target) bool {
+	for _, x := range targets {
+		if x == t {
+			return true
+		}
+	}
+	return false
+}
+
+func filterOutTarget(targets []defaultclaude.Target, drop defaultclaude.Target) []defaultclaude.Target {
+	out := make([]defaultclaude.Target, 0, len(targets))
+	for _, t := range targets {
+		if t == drop {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func fallback(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+func noteSuffix(note string) string {
+	if note == "" {
+		return ""
+	}
+	return " (" + note + ")"
+}
