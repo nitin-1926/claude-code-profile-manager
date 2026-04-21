@@ -94,7 +94,7 @@ function Hero() {
         {/* Left: text content */}
         <div className="lg:col-span-6">
           <div className="mb-5">
-            <Eyebrow>{"// v0.1 . open source . cross-platform"}</Eyebrow>
+            <Eyebrow>{"// v0.3 . open source . cross-platform"}</Eyebrow>
           </div>
           <h1
             className="font-semibold tracking-[-0.025em] leading-[1.05] text-fg"
