@@ -113,7 +113,7 @@ export function Footer() {
               </a>
             </span>
           </div>
-          <span className="font-mono">v0.1.0</span>
+          <span className="font-mono">v0.3.0</span>
         </div>
       </div>
     </footer>
