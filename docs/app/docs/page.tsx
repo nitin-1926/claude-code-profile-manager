@@ -110,6 +110,11 @@ ccpm run personal   # terminal 1
 ccpm run work       # terminal 2`}
             lang="bash"
           />
+          <p className="text-sm text-fg-muted">
+            Every command accepts a global <code>--verbose</code> /{" "}
+            <code>-v</code> flag that prints extra diagnostic output — useful
+            when filing an issue.
+          </p>
 
           <H2 id="profiles">Profile management</H2>
 
@@ -148,8 +153,17 @@ Enter choice [1/2]: 1
           <H3 id="profiles-remove">ccpm remove &lt;name&gt;</H3>
           <p>
             Delete a profile including its directory, keychain entries, and
-            vault backup. Use <code>--force</code> to skip confirmation.
+            vault backup. Use <code>--force</code> (<code>-f</code>) to skip
+            confirmation. Also available as <code>ccpm rm</code>.
           </p>
+          <CodeBlock
+            code={`# with confirmation prompt
+ccpm remove work
+
+# skip the prompt
+ccpm rm work --force`}
+            lang="bash"
+          />
 
           <H3 id="profiles-status">ccpm status</H3>
           <p>
@@ -175,26 +189,42 @@ ccpm run work -- --model sonnet`}
             lang="bash"
           />
 
-          <H3 id="running-use">ccpm use &lt;name&gt;</H3>
+          <H3 id="running-use">ccpm use [name]</H3>
           <p>
             Set the active profile for your entire shell session. Requires the{" "}
             <a href="#shell">shell hook</a>. After running this, any{" "}
             <code>claude</code> command in that terminal uses the selected
             profile.
           </p>
+          <p>
+            Called without a name in an interactive terminal, <code>ccpm use</code>{" "}
+            opens a profile picker. In non-TTY contexts (scripts, CI) the name
+            argument is required.
+          </p>
 
           <H2 id="auth">Authentication</H2>
 
-          <H3 id="auth-status">ccpm auth status</H3>
+          <H3 id="auth-status">ccpm auth status [name]</H3>
           <p>
-            Check credential validity for all profiles. Shows email for OAuth
+            Check credential validity across profiles. Shows email for OAuth
             profiles, masked key for API key profiles, and vault backup status.
+            Pass a profile name to inspect just that one; omit it to see every
+            profile. Entries flagged as <code>⚠</code> expire within seven days.
           </p>
 
           <H3 id="auth-refresh">ccpm auth refresh &lt;name&gt;</H3>
           <p>
             Re-authenticate a profile. For OAuth: launches Claude for{" "}
-            <code>/login</code>. For API key: prompts for a new key.
+            <code>/login</code>. For API key: prompts for a new key (hidden
+            input in a TTY, or reads from stdin when piped).
+          </p>
+
+          <H3 id="auth-backup">ccpm auth backup / restore</H3>
+          <p>
+            Save an encrypted credential backup to <code>~/.ccpm/vault/</code>{" "}
+            (AES-256-GCM, master key in the OS keychain) or restore one after a
+            machine migration. See <a href="#vault">Vault backup</a> for the full
+            story.
           </p>
 
           <H2 id="import">Import & wizard</H2>
@@ -208,11 +238,12 @@ ccpm run work -- --model sonnet`}
 
           <H3 id="import-default">ccpm import default</H3>
           <p>
-            Import skills, commands, hooks, agents, rules, and settings from{" "}
-            <code>~/.claude</code> into one or all profiles. Dedupable targets
-            (skills, agents, commands) are routed through the shared store at{" "}
-            <code>~/.ccpm/share/</code> and symlinked into the profile so the
-            same asset is not copied twice.
+            Import skills, commands, hooks, agents, rules, settings, MCP
+            servers, and plugins from <code>~/.claude</code> into one or all
+            profiles. Dedupable targets (skills, agents, commands, hooks, rules)
+            are routed through the shared store at <code>~/.ccpm/share/</code>{" "}
+            and symlinked into the profile so the same asset is not copied
+            twice.
           </p>
           <CodeBlock
             code={`# import everything into one profile
@@ -221,42 +252,93 @@ ccpm import default --profile work
 # import only skills into every profile
 ccpm import default --all --only skills
 
+# preview what would happen without writing
+ccpm import default --profile work --dry-run
+
+# overwrite existing profile files
+ccpm import default --profile work --force
+
 # copy directly instead of symlinking (opts out of dedup)
-ccpm import default --profile work --no-share`}
+ccpm import default --profile work --no-share
+
+# keep symlink-to-dir entries as live symlinks into the share store
+ccpm import default --profile work --live-symlinks
+
+# skip every per-item prompt and import all discovered assets
+ccpm import default --profile work --select-all
+
+# decide whether imported MCP servers live in the global or per-profile fragment
+ccpm import default --profile work --mcp-scope profile`}
             lang="bash"
           />
+          <p className="text-sm text-fg-muted">
+            Valid <code>--only</code> values:{" "}
+            <code>skills</code>, <code>commands</code>, <code>rules</code>,{" "}
+            <code>hooks</code>, <code>agents</code>, <code>settings</code>,{" "}
+            <code>mcp</code>, <code>plugins</code>. Pass them comma-separated.
+          </p>
+
+          <p>
+            <strong>Interactive wizard.</strong> In a TTY,{" "}
+            <code>ccpm import default</code> opens a guided flow: pick the
+            target profile (or all), choose which asset types to import, select
+            individual items within each type, decide whether symlink-to-
+            directory sources stay live or are snapshotted, and pick MCP scope
+            (global vs. per-profile). Use <code>--select-all</code>,{" "}
+            <code>--no-live-symlinks</code>, and <code>--mcp-scope</code> to
+            skip prompts in scripts.
+          </p>
 
           <H3 id="import-from-profile">ccpm import from-profile</H3>
           <p>
             Clone assets from one ccpm profile into another. Useful for
             bootstrapping a new profile from a known-good one, or for copying a
-            subset of tools between personal and work setups.
+            subset of tools between personal and work setups. In a TTY both
+            source and target are picker-driven; otherwise <code>--src</code>{" "}
+            and <code>--profile</code> are required.
           </p>
           <CodeBlock
             code={`# clone everything from "work" into new profile "work-staging"
 ccpm add work-staging
 ccpm import from-profile --src work --profile work-staging
 
-# clone only the MCP fragment and skills
-ccpm import from-profile --src work --profile work-staging --only skills,mcp`}
+# clone only skills and commands
+ccpm import from-profile --src work --profile work-staging --only skills,commands
+
+# overwrite existing files in the target profile
+ccpm import from-profile --src work --profile work-staging --force`}
             lang="bash"
           />
+          <p className="text-sm text-fg-muted">
+            Settings merge: existing keys in the target profile win; new keys
+            from the source are added. MCP servers are not cloned via this
+            command — use <a href="#mcp">MCP commands</a> directly to share MCP
+            fragments.
+          </p>
 
           <H3 id="import-sync">ccpm sync</H3>
           <p>
             Re-apply every global install (skills, MCP fragments, settings) to
             one or all profiles. Useful after editing{" "}
             <code>~/.ccpm/share/</code> directly, or to heal a profile whose
-            symlinks or settings have drifted.
+            symlinks or settings have drifted. Sync also runs automatically on{" "}
+            <code>ccpm add</code> and <code>ccpm run</code>.
           </p>
           <CodeBlock
             code={`# sync every profile
-ccpm sync
+ccpm sync --all
 
 # sync just one
-ccpm sync --profile work`}
+ccpm sync --profile work
+
+# TTY: omit flags to pick profiles interactively
+ccpm sync`}
             lang="bash"
           />
+          <p className="text-sm text-fg-muted">
+            In a TTY with no flags, <code>ccpm sync</code> opens a multi-select
+            picker. In non-TTY contexts the default is to sync all profiles.
+          </p>
 
           <H2 id="skills">Skills, MCP, and settings</H2>
           <p>
@@ -335,6 +417,118 @@ ccpm settings set model claude-opus-4 --global`}
             lang="bash"
           />
 
+          <p className="text-sm text-fg-muted">
+            Run any install or remove command without <code>--global</code> or{" "}
+            <code>--profile</code> in a TTY and ccpm asks which scope you want.
+          </p>
+
+          <H3 id="skills-commands">Skill commands</H3>
+          <p>
+            <code>ccpm skill</code> installs a directory that contains a{" "}
+            <code>SKILL.md</code> into the shared store, then links it into one
+            or all profiles. Live symlinks keep the profile copy pointing at
+            the original source; the default is to snapshot the directory into{" "}
+            <code>~/.ccpm/share/skills/</code>.
+          </p>
+          <CodeBlock
+            code={`# install a local skill globally
+ccpm skill add ~/code-review --global
+
+# install only into "work"
+ccpm skill add ~/code-review --profile work
+
+# keep a symlink-to-dir source live (updates in-place)
+ccpm skill add ~/code-review --global --live-symlink
+
+# always snapshot (disable the live-symlink prompt)
+ccpm skill add ~/code-review --global --copy
+
+# list all installed skills (alias: skill ls)
+ccpm skill list
+
+# remove a skill from all profiles (alias: skill rm)
+ccpm skill remove code-review --global
+
+# remove from one profile only
+ccpm skill rm code-review --profile work
+
+# link a shared skill into a specific profile
+ccpm skill link code-review --profile work`}
+            lang="bash"
+          />
+
+          <H3 id="mcp-commands">MCP commands</H3>
+          <p>
+            <code>ccpm mcp</code> writes entries into the shared MCP fragments
+            at <code>~/.ccpm/share/mcp/global.json</code> or{" "}
+            <code>~/.ccpm/share/mcp/&lt;profile&gt;.json</code>. Entries are
+            merged into each profile&apos;s <code>settings.json</code> at
+            launch.
+          </p>
+          <CodeBlock
+            code={`# add a server with a command, arguments, and env vars
+ccpm mcp add github \\
+  --command "npx" \\
+  --args "-y,@modelcontextprotocol/server-github" \\
+  --env GITHUB_TOKEN=ghp_... \\
+  --profile work
+
+# globally-shared server
+ccpm mcp add linear \\
+  --command "npx -y @linear/mcp" \\
+  --env LINEAR_API_KEY=lin_... --global
+
+# list servers (alias: mcp ls)
+ccpm mcp list
+
+# remove a server (alias: mcp rm)
+ccpm mcp remove github --profile work
+
+# bulk import from a JSON file (keys become server names)
+ccpm mcp import ./mcp-servers.json --global`}
+            lang="bash"
+          />
+          <p className="text-sm text-fg-muted">
+            <code>--args</code> takes a comma-separated list; <code>--env</code>{" "}
+            takes comma-separated <code>KEY=VALUE</code> pairs and may be
+            repeated.
+          </p>
+
+          <H3 id="settings-commands">Settings commands</H3>
+          <p>
+            Settings fragments live beside MCP fragments at{" "}
+            <code>~/.ccpm/share/settings/</code> and are deep-merged into the
+            profile&apos;s <code>settings.json</code>. Keys you set through
+            ccpm are tracked in a <code>.owned.json</code> sidecar so Claude
+            Code cannot silently overwrite them (see{" "}
+            <a href="#settings-precedence">Settings precedence</a>).
+          </p>
+          <CodeBlock
+            code={`# set a simple scalar globally
+ccpm settings set model claude-opus-4 --global
+
+# dot-notation nested key, per profile
+ccpm settings set permissions.allow.Bash true --profile work
+
+# JSON values (objects, arrays) are parsed automatically
+ccpm settings set env.FOO '{"a":1,"b":2}' --global
+
+# read the effective value for a profile
+ccpm settings get model --profile work
+
+# dump the fully merged settings for a profile
+ccpm settings show --profile work
+
+# apply a JSON fragment file (deep-merged into the target)
+ccpm settings apply ./team-defaults.json --global`}
+            lang="bash"
+          />
+          <p className="text-sm text-fg-muted">
+            <code>ccpm settings get</code> and <code>show</code> require{" "}
+            <code>--profile</code>; <code>set</code> and <code>apply</code>{" "}
+            require one of <code>--global</code> / <code>--profile</code>.
+          </p>
+
           <H2 id="mcp-auth">MCP auth model</H2>
           <p>
             How an MCP server authenticates determines whether ccpm can isolate
@@ -412,6 +606,10 @@ ccpm settings set model claude-opus-4 --global`}
               per-profile OAuth keychain isolation).
             </li>
             <li>
+              <strong>ccpm base directory</strong> — confirms{" "}
+              <code>~/.ccpm/</code> exists and is readable.
+            </li>
+            <li>
               <strong>Per-profile auth health</strong> — OAuth token validity
               and expiry for each profile. On macOS OAuth profiles, the
               namespaced keychain service name is printed so you can inspect the
@@ -428,15 +626,34 @@ ccpm settings set model claude-opus-4 --global`}
               copies under a profile that have drifted from the shared store.
             </li>
             <li>
+              <strong>Shared asset manifest</strong> — how many skills, MCP
+              servers, and settings keys are tracked in{" "}
+              <code>~/.ccpm/installs.json</code>.
+            </li>
+            <li>
               <strong>Drift fingerprint</strong> — detects when{" "}
               <code>~/.claude</code> has changed since the last{" "}
               <code>ccpm import default</code> snapshot.
             </li>
+            <li>
+              <strong>Drift notifications</strong> — whether the{" "}
+              <code>check_default_drift</code> config flag is on (see{" "}
+              <a href="#drift">Drift detection</a>).
+            </li>
+            <li>
+              <strong>Platform notes</strong> — platform-specific caveats such
+              as the Windows symlink fallback marker and global-cache MCP
+              isolation limits.
+            </li>
           </ul>
+          <p className="text-sm text-fg-muted">
+            Exit code is 0 on success or when only warnings are present, and 1
+            when real issues are detected.
+          </p>
           <CodeBlock
             code={`$ ccpm doctor
 Environment
-  ccpm       0.1.0
+  ccpm       0.3.0
   platform   darwin/arm64
   claude     2.1.61 (/usr/local/bin/claude)
 
@@ -449,6 +666,49 @@ Root vs profiles
     ↳ ccpm import default --only skills --all
 
 No symlink issues. No drift detected.`}
+            lang="bash"
+          />
+
+          <H2 id="drift">Drift detection</H2>
+          <p>
+            Every <code>ccpm import default</code> snapshots the files under{" "}
+            <code>~/.claude</code> (skills, commands, rules, hooks, agents,
+            settings, MCP fragments) into a fingerprint. Later, ccpm can tell
+            you whether your default Claude config has drifted away from what
+            your profiles were built from — so a skill you tweaked in{" "}
+            <code>~/.claude</code> does not get stale in your profiles.
+          </p>
+
+          <H3 id="drift-fingerprint">ccpm default fingerprint</H3>
+          <CodeBlock
+            code={`# record the current ~/.claude state as the drift baseline
+ccpm default fingerprint update
+
+# compare ~/.claude against the last fingerprint
+ccpm default fingerprint check`}
+            lang="bash"
+          />
+          <p>
+            <code>check</code> prints added, modified, and removed paths and
+            suggests the right <code>ccpm import default --profile &lt;name&gt;</code>{" "}
+            to sync changes into a profile. Run <code>update</code> to accept
+            the current state without importing.
+          </p>
+
+          <H3 id="drift-config">ccpm config</H3>
+          <p>
+            Drift nudges on <code>ccpm run</code> and <code>ccpm use</code> are
+            controlled by a single config key.
+          </p>
+          <CodeBlock
+            code={`# turn drift warnings on (default is off)
+ccpm config set check_default_drift true
+
+# turn them off
+ccpm config set check_default_drift false
+
+# read the current value
+ccpm config get check_default_drift`}
             lang="bash"
           />
 
@@ -467,6 +727,24 @@ ccpm auth restore personal`}
             lang="bash"
           />
 
+          <H2 id="uninstall">Uninstall</H2>
+          <p>
+            <code>ccpm uninstall</code> removes every profile, deletes API keys
+            from the OS keychain, wipes vault backups, and deletes{" "}
+            <code>~/.ccpm/</code>. It does <strong>not</strong> remove the{" "}
+            <code>ccpm</code> binary itself or the shell hook you added to{" "}
+            <code>~/.zshrc</code> / <code>~/.bashrc</code> — the command prints
+            those cleanup steps so you can run them by hand.
+          </p>
+          <CodeBlock
+            code={`# with confirmation prompt
+ccpm uninstall
+
+# skip the confirmation
+ccpm uninstall --force`}
+            lang="bash"
+          />
+
           <H2 id="shell">Shell integration</H2>
           <p>
             The shell hook wraps <code>ccpm use</code> so it can set environment
@@ -476,8 +754,11 @@ ccpm auth restore personal`}
 
           <H3 id="shell-setup">Setup</H3>
           <CodeBlock
-            code={`# add to ~/.zshrc or ~/.bashrc
+            code={`# add to ~/.zshrc or ~/.bashrc (shell auto-detected)
 eval "$(ccpm shell-init)"
+
+# force a specific shell (bash | zsh | fish | powershell)
+eval "$(ccpm shell-init --shell zsh)"
 
 # reload
 source ~/.zshrc`}
@@ -503,11 +784,16 @@ claude`}
             The VS Code Claude extension ignores <code>CLAUDE_CONFIG_DIR</code>{" "}
             and always reads from <code>~/.claude</code>. Use{" "}
             <code>set-default</code> to control which account VS Code uses.
+            Call it without an argument in a TTY for a profile picker. Restart
+            the extension after switching so it re-reads credentials.
           </p>
           <CodeBlock
             code={`# set which profile VS Code uses
 ccpm set-default work
 ✓ profile "work" is now the default
+
+# pick interactively
+ccpm set-default
 
 # clear the default
 ccpm unset-default`}
