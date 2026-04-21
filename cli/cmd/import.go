@@ -275,13 +275,15 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		for _, action := range plan.Actions {
 			switch action.Kind {
 			case "skip-missing":
-				dim.Printf("  - %-9s skipped (source missing)\n", action.Target)
+				dim.Printf("  - %-9s skipped (%s)\n", action.Target, fallback(action.Note, "source missing"))
 			case "merge-settings":
 				cyan.Printf("  ~ %-9s merge into settings.json\n", action.Target)
 			case "copy":
-				green.Printf("  + %-9s %s\n", action.Target, relOrAbs(action.TargetPath))
+				green.Printf("  + %-9s %s%s\n", action.Target, relOrAbs(action.TargetPath), noteSuffix(action.Note))
 			case "link":
-				green.Printf("  → %-9s %s (shared)\n", action.Target, relOrAbs(action.TargetPath))
+				green.Printf("  → %-9s %s (shared)%s\n", action.Target, relOrAbs(action.TargetPath), noteSuffix(action.Note))
+			case "mcp-add":
+				green.Printf("  + %-9s %s\n", action.Target, action.Note)
 			default:
 				fmt.Printf("  · %-9s %s\n", action.Target, action.Kind)
 			}
