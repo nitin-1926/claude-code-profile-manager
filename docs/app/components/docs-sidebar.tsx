@@ -34,7 +34,9 @@ const groups: Group[] = [
     title: "Operations",
     items: [
       { id: "doctor", label: "Doctor" },
+      { id: "drift", label: "Drift detection" },
       { id: "vault", label: "Vault backup" },
+      { id: "uninstall", label: "Uninstall" },
     ],
   },
   {
