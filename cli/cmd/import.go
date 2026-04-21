@@ -408,6 +408,14 @@ func runImportFromProfile(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(importOnly) == 0 {
+		picked, err := pickImportTargets()
+		if err == nil {
+			targets = picked
+		} else if !errors.Is(err, picker.ErrNonInteractive) {
+			return err
+		}
+	}
 
 	if err := importFromProfile(src.Dir, dst.Dir, targets, importForce); err != nil {
 		return err
