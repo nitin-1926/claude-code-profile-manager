@@ -345,17 +345,56 @@ func mergeImportedSettings(profileDir string) error {
 }
 
 func runImportFromProfile(cmd *cobra.Command, args []string) error {
-	if importFromSrc == "" || importFromTarget == "" {
-		return fmt.Errorf("both --src and --profile are required")
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	names := config.ProfileNames(cfg)
+
+	if importFromSrc == "" {
+		if len(names) == 0 {
+			return fmt.Errorf("no profiles exist yet — create one with `ccpm add <name>`")
+		}
+		opts := make([]picker.Option, len(names))
+		for i, n := range names {
+			opts[i] = picker.Option{Value: n, Label: n}
+		}
+		choice, err := picker.Select("Which profile should we copy from?", opts)
+		if err != nil {
+			if errors.Is(err, picker.ErrNonInteractive) {
+				return fmt.Errorf("--src <name> is required")
+			}
+			return err
+		}
+		importFromSrc = choice
+	}
+	if importFromTarget == "" {
+		remaining := make([]string, 0, len(names))
+		for _, n := range names {
+			if n != importFromSrc {
+				remaining = append(remaining, n)
+			}
+		}
+		if len(remaining) == 0 {
+			return fmt.Errorf("no other profiles to copy into — create one with `ccpm add <name>`")
+		}
+		opts := make([]picker.Option, len(remaining))
+		for i, n := range remaining {
+			opts[i] = picker.Option{Value: n, Label: n}
+		}
+		choice, err := picker.Select("Which profile should we copy into?", opts)
+		if err != nil {
+			if errors.Is(err, picker.ErrNonInteractive) {
+				return fmt.Errorf("--profile <name> is required")
+			}
+			return err
+		}
+		importFromTarget = choice
 	}
 	if importFromSrc == importFromTarget {
 		return fmt.Errorf("source and target profiles must differ")
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
 	src, ok := cfg.Profiles[importFromSrc]
 	if !ok {
 		return fmt.Errorf("source profile %q not found", importFromSrc)
