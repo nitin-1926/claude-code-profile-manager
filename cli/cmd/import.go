@@ -489,30 +489,107 @@ func mergeProfileSettings(src, dst string) error {
 }
 
 func copyProfileTree(src, dst string, force bool) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	return filetree.CopyTree(src, dst, !force)
+}
+
+// pickImportTarget lets the user choose a single profile or "all" when
+// neither --profile nor --all was passed. Sets importProfile / importAll as a
+// side effect. In non-TTY contexts returns the existing required-flag error.
+func pickImportTarget(cfg *config.Config) error {
+	names := config.ProfileNames(cfg)
+	if len(names) == 0 {
+		return fmt.Errorf("no profiles found — create one with `ccpm add <name>`")
+	}
+	opts := []picker.Option{{Value: "__all__", Label: "All profiles", Description: "import into every profile"}}
+	for _, n := range names {
+		opts = append(opts, picker.Option{Value: n, Label: n})
+	}
+	choice, err := picker.Select("Which profile should we import into?", opts)
+	if err != nil {
+		if errors.Is(err, picker.ErrNonInteractive) {
+			return fmt.Errorf("specify --profile <name> or --all")
+		}
+		return err
+	}
+	if choice == "__all__" {
+		importAll = true
+	} else {
+		importProfile = choice
+	}
+	return nil
+}
+
+// pickImportTargets offers a multi-select over the known target subtrees
+// (skills, commands, rules, hooks, agents, settings). Defaults match
+// DefaultTargets so hitting enter immediately yields the same set as if --only
+// weren't passed.
+func pickImportTargets() ([]defaultclaude.Target, error) {
+	all := []defaultclaude.Target{
+		defaultclaude.TargetSkills,
+		defaultclaude.TargetCommands,
+		defaultclaude.TargetRules,
+		defaultclaude.TargetHooks,
+		defaultclaude.TargetAgents,
+		defaultclaude.TargetSettings,
+		defaultclaude.TargetMCP,
+		defaultclaude.TargetPlugins,
+	}
+	defaults := map[defaultclaude.Target]bool{}
+	for _, t := range defaultclaude.DefaultTargets() {
+		defaults[t] = true
+	}
+	opts := make([]picker.Option, len(all))
+	defs := []string{}
+	for i, t := range all {
+		opts[i] = picker.Option{Value: string(t), Label: string(t)}
+		if defaults[t] {
+			defs = append(defs, string(t))
+		}
+	}
+	values, err := picker.MultiSelect("Which targets should we import?", opts, defs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]defaultclaude.Target, 0, len(values))
+	for _, v := range values {
+		out = append(out, defaultclaude.Target(v))
+	}
+	if len(out) == 0 {
+		return defaultclaude.DefaultTargets(), nil
+	}
+	return out, nil
+}
+
+// anyLiveSymlinkCandidate reports whether any top-level entry under the given
+// dedupable targets in ~/.claude is itself a symlink to a directory. Used to
+// decide whether to prompt about the live-symlink strategy.
+func anyLiveSymlinkCandidate(targets []defaultclaude.Target) (bool, error) {
+	root, err := defaultclaude.DefaultDir()
+	if err != nil {
+		return false, err
+	}
+	dedupable := map[defaultclaude.Target]bool{
+		defaultclaude.TargetSkills:   true,
+		defaultclaude.TargetAgents:   true,
+		defaultclaude.TargetCommands: true,
+	}
+	for _, t := range targets {
+		if !dedupable[t] {
+			continue
+		}
+		dir := filepath.Join(root, string(t))
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return err
+			continue
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
+		for _, e := range entries {
+			isLink, _ := filetree.SymlinkToDirectory(filepath.Join(dir, e.Name()))
+			if isLink {
+				return true, nil
+			}
 		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		if _, err := os.Stat(target); err == nil && !force {
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, info.Mode())
-	})
+	}
+	return false, nil
 }
 
 func relOrAbs(p string) string {
