@@ -81,10 +81,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Warning: skills sync failed for %q: %v\n", name, err)
 		}
 
-		if err := settingsmerge.Materialize(p.Dir, name); err != nil {
+		if err := settingsmerge.Materialize(p.Dir, name, ""); err != nil {
 			fmt.Printf("  Warning: settings materialization failed for %q: %v\n", name, err)
 		}
-		if err := settingsmerge.MaterializeMCP(p.Dir, name); err != nil {
+		if err := settingsmerge.MaterializeMCP(p.Dir, name, ""); err != nil {
 			fmt.Printf("  Warning: MCP materialization failed for %q: %v\n", name, err)
 		}
 
