@@ -6,6 +6,7 @@ import { CodeBlock } from "../components/code-block";
 import { Callout } from "../components/callout";
 import { DocsSidebar } from "../components/docs-sidebar";
 import { DocsToc } from "../components/docs-toc";
+import { VERSION } from "@/lib/version";
 
 export const metadata: Metadata = {
   title: "Documentation — ccpm",
@@ -685,7 +686,7 @@ ccpm settings apply ./team-defaults.json --profile work`}
           <CodeBlock
             code={`$ ccpm doctor
 Environment
-  ccpm       0.3.0
+  ccpm       ${VERSION}
   platform   darwin/arm64
   claude     2.1.61 (/usr/local/bin/claude)
 

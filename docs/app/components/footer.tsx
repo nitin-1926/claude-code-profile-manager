@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Heart, Terminal } from "lucide-react";
 import { GithubIcon } from "./brand-icons";
+import { VERSION_TAG } from "@/lib/version";
 
 export function Footer() {
   return (
@@ -113,7 +114,7 @@ export function Footer() {
               </a>
             </span>
           </div>
-          <span className="font-mono">v0.3.0</span>
+          <span className="font-mono">{VERSION_TAG}</span>
         </div>
       </div>
     </footer>

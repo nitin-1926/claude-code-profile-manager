@@ -23,6 +23,7 @@ import { Tabs } from "./components/tabs";
 import { CodeBlock } from "./components/code-block";
 import { BentoTile } from "./components/bento-tile";
 import { DotGrid, AccentOrb } from "./components/dot-grid";
+import { VERSION_TAG } from "@/lib/version";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Mini terminal for hero showcase
@@ -94,7 +95,7 @@ function Hero() {
         {/* Left: text content */}
         <div className="lg:col-span-6">
           <div className="mb-5">
-            <Eyebrow>{"// v0.3 . open source . cross-platform"}</Eyebrow>
+            <Eyebrow>{`// ${VERSION_TAG} . open source . cross-platform`}</Eyebrow>
           </div>
           <h1
             className="font-semibold tracking-[-0.025em] leading-[1.05] text-fg"
