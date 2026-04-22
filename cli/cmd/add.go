@@ -222,10 +222,10 @@ func applyImportDecision(profileDir, profileName string, d wizard.Decision, cfg 
 		}
 	}
 
-	if err := settingsmerge.Materialize(profileDir, profileName); err != nil {
+	if err := settingsmerge.Materialize(profileDir, profileName, ""); err != nil {
 		return fmt.Errorf("materializing settings: %w", err)
 	}
-	if err := settingsmerge.MaterializeMCP(profileDir, profileName); err != nil {
+	if err := settingsmerge.MaterializeMCP(profileDir, profileName, ""); err != nil {
 		return fmt.Errorf("materializing MCP: %w", err)
 	}
 	return nil
