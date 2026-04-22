@@ -84,6 +84,7 @@ func TestClearAPIKeyEnvStripsOnlyThatKey(t *testing.T) {
 	}
 
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp) // os.UserHomeDir reads USERPROFILE on Windows
 
 	if err := clearAPIKeyEnv(); err != nil {
 		t.Fatal(err)
@@ -126,6 +127,7 @@ func TestClearAPIKeyEnvDropsEmptyEnvBlock(t *testing.T) {
 	}
 
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp) // os.UserHomeDir reads USERPROFILE on Windows
 
 	if err := clearAPIKeyEnv(); err != nil {
 		t.Fatal(err)
@@ -142,6 +144,7 @@ func TestClearAPIKeyEnvDropsEmptyEnvBlock(t *testing.T) {
 func TestClearAPIKeyEnvIsNoopIfMissing(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp) // os.UserHomeDir reads USERPROFILE on Windows
 	if err := clearAPIKeyEnv(); err != nil {
 		t.Fatalf("clearAPIKeyEnv on missing file: %v", err)
 	}
