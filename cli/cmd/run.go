@@ -44,11 +44,19 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	maybeNudgeDefaultDrift(cfg)
 
+	// Discover the project root (first ancestor of CWD containing a
+	// .claude/settings.json, .claude/settings.local.json, or .mcp.json).
+	// Empty string means "no project layer" — merge behaves as pre-feature.
+	projectRoot := ""
+	if cwd, werr := os.Getwd(); werr == nil {
+		projectRoot = settingsmerge.FindProjectRoot(cwd)
+	}
+
 	// Materialize shared settings/MCP into the profile dir before launch
-	if err := settingsmerge.Materialize(p.Dir, name); err != nil {
+	if err := settingsmerge.Materialize(p.Dir, name, projectRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not materialize settings: %v\n", err)
 	}
-	if err := settingsmerge.MaterializeMCP(p.Dir, name); err != nil {
+	if err := settingsmerge.MaterializeMCP(p.Dir, name, projectRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
 	}
 
