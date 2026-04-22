@@ -294,10 +294,10 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "  Warning: settings merge failed: %v\n", err)
 			}
 
-			if err := settingsmerge.Materialize(p.Dir, name); err != nil {
+			if err := settingsmerge.Materialize(p.Dir, name, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: re-materializing settings: %v\n", err)
 			}
-			if err := settingsmerge.MaterializeMCP(p.Dir, name); err != nil {
+			if err := settingsmerge.MaterializeMCP(p.Dir, name, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: re-materializing MCP: %v\n", err)
 			}
 		}
@@ -421,10 +421,10 @@ func runImportFromProfile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := settingsmerge.Materialize(dst.Dir, importFromTarget); err != nil {
+	if err := settingsmerge.Materialize(dst.Dir, importFromTarget, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: re-materializing settings: %v\n", err)
 	}
-	if err := settingsmerge.MaterializeMCP(dst.Dir, importFromTarget); err != nil {
+	if err := settingsmerge.MaterializeMCP(dst.Dir, importFromTarget, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: re-materializing MCP: %v\n", err)
 	}
 
