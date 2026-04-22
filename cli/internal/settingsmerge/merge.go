@@ -40,6 +40,42 @@ func loadHostClaudeJSONMCP() (map[string]interface{}, error) {
 	return servers, nil
 }
 
+// loadHostClaudeSettings reads ~/.claude/settings.json — the file native
+// Claude Code uses as the user/global settings layer when CLAUDE_CONFIG_DIR
+// is unset. ccpm treats it as the cross-profile baseline for settings, so
+// editing it with a text editor (or running `claude /config ...` natively)
+// changes defaults for every ccpm profile on the next materialize.
+//
+// Missing file returns an empty map. Malformed JSON is tolerated the same
+// way loadHostClaudeJSONMCP tolerates it — we don't want a broken host file
+// to take every ccpm profile down with it.
+func loadHostClaudeSettings() (map[string]interface{}, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return map[string]interface{}{}, nil
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]interface{}{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return map[string]interface{}{}, nil
+	}
+	if doc == nil {
+		return map[string]interface{}{}, nil
+	}
+	// mcpServers here would be unusual (native Claude reads MCPs from
+	// ~/.claude.json, not this file), but if present we strip it so it
+	// doesn't trigger the stale-mcpServers cleanup in MaterializeMCP.
+	delete(doc, "mcpServers")
+	return doc, nil
+}
+
 // DeepMerge merges src into dst recursively.
 // Objects merge key-by-key; all other types (arrays, scalars) in src overwrite dst.
 func DeepMerge(dst, src map[string]interface{}) map[string]interface{} {
@@ -96,25 +132,37 @@ func WriteJSON(path string, data map[string]interface{}) error {
 	return nil
 }
 
-// Materialize builds the effective settings.json for a profile by merging:
-// 1. Global settings fragment from ~/.ccpm/share/settings/global.json
-// 2. Profile-specific fragment from ~/.ccpm/share/settings/<profile>.json
-// 3. Existing settings.json in the profile dir (user edits are preserved)
+// Materialize builds the effective settings.json for a profile.
+//
+// Precedence (lowest → highest, higher wins):
+//  1. Existing <profileDir>/settings.json (preserves any keys Claude Code
+//     auto-wrote during a previous session that nothing else redefines)
+//  2. Host ~/.claude/settings.json — the native Claude user/global layer.
+//     Editing this file changes defaults for every ccpm profile, mirroring
+//     native Claude semantics; it replaces the old ccpm-managed
+//     ~/.ccpm/share/settings/global.json fragment (removed 2026-04-22).
+//  3. Profile ccpm fragment ~/.ccpm/share/settings/<profileName>.json
+//  4. Profile owned-keys re-assertion — any leaf key recorded in
+//     <profileName>.owned.json is re-applied from the fragment so Claude
+//     Code can't silently shadow a value the user set via
+//     `ccpm settings set --profile`.
+//  5. Project <projectRoot>/.claude/settings.json (if projectRoot != "")
+//  6. Project <projectRoot>/.claude/settings.local.json (if projectRoot != "")
+//
+// Project layers (5, 6) are highest-precedence so per-repo overrides beat
+// ccpm's managed keys — an explicit per-project file is a stronger user
+// signal than a profile-wide default. Pass projectRoot="" from non-launch
+// codepaths that shouldn't bake CWD-relative state into the profile.
+//
 // Result is written back to profileDir/settings.json.
-func Materialize(profileDir, profileName string) error {
+func Materialize(profileDir, profileName, projectRoot string) error {
 	shareDir, err := share.SettingsDir()
 	if err != nil {
 		return err
 	}
 
-	globalPath := filepath.Join(shareDir, "global.json")
 	profileFragPath := filepath.Join(shareDir, profileName+".json")
 	targetPath := filepath.Join(profileDir, "settings.json")
-
-	global, err := LoadJSON(globalPath)
-	if err != nil {
-		return fmt.Errorf("loading global settings fragment: %w", err)
-	}
 
 	profileFrag, err := LoadJSON(profileFragPath)
 	if err != nil {
@@ -126,22 +174,37 @@ func Materialize(profileDir, profileName string) error {
 		return fmt.Errorf("loading existing profile settings: %w", err)
 	}
 
-	merged := DeepMerge(global, profileFrag)
-	merged = DeepMerge(merged, existing)
-
-	// Re-assert ccpm-owned keys on top so the user's settings.json (or
-	// Claude Code itself) can't silently shadow keys the user explicitly
-	// set via `ccpm settings set`.
-	globalOwned, err := LoadOwnedKeys(globalPath)
+	hostSettings, err := loadHostClaudeSettings()
 	if err != nil {
-		return fmt.Errorf("loading owned-keys for global fragment: %w", err)
+		return fmt.Errorf("loading host ~/.claude/settings.json: %w", err)
 	}
+
+	// Layers 1 → 2 → 3. Start from existing (claude auto-writes survive when
+	// nothing else redefines the key), overlay host settings, overlay the
+	// profile fragment.
+	merged := DeepMerge(existing, hostSettings)
+	merged = DeepMerge(merged, profileFrag)
+
+	// Layer 4: re-assert profile-level owned keys. This guarantees a key
+	// set via `ccpm settings set --profile` cannot be silently shadowed by
+	// a drift in <profileDir>/settings.json or by the host file.
 	profileOwned, err := LoadOwnedKeys(profileFragPath)
 	if err != nil {
 		return fmt.Errorf("loading owned-keys for profile fragment: %w", err)
 	}
-	merged = applyOwnedKeys(merged, global, globalOwned)
 	merged = applyOwnedKeys(merged, profileFrag, profileOwned)
+
+	// Layers 5 + 6: project settings. mcpServers belong in .claude.json;
+	// strip them so the stale-mcpServers cleanup in MaterializeMCP doesn't
+	// immediately delete what we just merged in.
+	projectSettings, projectLocal, err := LoadProjectSettings(projectRoot)
+	if err != nil {
+		return err
+	}
+	delete(projectSettings, "mcpServers")
+	delete(projectLocal, "mcpServers")
+	merged = DeepMerge(merged, projectSettings)
+	merged = DeepMerge(merged, projectLocal)
 
 	return WriteJSON(targetPath, merged)
 }
@@ -153,18 +216,22 @@ func Materialize(profileDir, profileName string) error {
 // versions are cleaned up here.
 //
 // Merge precedence (later wins):
-//  1. Host top-level ~/.claude.json#mcpServers
-//     — so any MCP installed via `claude mcp add --scope user`, `npx <thing>
-//       setup`, etc. auto-propagates into every profile. "Install anywhere,
-//       ccpm picks it up."
-//  2. ccpm global fragment ~/.ccpm/share/mcp/global.json
-//     — ccpm-managed servers shared across profiles.
-//  3. ccpm profile fragment ~/.ccpm/share/mcp/<profile>.json
-//     — profile-specific overrides win over everything else.
-//  4. Servers already present in <profile>/.claude.json#mcpServers that none
-//     of the above sources overwrote are preserved (e.g. the user ran
-//     `claude mcp add --scope user` *inside* a ccpm session).
-func MaterializeMCP(profileDir, profileName string) error {
+//  1. Servers already present in <profile>/.claude.json#mcpServers (lowest —
+//     preserved so previously-materialized state survives when no newer
+//     source redefines a given server).
+//  2. Host top-level ~/.claude.json#mcpServers — so any MCP installed via
+//     `claude mcp add --scope user`, `npx <thing> setup`, etc. auto-
+//     propagates into every profile.
+//  3. ccpm global fragment ~/.ccpm/share/mcp/global.json — ccpm-managed
+//     servers shared across profiles.
+//  4. ccpm profile fragment ~/.ccpm/share/mcp/<profile>.json — profile-
+//     specific overrides.
+//  5. Project-level MCPs: <projectRoot>/.claude/settings.json#mcpServers
+//     followed by <projectRoot>/.mcp.json (.mcp.json wins on collision).
+//     Highest precedence so project MCPs override profile/global.
+//
+// Pass projectRoot="" to skip the project layer.
+func MaterializeMCP(profileDir, profileName, projectRoot string) error {
 	mcpDir, err := share.MCPDir()
 	if err != nil {
 		return err
@@ -213,6 +280,16 @@ func MaterializeMCP(profileDir, profileName string) error {
 		for k, v := range profileMCP {
 			mcpServers[k] = v
 		}
+	}
+
+	// Layer 5: project-level MCPs from .claude/settings.json#mcpServers and
+	// .mcp.json at the project root. Highest precedence — wins over profile.
+	projectMCP, err := LoadProjectMCP(projectRoot)
+	if err != nil {
+		return err
+	}
+	for k, v := range projectMCP {
+		mcpServers[k] = v
 	}
 
 	if len(mcpServers) > 0 {
