@@ -55,9 +55,9 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 - **Parallel sessions**: run different Claude Code accounts in different terminals simultaneously
 - **Full isolation**: each profile has its own credentials, settings, MCP servers, projects, and memory
 - **OAuth + API key**: supports both authentication methods per profile
-- **Skills, MCP, and settings management**: install globally (all profiles) or per-profile with `--global` / `--profile`
+- **Skills and MCP management**: install globally (all profiles) or per-profile with `--global` / `--profile`
 - **Shared asset store**: skills are symlinked from `~/.ccpm/share/` into profiles for deduplication
-- **Settings materialization**: global and per-profile JSON fragments are merged into each profile's `settings.json` at launch
+- **Settings materialization**: `~/.claude/settings.json` is your cross-profile baseline; per-profile fragments + project `.claude/settings.json` layer on top at launch
 - **Encrypted vault**: AES-256-GCM encrypted credential backups with master key in your OS keychain
 - **IDE support**: set the default profile for VS Code with `ccpm set-default`
 - **Shell integration**: `ccpm use` sets the profile for your entire shell session
@@ -110,13 +110,18 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 
 ### Settings
 
-| Command                                          | Description                          |
-| ------------------------------------------------ | ------------------------------------ |
-| `ccpm settings set <key> <value> --global`       | Set a setting for all profiles       |
-| `ccpm settings set <key> <value> --profile work` | Set a setting for one profile        |
-| `ccpm settings apply <file.json> --global`       | Apply a JSON settings fragment       |
-| `ccpm settings get <key> --profile work`         | Get the effective value of a setting |
-| `ccpm settings show --profile work`              | Show full merged settings            |
+ccpm no longer manages its own global settings layer. Shared-across-profiles
+defaults go in `~/.claude/settings.json` (the file native Claude Code already
+uses); ccpm merges it into every profile at launch. Use `--profile` for
+per-account overrides, and per-repo `.claude/settings.json` for project
+overrides.
+
+| Command                                          | Description                             |
+| ------------------------------------------------ | --------------------------------------- |
+| `ccpm settings set <key> <value> --profile work` | Set a setting for one profile           |
+| `ccpm settings apply <file.json> --profile work` | Apply a JSON settings fragment          |
+| `ccpm settings get <key> --profile work`         | Get the effective value of a setting    |
+| `ccpm settings show --profile work`              | Show full merged settings for a profile |
 
 ### Authentication
 
@@ -137,27 +142,38 @@ ccpm uses one official mechanism: the `CLAUDE_CONFIG_DIR` environment variable.
 
 ### Global vs per-profile installs
 
-When you install a skill, MCP server, or setting with `--global`, it goes into the shared store (`~/.ccpm/share/`) and is linked or merged into every profile. New profiles created with `ccpm add` automatically inherit global installs.
+For **skills** and **MCP servers**, `--global` installs into the shared store (`~/.ccpm/share/`) and is linked/merged into every profile; new profiles inherit global installs automatically. `--profile <name>` applies only to one.
 
-When you use `--profile <name>`, the install applies only to that specific profile.
+For **settings**, ccpm does **not** maintain a separate global layer. The shared baseline is `~/.claude/settings.json` — the same file native Claude Code reads when you run it without ccpm. Edit it directly (or run `claude /config …` natively) and every ccpm profile picks up the change on the next launch. Use `ccpm settings set --profile <name>` only for per-profile overrides.
 
 ```
 ~/.ccpm/
 ├── config.json          # profile registry
-├── installs.json        # manifest of installed skills/MCP/settings
+├── installs.json        # manifest of installed skills/MCP
 ├── share/
 │   ├── skills/          # shared skill directories (symlinked into profiles)
 │   ├── mcp/             # MCP server fragments (global.json, <profile>.json)
-│   └── settings/        # settings fragments (global.json, <profile>.json)
+│   └── settings/        # per-profile settings fragments only (<profile>.json)
 ├── profiles/
 │   ├── personal/        # CLAUDE_CONFIG_DIR for "personal"
 │   │   ├── skills/      # symlinks → share/skills/*
-│   │   └── settings.json # materialized from fragments + user edits
+│   │   └── settings.json # materialized at launch
 │   └── work/
 └── vault/               # encrypted credential backups
 ```
 
-Settings and MCP merge order: **global fragment → profile fragment → existing settings.json**. Objects merge key-by-key; arrays and scalars from a higher-precedence source replace the lower one.
+**Settings merge order** (lowest → highest, higher wins):
+
+1. `<profile>/settings.json` existing state (preserves keys Claude auto-wrote)
+2. `~/.claude/settings.json` — shared baseline
+3. `~/.ccpm/share/settings/<profile>.json` — ccpm-managed per-profile fragment
+4. Profile owned-keys re-assertion (values set via `ccpm settings set`)
+5. `./.claude/settings.json` at project root
+6. `./.claude/settings.local.json` at project root (gitignored local overrides)
+
+**MCP merge order**: host `~/.claude.json#mcpServers` → ccpm global fragment → ccpm profile fragment → project `.claude/settings.json#mcpServers` → project `.mcp.json`.
+
+Objects merge key-by-key; arrays and scalars from a higher-precedence source replace the lower one.
 
 No daemons. No patches. No magic.
 
