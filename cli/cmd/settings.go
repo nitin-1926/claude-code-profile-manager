@@ -15,24 +15,32 @@ import (
 	"github.com/nitin-1926/ccpm/internal/share"
 )
 
-var (
-	settingsProfile string
-	settingsGlobal  bool
-)
+var settingsProfile string
 
 var settingsCmd = &cobra.Command{
 	Use:   "settings",
-	Short: "Manage Claude Code settings across profiles",
+	Short: "Manage Claude Code settings per profile",
+	Long: `Manage settings per profile.
+
+ccpm no longer keeps its own global settings layer. The cross-profile baseline
+is ~/.claude/settings.json (the file native Claude Code already uses) — edit it
+directly, or run ` + "`claude /config`" + ` natively, to change defaults for every profile.
+
+Use ` + "`ccpm settings set --profile <name>`" + ` for profile-specific overrides.`,
 }
 
 var settingsSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
-	Short: "Set a setting value (dot-notation key path)",
-	Long: `Set a Claude Code setting by key path.
+	Short: "Set a profile-specific setting (dot-notation key path)",
+	Long: `Set a Claude Code setting for one profile by key path.
+
+Shared-across-all-profiles settings should go in ~/.claude/settings.json
+directly; ccpm treats that file as the user/global baseline and merges it
+into every profile at launch.
 
 Examples:
-  ccpm settings set permissions.allow '["Bash(git:*)"]' --global
-  ccpm settings set model claude-sonnet-4-20250514 --profile work`,
+  ccpm settings set model claude-sonnet-4-20250514 --profile work
+  ccpm settings set permissions.allow '["Bash(git:*)"]' --profile work`,
 	Args: cobra.ExactArgs(2),
 	RunE: runSettingsSet,
 }
@@ -46,7 +54,7 @@ var settingsGetCmd = &cobra.Command{
 
 var settingsApplyCmd = &cobra.Command{
 	Use:   "apply <file.json>",
-	Short: "Apply a JSON settings fragment",
+	Short: "Apply a JSON settings fragment to a profile",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runSettingsApply,
 }
@@ -58,11 +66,15 @@ var settingsShowCmd = &cobra.Command{
 }
 
 func init() {
-	settingsSetCmd.Flags().BoolVar(&settingsGlobal, "global", false, "apply to global fragment (all profiles)")
-	settingsSetCmd.Flags().StringVar(&settingsProfile, "profile", "", "apply to a specific profile fragment")
-	settingsGetCmd.Flags().StringVar(&settingsProfile, "profile", "", "show value for a specific profile")
-	settingsApplyCmd.Flags().BoolVar(&settingsGlobal, "global", false, "apply to global fragment")
-	settingsApplyCmd.Flags().StringVar(&settingsProfile, "profile", "", "apply to a specific profile")
+	settingsSetCmd.Flags().StringVar(&settingsProfile, "profile", "", "profile to modify (required)")
+	_ = settingsSetCmd.MarkFlagRequired("profile")
+
+	settingsGetCmd.Flags().StringVar(&settingsProfile, "profile", "", "profile to read from (required)")
+	_ = settingsGetCmd.MarkFlagRequired("profile")
+
+	settingsApplyCmd.Flags().StringVar(&settingsProfile, "profile", "", "profile to apply to (required)")
+	_ = settingsApplyCmd.MarkFlagRequired("profile")
+
 	settingsShowCmd.Flags().StringVar(&settingsProfile, "profile", "", "profile to show (required)")
 	_ = settingsShowCmd.MarkFlagRequired("profile")
 
@@ -73,45 +85,40 @@ func init() {
 	rootCmd.AddCommand(settingsCmd)
 }
 
+// settingsFragmentPath returns the profile-scoped fragment path. Global
+// fragments are no longer supported — shared settings live in
+// ~/.claude/settings.json instead.
 func settingsFragmentPath(profileName string) (string, error) {
 	settingsDir, err := share.SettingsDir()
 	if err != nil {
 		return "", err
 	}
-	if profileName == "" {
-		return filepath.Join(settingsDir, "global.json"), nil
-	}
 	return filepath.Join(settingsDir, profileName+".json"), nil
+}
+
+func ensureProfileExists(profileName string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if _, exists := cfg.Profiles[profileName]; !exists {
+		return fmt.Errorf("profile %q not found", profileName)
+	}
+	return nil
 }
 
 func runSettingsSet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 	rawValue := args[1]
 
-	if !settingsGlobal && settingsProfile == "" {
-		return fmt.Errorf("specify --global or --profile <name>")
+	if err := ensureProfileExists(settingsProfile); err != nil {
+		return err
 	}
-
-	if settingsProfile != "" {
-		cfg, err := config.Load()
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		if _, exists := cfg.Profiles[settingsProfile]; !exists {
-			return fmt.Errorf("profile %q not found", settingsProfile)
-		}
-	}
-
 	if err := share.EnsureDirs(); err != nil {
 		return err
 	}
 
-	targetProfile := ""
-	if !settingsGlobal {
-		targetProfile = settingsProfile
-	}
-
-	fragPath, err := settingsFragmentPath(targetProfile)
+	fragPath, err := settingsFragmentPath(settingsProfile)
 	if err != nil {
 		return err
 	}
@@ -136,20 +143,12 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("recording owned key: %w", err)
 	}
 
-	scope := "global"
-	if settingsProfile != "" {
-		scope = fmt.Sprintf("profile %q", settingsProfile)
-	}
-	color.New(color.FgGreen, color.Bold).Printf("✓ Set %s = %s (%s)\n", key, rawValue, scope)
+	color.New(color.FgGreen, color.Bold).Printf("✓ Set %s = %s (profile %q)\n", key, rawValue, settingsProfile)
 	return nil
 }
 
 func runSettingsGet(cmd *cobra.Command, args []string) error {
 	key := args[0]
-
-	if settingsProfile == "" {
-		return fmt.Errorf("specify --profile <name>")
-	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -183,8 +182,8 @@ func runSettingsGet(cmd *cobra.Command, args []string) error {
 func runSettingsApply(cmd *cobra.Command, args []string) error {
 	filePath := args[0]
 
-	if !settingsGlobal && settingsProfile == "" {
-		return fmt.Errorf("specify --global or --profile <name>")
+	if err := ensureProfileExists(settingsProfile); err != nil {
+		return err
 	}
 
 	data, err := os.ReadFile(filePath)
@@ -201,12 +200,7 @@ func runSettingsApply(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	targetProfile := ""
-	if !settingsGlobal {
-		targetProfile = settingsProfile
-	}
-
-	fragPath, err := settingsFragmentPath(targetProfile)
+	fragPath, err := settingsFragmentPath(settingsProfile)
 	if err != nil {
 		return err
 	}
@@ -225,11 +219,7 @@ func runSettingsApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("recording owned keys: %w", err)
 	}
 
-	scope := "global"
-	if settingsProfile != "" {
-		scope = fmt.Sprintf("profile %q", settingsProfile)
-	}
-	color.New(color.FgGreen, color.Bold).Printf("✓ Applied settings from %s (%s)\n", filePath, scope)
+	color.New(color.FgGreen, color.Bold).Printf("✓ Applied settings from %s (profile %q)\n", filePath, settingsProfile)
 	return nil
 }
 
@@ -257,18 +247,18 @@ func runSettingsShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// buildMergedSettings computes the merge result used by `settings get/show`.
+// Must stay in sync with settingsmerge.Materialize's precedence: existing ←
+// ~/.claude/settings.json ← profile fragment ← profile owned-keys.
 func buildMergedSettings(profileDir, profileName string) (map[string]interface{}, error) {
 	settingsDir, err := share.SettingsDir()
 	if err != nil {
 		return nil, err
 	}
 
-	global, err := settingsmerge.LoadJSON(filepath.Join(settingsDir, "global.json"))
-	if err != nil {
-		return nil, err
-	}
+	profileFragPath := filepath.Join(settingsDir, profileName+".json")
 
-	profileFrag, err := settingsmerge.LoadJSON(filepath.Join(settingsDir, profileName+".json"))
+	profileFrag, err := settingsmerge.LoadJSON(profileFragPath)
 	if err != nil {
 		return nil, err
 	}
@@ -278,9 +268,28 @@ func buildMergedSettings(profileDir, profileName string) (map[string]interface{}
 		return nil, err
 	}
 
-	merged := settingsmerge.DeepMerge(global, profileFrag)
-	merged = settingsmerge.DeepMerge(merged, existing)
+	hostSettings := readHostSettings()
+
+	merged := settingsmerge.DeepMerge(existing, hostSettings)
+	merged = settingsmerge.DeepMerge(merged, profileFrag)
 	return merged, nil
+}
+
+// readHostSettings is a best-effort read of ~/.claude/settings.json. Errors
+// are swallowed because this function is used for advisory commands (`get`,
+// `show`); a broken host file shouldn't block the user from inspecting a
+// profile. The authoritative read lives inside settingsmerge.Materialize.
+func readHostSettings() map[string]interface{} {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	m, err := settingsmerge.LoadJSON(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	delete(m, "mcpServers")
+	return m
 }
 
 func setNestedKey(m map[string]interface{}, key string, value interface{}) {
