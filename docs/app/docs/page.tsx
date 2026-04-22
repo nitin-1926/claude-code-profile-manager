@@ -393,11 +393,12 @@ ccpm sync`}
                 <tr>
                   <td className="py-3 px-4 text-fg">Settings</td>
                   <td className="py-3 px-4">
-                    ~/.ccpm/share/settings/&#123;global,&lt;profile&gt;&#125;.json
+                    ~/.claude/settings.json (shared baseline) +
+                    ~/.ccpm/share/settings/&lt;profile&gt;.json (per-profile)
                   </td>
                   <td className="py-3 px-4">&lt;profile&gt;/settings.json</td>
                   <td className="py-3 px-4">
-                    Deep merge + owned-keys override
+                    Deep merge + owned-keys override + project layer
                   </td>
                 </tr>
               </tbody>
@@ -412,14 +413,21 @@ ccpm skill add ~/code-review --global
 ccpm mcp add github --command "npx -y @modelcontextprotocol/server-github" \\
   --env GITHUB_TOKEN=ghp_... --profile work
 
-# global setting
-ccpm settings set model claude-opus-4 --global`}
+# profile-specific setting
+ccpm settings set model claude-opus-4 --profile work
+
+# shared-across-profiles setting → edit the host file directly
+#   (no ccpm command — this is native Claude's settings layer)
+# ~/.claude/settings.json is the cross-profile baseline`}
             lang="bash"
           />
 
           <p className="text-sm text-fg-muted">
-            Run any install or remove command without <code>--global</code> or{" "}
-            <code>--profile</code> in a TTY and ccpm asks which scope you want.
+            <code>ccpm skill</code> / <code>ccpm mcp</code> accept{" "}
+            <code>--global</code> or <code>--profile</code> (they prompt if you
+            omit both in a TTY). <code>ccpm settings</code> only accepts{" "}
+            <code>--profile</code>: shared defaults live in{" "}
+            <code>~/.claude/settings.json</code> directly.
           </p>
 
           <H3 id="skills-commands">Skill commands</H3>
@@ -496,22 +504,32 @@ ccpm mcp import ./mcp-servers.json --global`}
 
           <H3 id="settings-commands">Settings commands</H3>
           <p>
-            Settings fragments live beside MCP fragments at{" "}
-            <code>~/.ccpm/share/settings/</code> and are deep-merged into the
-            profile&apos;s <code>settings.json</code>. Keys you set through
-            ccpm are tracked in a <code>.owned.json</code> sidecar so Claude
-            Code cannot silently overwrite them (see{" "}
+            Per-profile settings fragments live at{" "}
+            <code>~/.ccpm/share/settings/&lt;profile&gt;.json</code> and are
+            deep-merged into the profile&apos;s <code>settings.json</code>.
+            Keys you set through ccpm are tracked in a{" "}
+            <code>.owned.json</code> sidecar so Claude Code cannot silently
+            overwrite them (see{" "}
             <a href="#settings-precedence">Settings precedence</a>).
           </p>
+          <p>
+            <strong>ccpm does not manage shared settings.</strong> The
+            cross-profile baseline is <code>~/.claude/settings.json</code> —
+            the same file native Claude Code reads — and ccpm merges it into
+            every profile at launch. Edit it with a text editor, or run{" "}
+            <code>claude /config</code> natively, to change defaults for every
+            profile. There is no <code>--global</code> flag on{" "}
+            <code>ccpm settings</code>.
+          </p>
           <CodeBlock
-            code={`# set a simple scalar globally
-ccpm settings set model claude-opus-4 --global
+            code={`# set a per-profile scalar
+ccpm settings set model claude-opus-4 --profile work
 
-# dot-notation nested key, per profile
+# dot-notation nested key
 ccpm settings set permissions.allow.Bash true --profile work
 
 # JSON values (objects, arrays) are parsed automatically
-ccpm settings set env.FOO '{"a":1,"b":2}' --global
+ccpm settings set env.FOO '{"a":1,"b":2}' --profile work
 
 # read the effective value for a profile
 ccpm settings get model --profile work
@@ -519,14 +537,14 @@ ccpm settings get model --profile work
 # dump the fully merged settings for a profile
 ccpm settings show --profile work
 
-# apply a JSON fragment file (deep-merged into the target)
-ccpm settings apply ./team-defaults.json --global`}
+# apply a JSON fragment file (deep-merged into the profile)
+ccpm settings apply ./team-defaults.json --profile work`}
             lang="bash"
           />
           <p className="text-sm text-fg-muted">
-            <code>ccpm settings get</code> and <code>show</code> require{" "}
-            <code>--profile</code>; <code>set</code> and <code>apply</code>{" "}
-            require one of <code>--global</code> / <code>--profile</code>.
+            All four subcommands (<code>set</code>, <code>get</code>,{" "}
+            <code>apply</code>, <code>show</code>) require{" "}
+            <code>--profile</code>.
           </p>
 
           <H2 id="mcp-auth">MCP auth model</H2>
@@ -563,27 +581,41 @@ ccpm settings apply ./team-defaults.json --global`}
           <H2 id="settings-precedence">Settings precedence</H2>
           <p>
             At launch, ccpm materializes <code>settings.json</code> for a
-            profile by merging fragments in this order:
+            profile by merging in this order (lowest → highest, higher wins):
           </p>
           <ol>
             <li>
-              <code>~/.ccpm/share/settings/global.json</code>
+              The profile&apos;s existing <code>&lt;profile&gt;/settings.json</code>{" "}
+              — preserves keys Claude Code auto-wrote that nothing else
+              redefines.
             </li>
             <li>
-              <code>~/.ccpm/share/settings/&lt;profile&gt;.json</code>{" "}
-              (deep-merged over global)
+              <code>~/.claude/settings.json</code> — the host file native
+              Claude Code uses. Edit it to change defaults for every profile.
             </li>
             <li>
-              The profile&apos;s existing <code>settings.json</code>{" "}
-              (deep-merged on top)
+              <code>~/.ccpm/share/settings/&lt;profile&gt;.json</code> — the
+              per-profile ccpm fragment. Beats the shared baseline for this
+              profile.
             </li>
             <li>
               <strong>Owned-keys override.</strong> Any leaf key you set via{" "}
-              <code>ccpm settings set</code> or <code>ccpm settings apply</code>{" "}
-              is recorded in a <code>.owned.json</code> sidecar and re-applied
-              from the fragment after step 3. This guarantees that values you
-              explicitly set through ccpm are never silently overwritten by
-              Claude Code rewriting its own config.
+              <code>ccpm settings set --profile</code> or{" "}
+              <code>ccpm settings apply --profile</code> is recorded in a{" "}
+              <code>.owned.json</code> sidecar and re-applied from the profile
+              fragment. This guarantees values you explicitly set through
+              ccpm are never silently overwritten by Claude Code rewriting
+              its own config.
+            </li>
+            <li>
+              <code>./.claude/settings.json</code> at the project root
+              (discovered by walking up from CWD). Per-repo overrides beat
+              profile defaults.
+            </li>
+            <li>
+              <code>./.claude/settings.local.json</code> at the project root —
+              gitignored per-machine overrides for the same project. Highest
+              precedence.
             </li>
           </ol>
           <p>
