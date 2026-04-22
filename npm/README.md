@@ -55,7 +55,7 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 - **Parallel sessions**: run different Claude Code accounts in different terminals simultaneously
 - **Full isolation**: each profile has its own credentials, settings, MCP servers, projects, and memory
 - **OAuth + API key**: supports both authentication methods per profile
-- **Skills, MCP, and settings management**: install globally or per-profile with `--global` / `--profile`
+- **Skills and MCP management**: install globally or per-profile with `--global` / `--profile`; settings share the native `~/.claude/settings.json` baseline and layer per-profile/project overrides on top
 - **Encrypted vault**: AES-256-GCM encrypted credential backups with master key in your OS keychain
 - **IDE support**: set the default profile for VS Code with `ccpm set-default`
 - **Shell integration**: `ccpm use` sets the profile for your entire shell session
@@ -89,7 +89,7 @@ ccpm uses one official mechanism: the `CLAUDE_CONFIG_DIR` environment variable.
 2. `ccpm run` merges shared settings/MCP fragments, sets `CLAUDE_CONFIG_DIR`, and execs `claude`
 3. Each terminal gets a completely isolated Claude Code instance
 
-Skills, MCP servers, and settings can be installed globally (`--global`) to apply across all profiles, or per-profile (`--profile <name>`). Global skills are symlinked into each profile from `~/.ccpm/share/`; settings and MCP definitions are stored as JSON fragments and merged into each profile's `settings.json` at launch time.
+Skills and MCP servers can be installed globally (`--global`, stored in `~/.ccpm/share/`) or per-profile (`--profile <name>`). For settings, the cross-profile baseline is the native `~/.claude/settings.json` file (ccpm merges it into every profile at launch); use `ccpm settings set --profile <name>` for per-profile overrides. Per-repo overrides live in `./.claude/settings.json` and are honored automatically.
 
 No daemons. No patches. No magic.
 
