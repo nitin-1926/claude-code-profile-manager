@@ -30,6 +30,7 @@ dist/
 
 # Personal local files
 SUMMARY.md
+GAPS.md
 demo.*
 .claude/*
 graphify-out/*
