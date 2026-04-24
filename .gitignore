@@ -34,3 +34,5 @@ GAPS.md
 demo.*
 .claude/*
 graphify-out/*
+.reviews/
+.playwright-mcp/*
