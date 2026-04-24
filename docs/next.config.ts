@@ -11,10 +11,24 @@ import { resolve } from "node:path";
 const pkgPath = resolve(__dirname, "..", "npm", "package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 
-const nextConfig: NextConfig = {
-  env: {
-    NEXT_PUBLIC_CCPM_VERSION: pkg.version,
-  },
-};
-
-export default nextConfig;
+// Security headers. CSP is the main line of defence against a future XSS
+// regression; the others close off clickjacking / MIME-sniffing / referrer
+// leaks / cross-origin probing that Next.js does not set by default. The
+// site ships one inline script (theme init in app/layout.tsx) and uses
+// shiki-rendered inline styles, so 'unsafe-inline' is kept for script-src
+// and style-src — tightening to nonces would require refactoring layout.tsx
+// to a nonce pattern, which is out of scope for the security review pass.
+// Development only: React uses eval() for dev tooling; production does not.
+const isDev = process.env.NODE_ENV === "development";
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  isDev
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+    : "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
