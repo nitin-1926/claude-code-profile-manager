@@ -114,3 +114,120 @@ func IsTrusted(projectRoot string) bool {
 		return false
 	}
 	l, err := Load()
+	if err != nil {
+		return false
+	}
+	for _, r := range l.Projects {
+		if r.Path == abs {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkTrusted adds projectRoot to the trust list. Idempotent.
+func MarkTrusted(projectRoot string) error {
+	abs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return fmt.Errorf("resolving %q: %w", projectRoot, err)
+	}
+	l, err := Load()
+	if err != nil {
+		return err
+	}
+	for _, r := range l.Projects {
+		if r.Path == abs {
+			return nil
+		}
+	}
+	l.Projects = append(l.Projects, Record{
+		Path:      abs,
+		GrantedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	sort.SliceStable(l.Projects, func(i, j int) bool { return l.Projects[i].Path < l.Projects[j].Path })
+	return Save(l)
+}
+
+// Forget removes projectRoot from the trust list. Returns true if a record
+// was actually removed.
+func Forget(projectRoot string) (bool, error) {
+	abs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return false, fmt.Errorf("resolving %q: %w", projectRoot, err)
+	}
+	l, err := Load()
+	if err != nil {
+		return false, err
+	}
+	var kept []Record
+	removed := false
+	for _, r := range l.Projects {
+		if r.Path == abs {
+			removed = true
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if !removed {
+		return false, nil
+	}
+	l.Projects = kept
+	return true, Save(l)
+}
+
+// All returns the trust list entries.
+func All() ([]Record, error) {
+	l, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	return l.Projects, nil
+}
+
+// FilterProjectLayer returns a copy of settings with dangerous top-level keys
+// removed when the project is untrusted. Triggered reports which keys were
+// stripped so the caller can log them once.
+func FilterProjectLayer(settings map[string]interface{}, projectRoot string) (filtered map[string]interface{}, stripped []string) {
+	if IsTrusted(projectRoot) {
+		return settings, nil
+	}
+	out := make(map[string]interface{}, len(settings))
+	for k, v := range settings {
+		if isDangerous(k) {
+			stripped = append(stripped, k)
+			continue
+		}
+		out[k] = v
+	}
+	return out, stripped
+}
+
+func isDangerous(key string) bool {
+	for _, d := range DangerousKeys {
+		if d == key {
+			return true
+		}
+	}
+	return false
+}
+
+// warnedOnce prevents the "stripped dangerous keys" warning from firing on
+// every Materialize call in a single process (e.g. if a caller materializes
+// settings then MCP separately).
+var (
+	warnedOnce sync.Map // key: projectRoot, value: struct{}
+)
+
+// WarnUntrusted prints a one-time warning to stderr describing which keys were
+// dropped from the project layer because the project is not in the trust list.
+// No-op if projectRoot is empty or if the warning has already fired for this
+// projectRoot in the current process.
+func WarnUntrusted(projectRoot string, stripped []string) {
+	if projectRoot == "" || len(stripped) == 0 {
+		return
+	}
+	if _, already := warnedOnce.LoadOrStore(projectRoot, struct{}{}); already {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Note: project %q is not trusted — skipped %v from its .claude/settings.json. Run `ccpm trust add %q` to apply them in future launches.\n", projectRoot, stripped, projectRoot)
+}
