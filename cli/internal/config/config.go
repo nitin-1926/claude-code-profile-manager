@@ -94,3 +94,99 @@ func EnsureDirs() error {
 		filepath.Join(base, "share", "hooks"),
 		filepath.Join(base, "share", "mcp"),
 		filepath.Join(base, "share", "settings"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, DirPerm); err != nil {
+			return fmt.Errorf("creating directory %s: %w", d, err)
+		}
+	}
+	return nil
+}
+
+func ProfileNames(cfg *Config) []string {
+	names := make([]string, 0, len(cfg.Profiles))
+	for n := range cfg.Profiles {
+		names = append(names, n)
+	}
+	return names
+}
+
+func Load() (*Config, error) {
+	path, err := DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return &Config{
+			Version:  configVersion,
+			Profiles: make(map[string]ProfileConfig),
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading config: %w", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = make(map[string]ProfileConfig)
+	}
+	return &cfg, nil
+}
+
+func Save(cfg *Config) error {
+	path, err := DefaultPath()
+	if err != nil {
+		return err
+	}
+
+	if err := EnsureDirs(); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+
+	// Atomic write: write to temp file, then rename. FilePerm is 0600 so the
+	// config (which lists every profile path + auth method) is not readable
+	// by other local users on shared hosts.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, FilePerm); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("saving config: %w", err)
+	}
+	return nil
+}
+
+func (c *Config) AddProfile(name, dir, authMethod string) {
+	c.Profiles[name] = ProfileConfig{
+		Name:       name,
+		Dir:        dir,
+		AuthMethod: authMethod,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		LastUsed:   time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func (c *Config) RemoveProfile(name string) {
+	if c.DefaultProfile == name {
+		c.DefaultProfile = ""
+	}
+	delete(c.Profiles, name)
+}
+
+func (c *Config) UpdateLastUsed(name string) {
+	if p, ok := c.Profiles[name]; ok {
+		p.LastUsed = time.Now().UTC().Format(time.RFC3339)
+		c.Profiles[name] = p
+	}
+}
