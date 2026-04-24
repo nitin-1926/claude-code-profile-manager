@@ -106,3 +106,111 @@ func TestFind(t *testing.T) {
 
 	notFound := m.Find("github", KindSkill)
 	if notFound != nil {
+		t.Error("Find should return nil for wrong kind")
+	}
+}
+
+func TestListByKind(t *testing.T) {
+	m := &Manifest{Version: manifestVersion}
+	m.Add(Install{ID: "a", Kind: KindSkill, Scope: ScopeGlobal})
+	m.Add(Install{ID: "b", Kind: KindMCP, Scope: ScopeGlobal})
+	m.Add(Install{ID: "c", Kind: KindSkill, Scope: ScopeProfile})
+
+	skills := m.ListByKind(KindSkill)
+	if len(skills) != 2 {
+		t.Errorf("expected 2 skills, got %d", len(skills))
+	}
+
+	mcps := m.ListByKind(KindMCP)
+	if len(mcps) != 1 {
+		t.Errorf("expected 1 MCP, got %d", len(mcps))
+	}
+
+	settings := m.ListByKind(KindSetting)
+	if len(settings) != 0 {
+		t.Errorf("expected 0 settings, got %d", len(settings))
+	}
+}
+
+func TestNewAssetKindsRoundtrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	os.MkdirAll(filepath.Join(tmp, ".ccpm"), 0755)
+
+	m := &Manifest{Version: manifestVersion}
+	kinds := []AssetKind{KindAgent, KindCommand, KindRule, KindHook, KindPlugin}
+	for i, k := range kinds {
+		m.Add(Install{
+			ID:       string(k) + "-asset",
+			Kind:     k,
+			Scope:    ScopeProfile,
+			Profiles: []string{"work"},
+		})
+		_ = i
+	}
+
+	if err := Save(m); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(loaded.Installs) != len(kinds) {
+		t.Fatalf("expected %d installs, got %d", len(kinds), len(loaded.Installs))
+	}
+
+	for _, k := range kinds {
+		found := loaded.Find(string(k)+"-asset", k)
+		if found == nil {
+			t.Errorf("Find(%s) returned nil", k)
+			continue
+		}
+		if found.Kind != k {
+			t.Errorf("Kind = %q, want %q", found.Kind, k)
+		}
+	}
+
+	// ListByKind filters each new kind correctly.
+	for _, k := range kinds {
+		filtered := loaded.ListByKind(k)
+		if len(filtered) != 1 {
+			t.Errorf("ListByKind(%s) = %d, want 1", k, len(filtered))
+		}
+	}
+}
+
+func TestGlobalInstalls(t *testing.T) {
+	m := &Manifest{Version: manifestVersion}
+	m.Add(Install{ID: "a", Kind: KindSkill, Scope: ScopeGlobal})
+	m.Add(Install{ID: "b", Kind: KindMCP, Scope: ScopeProfile})
+	m.Add(Install{ID: "c", Kind: KindSkill, Scope: ScopeGlobal})
+
+	globals := m.GlobalInstalls()
+	if len(globals) != 2 {
+		t.Errorf("expected 2 global installs, got %d", len(globals))
+	}
+}
+
+func TestSaveAtomicWrite(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	os.MkdirAll(filepath.Join(tmp, ".ccpm"), 0755)
+
+	m := &Manifest{Version: manifestVersion}
+	if err := Save(m); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+
+	entries, _ := os.ReadDir(filepath.Join(tmp, ".ccpm"))
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".tmp" {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
