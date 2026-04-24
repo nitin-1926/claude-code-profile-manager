@@ -71,3 +71,76 @@ func Load() (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parsing manifest: %w", err)
+	}
+	return &m, nil
+}
+
+func Save(m *Manifest) error {
+	path, err := manifestPath()
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), config.DirPerm); err != nil {
+		return fmt.Errorf("creating manifest directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling manifest: %w", err)
+	}
+
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, config.FilePerm); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("saving manifest: %w", err)
+	}
+	return nil
+}
+
+func (m *Manifest) Add(install Install) {
+	install.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	m.Installs = append(m.Installs, install)
+}
+
+func (m *Manifest) Remove(id string, kind AssetKind) bool {
+	for i, inst := range m.Installs {
+		if inst.ID == id && inst.Kind == kind {
+			m.Installs = append(m.Installs[:i], m.Installs[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manifest) Find(id string, kind AssetKind) *Install {
+	for i := range m.Installs {
+		if m.Installs[i].ID == id && m.Installs[i].Kind == kind {
+			return &m.Installs[i]
+		}
+	}
+	return nil
+}
+
+func (m *Manifest) ListByKind(kind AssetKind) []Install {
+	var result []Install
+	for _, inst := range m.Installs {
+		if inst.Kind == kind {
+			result = append(result, inst)
+		}
+	}
+	return result
+}
+
+func (m *Manifest) GlobalInstalls() []Install {
+	var result []Install
+	for _, inst := range m.Installs {
+		if inst.Scope == ScopeGlobal {
+			result = append(result, inst)
+		}
+	}
+	return result
+}
