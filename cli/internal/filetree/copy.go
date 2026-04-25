@@ -2,8 +2,12 @@
 package filetree
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/nitin-1926/ccpm/internal/config"
 )
 
 // CopyTree walks src and copies regular files into dst, preserving relative paths.
@@ -12,10 +16,21 @@ import (
 // If skipExisting is true, an existing regular file at the destination path is left
 // unchanged (merge / preserve behavior).
 //
-// filepath.Walk uses Lstat and does not follow symlinks. A symlink whose target is a
-// directory would otherwise be misclassified as a file and fail on ReadFile with
-// EISDIR; those are handled by recursively copying from the resolved directory.
+// Symlink handling: filepath.Walk uses Lstat and does not follow symlinks. A
+// symlink-to-directory is followed only when its resolved target stays inside
+// the original src root (F10 — otherwise a rogue symlink in ~/.claude/skills/<x>
+// pointing at ~/.ssh or /etc would let `ccpm import default` copy unrelated
+// files into the shared store).
 func CopyTree(src, dst string, skipExisting bool) error {
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return fmt.Errorf("resolving src %q: %w", src, err)
+	}
+	absSrc, err = filepath.EvalSymlinks(absSrc)
+	if err != nil {
+		return fmt.Errorf("evaluating src symlinks: %w", err)
+	}
+
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -31,35 +46,3 @@ func CopyTree(src, dst string, skipExisting bool) error {
 		}
 
 		if info.Mode()&os.ModeSymlink != 0 {
-			fi, err := os.Stat(path)
-			if err != nil {
-				return err
-			}
-			if fi.IsDir() {
-				real, err := filepath.EvalSymlinks(path)
-				if err != nil {
-					return err
-				}
-				if err := os.MkdirAll(target, fi.Mode()); err != nil {
-					return err
-				}
-				return CopyTree(real, target, skipExisting)
-			}
-		}
-
-		if skipExisting {
-			if _, err := os.Stat(target); err == nil {
-				return nil
-			}
-		}
-
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, info.Mode())
-	})
-}
