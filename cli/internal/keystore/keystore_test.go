@@ -45,3 +45,50 @@ func TestMemoryStore_VaultMasterKeyRoundTrip(t *testing.T) {
 
 func TestDecodeVaultKey(t *testing.T) {
 	valid := make([]byte, vaultKeyBytes)
+	for i := range valid {
+		valid[i] = byte(i)
+	}
+	encoded := base64.StdEncoding.EncodeToString(valid)
+
+	got, err := decodeVaultKey(encoded)
+	if err != nil {
+		t.Fatalf("valid base64: %v", err)
+	}
+	if !bytes.Equal(got, valid) {
+		t.Error("decoded != original")
+	}
+
+	// Legacy: exactly 32 bytes of string data round-trips as raw. Regression
+	// guard: the decoder must not reject a legacy key so existing installs
+	// stay openable after upgrade.
+	legacy := string(valid)
+	got, err = decodeVaultKey(legacy)
+	if err != nil {
+		t.Fatalf("legacy raw: %v", err)
+	}
+	if !bytes.Equal(got, valid) {
+		t.Error("legacy path did not round-trip correctly")
+	}
+
+	// Wrong length must fail loud rather than returning a truncated key.
+	if _, err := decodeVaultKey("short"); err == nil {
+		t.Error("short string should error")
+	}
+}
+
+func TestMemoryStore_APIKey(t *testing.T) {
+	s := NewMemoryStore()
+	if err := s.SetAPIKey("work", "sk-test"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	got, err := s.GetAPIKey("work")
+	if err != nil || got != "sk-test" {
+		t.Errorf("get = %q, %v", got, err)
+	}
+	if err := s.DeleteAPIKey("work"); err != nil {
+		t.Errorf("delete: %v", err)
+	}
+	if _, err := s.GetAPIKey("work"); err == nil {
+		t.Error("get after delete should error")
+	}
+}
