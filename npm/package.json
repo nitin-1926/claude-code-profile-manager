@@ -1,6 +1,6 @@
 {
   "name": "@ngcodes/ccpm",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Claude Code Profile Manager — manage multiple Claude Code accounts with isolated profiles",
   "bin": {
     "ccpm": "bin/ccpm"
