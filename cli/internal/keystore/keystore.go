@@ -2,15 +2,18 @@ package keystore
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/zalando/go-keyring"
 )
 
 const (
-	serviceAPI   = "ccpm"
-	serviceVault = "ccpm-vault"
-	vaultAccount = "master-key"
+	serviceAPI       = "ccpm"
+	serviceVault     = "ccpm-vault"
+	vaultAccount     = "master-key"
+	vaultKeyBytes    = 32
+	vaultLegacyBytes = 32
 )
 
 // Store defines the interface for keychain operations.
@@ -50,59 +53,12 @@ func (s *SystemStore) DeleteAPIKey(profile string) error {
 }
 
 func (s *SystemStore) GetOrCreateVaultMasterKey() ([]byte, error) {
-	existing, err := keyring.Get(serviceVault, vaultAccount)
-	if err == nil {
-		return []byte(existing), nil
+	if existing, err := keyring.Get(serviceVault, vaultAccount); err == nil {
+		key, decodeErr := decodeVaultKey(existing)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decoding master key from keychain: %w", decodeErr)
+		}
+		return key, nil
 	}
 
-	// Generate new 32-byte key
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generating master key: %w", err)
-	}
-
-	if err := keyring.Set(serviceVault, vaultAccount, string(key)); err != nil {
-		return nil, fmt.Errorf("storing master key in keychain: %w", err)
-	}
-
-	return key, nil
-}
-
-// MemoryStore is an in-memory implementation for testing.
-type MemoryStore struct {
-	data map[string]string
-}
-
-func NewMemoryStore() Store {
-	return &MemoryStore{data: make(map[string]string)}
-}
-
-func (m *MemoryStore) SetAPIKey(profile, key string) error {
-	m.data[serviceAPI+"/"+profile] = key
-	return nil
-}
-
-func (m *MemoryStore) GetAPIKey(profile string) (string, error) {
-	key, ok := m.data[serviceAPI+"/"+profile]
-	if !ok {
-		return "", fmt.Errorf("API key not found for profile %q", profile)
-	}
-	return key, nil
-}
-
-func (m *MemoryStore) DeleteAPIKey(profile string) error {
-	delete(m.data, serviceAPI+"/"+profile)
-	return nil
-}
-
-func (m *MemoryStore) GetOrCreateVaultMasterKey() ([]byte, error) {
-	if existing, ok := m.data[serviceVault+"/"+vaultAccount]; ok {
-		return []byte(existing), nil
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
-	m.data[serviceVault+"/"+vaultAccount] = string(key)
-	return key, nil
-}
+	key := make([]byte, vaultKeyBytes)
