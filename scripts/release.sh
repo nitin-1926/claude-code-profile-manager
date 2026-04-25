@@ -171,9 +171,9 @@ pop_stash_on_exit() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 current_version() {
-  # Extract: version = "X.Y.Z"
+  # Extract: var version = "X.Y.Z" or version = "X.Y.Z"
   local v
-  v="$(grep -E '^[[:space:]]*version[[:space:]]*=[[:space:]]*"[^"]+"' "$GO_VERSION_FILE" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+  v="$(grep -E '^[[:space:]]*(var[[:space:]]+)?version[[:space:]]*=[[:space:]]*"[^"]+"' "$GO_VERSION_FILE" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
   [[ -n "$v" ]] || fatal "could not read current version from $GO_VERSION_FILE"
   printf '%s' "$v"
 }
@@ -197,10 +197,10 @@ bump_semver() {
 
 write_go_version() {
   local new="$1"
-  # Portable in-place sed for macOS + Linux.
+  # Portable in-place sed for macOS + Linux. Matches "var version = " or "version = ".
   local tmp
   tmp="$(mktemp)"
-  sed -E 's/^([[:space:]]*version[[:space:]]*=[[:space:]]*)"[^"]+"/\1"'"$new"'"/' "$GO_VERSION_FILE" >"$tmp"
+  sed -E 's/^([[:space:]]*(var[[:space:]]+)?version[[:space:]]*=[[:space:]]*)"[^"]+"/\1"'"$new"'"/' "$GO_VERSION_FILE" >"$tmp"
   mv "$tmp" "$GO_VERSION_FILE"
 }
 
