@@ -85,3 +85,91 @@ func FindBinary() (string, error) {
 
 // Spawn runs claude as a child process and waits for it to exit.
 // Used during `ccpm add` for the OAuth login flow.
+func Spawn(profileDir string, extraEnv ...string) error {
+	bin, err := FindBinary()
+	if err != nil {
+		return err
+	}
+
+	abs, err := filepath.Abs(profileDir)
+	if err != nil {
+		return fmt.Errorf("resolving profile path: %w", err)
+	}
+
+	cmd := exec.Command(bin)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", abs))
+	cmd.Env = append(cmd.Env, extraEnv...)
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("claude exited with error: %w", err)
+	}
+	return nil
+}
+
+// execEnv builds the env slice for launching claude with a given profile.
+//
+// Precedence (later wins): parent process env → profile-persisted env
+// (ProfileConfig.Env) → CLAUDE_CONFIG_DIR → ANTHROPIC_API_KEY → ad-hoc CLI
+// overrides (extraEnv). CLAUDE_CONFIG_DIR and ANTHROPIC_API_KEY always come
+// from ccpm so a stray value in the parent or profile env can't redirect the
+// launch at the ccpm layer.
+func execEnv(profileDir, apiKey string, profileEnv, extraEnv map[string]string) (bin, absProfileDir string, env []string, err error) {
+	bin, err = FindBinary()
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	absProfileDir, err = filepath.Abs(profileDir)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolving profile path: %w", err)
+	}
+
+	env = os.Environ()
+	env = appendEnvMap(env, profileEnv)
+	env = append(env, fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", absProfileDir))
+	if apiKey != "" {
+		env = append(env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", apiKey))
+	}
+	env = appendEnvMap(env, extraEnv)
+	return bin, absProfileDir, env, nil
+}
+
+// appendEnvMap writes KEY=VALUE pairs to the end of env in a stable order so
+// test output (and `ccpm run -v` debug traces) stay deterministic. Later
+// entries beat earlier ones because Go's exec path honors the last occurrence
+// of a key.
+func appendEnvMap(env []string, m map[string]string) []string {
+	if len(m) == 0 {
+		return env
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		env = append(env, fmt.Sprintf("%s=%s", k, m[k]))
+	}
+	return env
+}
+
+// Version runs `<bin> --version` and returns the first line of output,
+// trimmed. Returns an empty string if the binary is not found or fails.
+func Version() string {
+	bin, err := FindBinary()
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(out))
+	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
+		line = line[:idx]
+	}
+	return line
+}
