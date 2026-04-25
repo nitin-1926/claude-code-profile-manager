@@ -56,3 +56,62 @@ func TestApplyGlobalsLinksEveryDedupableKind(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := ApplyGlobals(profileDir, "new"); err != nil {
+		t.Fatalf("ApplyGlobals: %v", err)
+	}
+
+	for _, sub := range []string{"skills", "agents", "commands", "rules", "hooks"} {
+		linkPath := filepath.Join(profileDir, sub, "entry-"+sub)
+		info, err := os.Lstat(linkPath)
+		if err != nil {
+			t.Errorf("%s/entry-%s: expected link, got %v", sub, sub, err)
+			continue
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			// Windows copy fallback is acceptable on that platform; on
+			// unix/darwin the test runs as a real symlink. Just ensure the
+			// file exists and resolves to the share store source.
+			resolved, err := filepath.EvalSymlinks(linkPath)
+			if err != nil {
+				t.Errorf("%s: cannot resolve: %v", linkPath, err)
+				continue
+			}
+			if filepath.Base(resolved) != "entry-"+sub {
+				t.Errorf("%s: resolved target %s does not point to share store", linkPath, resolved)
+			}
+			continue
+		}
+		target, err := os.Readlink(linkPath)
+		if err != nil {
+			t.Errorf("%s: cannot readlink: %v", linkPath, err)
+			continue
+		}
+		if filepath.Base(target) != "entry-"+sub {
+			t.Errorf("%s: symlink target %s does not point to share store entry", linkPath, target)
+		}
+	}
+}
+
+// kindToSubdir mirrors the kindDirs map in sync.go so the test doesn't have
+// to reach into the private var.
+func kindToSubdir(t *testing.T, k manifest.AssetKind) string {
+	t.Helper()
+	switch k {
+	case manifest.KindSkill:
+		return "skills"
+	case manifest.KindAgent:
+		return "agents"
+	case manifest.KindCommand:
+		return "commands"
+	case manifest.KindRule:
+		return "rules"
+	case manifest.KindHook:
+		return "hooks"
+	default:
+		t.Fatalf("unexpected kind: %s", k)
+		return ""
+	}
+}
+
+// Keep unused-import lints quiet when build tags change.
+var _ = config.BaseDir
