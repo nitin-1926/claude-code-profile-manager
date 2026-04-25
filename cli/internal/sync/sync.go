@@ -4,50 +4,40 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nitin-1926/ccpm/internal/manifest"
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/ccpm/internal/share"
 )
 
-// ApplyGlobals links all global skill installs into the given profile directory.
-// MCP and settings globals are handled at launch via materialization.
+// kindDirs maps each dedupable asset kind to the share-store root resolver and
+// the per-profile subdirectory name. Kinds that materialize via settings (MCP,
+// setting, plugin) are intentionally absent and handled below.
+var kindDirs = map[manifest.AssetKind]struct {
+	storeDir       func() (string, error)
+	profileSubdir  string
+}{
+	manifest.KindSkill:   {share.SkillsDir, "skills"},
+	manifest.KindAgent:   {share.AgentsDir, "agents"},
+	manifest.KindCommand: {share.CommandsDir, "commands"},
+	manifest.KindRule:    {share.RulesDir, "rules"},
+	manifest.KindHook:    {share.HooksDir, "hooks"},
+}
+
+// ApplyGlobals links all global asset installs (skills, agents, commands,
+// rules, hooks) into the given profile directory, then materializes settings
+// and MCP so brand-new profiles launch with global fragments already applied.
 func ApplyGlobals(profileDir, profileName string) error {
 	m, err := manifest.Load()
 	if err != nil {
 		return fmt.Errorf("loading manifest: %w", err)
 	}
 
-	skillsDir, err := share.SkillsDir()
-	if err != nil {
-		return err
-	}
-
 	for _, inst := range m.GlobalInstalls() {
-		switch inst.Kind {
-		case manifest.KindSkill:
-			src := filepath.Join(skillsDir, inst.ID)
-			if _, err := os.Stat(src); os.IsNotExist(err) {
-				continue
-			}
-			dst := filepath.Join(profileDir, "skills", inst.ID)
-			if err := share.Link(src, dst); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not link skill %q to profile %q: %v\n", inst.ID, profileName, err)
-			}
-
-		case manifest.KindMCP, manifest.KindSetting:
-			// Handled below via settingsmerge.Materialize.
+		dirs, ok := kindDirs[inst.Kind]
+		if !ok {
+			// MCP / setting / plugin flow through materialization below.
+			continue
 		}
-	}
-
-	// Materialize settings + MCP now so that brand-new profiles launch with
-	// global fragments already merged, not on the first `ccpm run`.
-	if err := settingsmerge.Materialize(profileDir, profileName, ""); err != nil {
-		return fmt.Errorf("materializing settings: %w", err)
-	}
-	if err := settingsmerge.MaterializeMCP(profileDir, profileName, ""); err != nil {
-		return fmt.Errorf("materializing MCP: %w", err)
-	}
-
-	return nil
-}
+		storeRoot, err := dirs.storeDir()
