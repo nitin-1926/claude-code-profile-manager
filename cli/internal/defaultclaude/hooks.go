@@ -43,3 +43,48 @@ func LoadHookEntries() ([]HookEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	hooksRoot, _ := doc["hooks"].(map[string]interface{})
+	if len(hooksRoot) == 0 {
+		return nil, nil
+	}
+
+	var out []HookEntry
+	for event, raw := range hooksRoot {
+		list, _ := raw.([]interface{})
+		for i, entry := range list {
+			obj, _ := entry.(map[string]interface{})
+			matcher, _ := obj["matcher"].(string)
+			cmds, _ := obj["hooks"].([]interface{})
+			for j, c := range cmds {
+				cm, _ := c.(map[string]interface{})
+				t, _ := cm["type"].(string)
+				if t == "" {
+					t = "command"
+				}
+				cmd, _ := cm["command"].(string)
+				out = append(out, HookEntry{
+					Event:   event,
+					Matcher: matcher,
+					Index:   i,
+					SubIdx:  j,
+					Type:    t,
+					Command: cmd,
+				})
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Event != out[j].Event {
+			return out[i].Event < out[j].Event
+		}
+		if out[i].Index != out[j].Index {
+			return out[i].Index < out[j].Index
+		}
+		return out[i].SubIdx < out[j].SubIdx
+	})
+	return out, nil
+}
