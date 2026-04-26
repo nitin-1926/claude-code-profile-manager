@@ -65,3 +65,71 @@ func LoadManagedSettings() (map[string]interface{}, error) {
 	basePath := filepath.Join(dir, "managed-settings.json")
 	if data, err := readIfExists(basePath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not read %s: %v\n", basePath, err)
+	} else if data != nil {
+		if parsed, ok := parseJSONTolerant(basePath, data); ok {
+			merged = DeepMerge(merged, parsed)
+		}
+	}
+
+	dropDir := filepath.Join(dir, "managed-settings.d")
+	entries, err := os.ReadDir(dropDir)
+	if err == nil {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			path := filepath.Join(dropDir, name)
+			data, readErr := readIfExists(path)
+			if readErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not read %s: %v\n", path, readErr)
+				continue
+			}
+			if data == nil {
+				continue
+			}
+			if parsed, ok := parseJSONTolerant(path, data); ok {
+				merged = DeepMerge(merged, parsed)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: could not list %s: %v\n", dropDir, err)
+	}
+
+	return merged, nil
+}
+
+// ManagedMCP returns the managed layer's mcpServers block (if any). It's
+// stripped from the settings map before being handed back so the
+// settings-side merge doesn't trip the stale-mcpServers cleanup.
+func ManagedMCP(managed map[string]interface{}) map[string]interface{} {
+	servers, _ := managed["mcpServers"].(map[string]interface{})
+	if servers == nil {
+		return map[string]interface{}{}
+	}
+	delete(managed, "mcpServers")
+	return servers
+}
+
+func readIfExists(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return data, err
+}
+
+func parseJSONTolerant(path string, data []byte) (map[string]interface{}, bool) {
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping malformed %s: %v\n", path, err)
+		return nil, false
+	}
+	if m == nil {
+		return map[string]interface{}{}, true
+	}
+	return m, true
+}
