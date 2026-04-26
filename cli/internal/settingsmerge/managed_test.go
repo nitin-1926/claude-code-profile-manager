@@ -48,3 +48,53 @@ func TestLoadManagedSettings_DropInsMergedAlphabetically(t *testing.T) {
 
 	restore := SetManagedSettingsDirForTest(dir)
 	defer restore()
+
+	got, err := LoadManagedSettings()
+	if err != nil {
+		t.Fatalf("LoadManagedSettings: %v", err)
+	}
+	if got["outputStyle"] != "Explanatory" {
+		t.Fatalf("outputStyle: got %v, want Explanatory", got["outputStyle"])
+	}
+}
+
+func TestLoadManagedSettings_MissingDirIsEmpty(t *testing.T) {
+	restore := SetManagedSettingsDirForTest(filepath.Join(t.TempDir(), "nope"))
+	defer restore()
+
+	got, err := LoadManagedSettings()
+	if err != nil {
+		t.Fatalf("LoadManagedSettings: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty map, got %v", got)
+	}
+}
+
+func TestManagedMCP_StripsServers(t *testing.T) {
+	managed := map[string]interface{}{
+		"model":      "foo",
+		"mcpServers": map[string]interface{}{"a": map[string]interface{}{"type": "http"}},
+	}
+	servers := ManagedMCP(managed)
+	if _, stillThere := managed["mcpServers"]; stillThere {
+		t.Fatalf("mcpServers should be stripped from managed settings map")
+	}
+	if _, ok := servers["a"]; !ok {
+		t.Fatalf("expected server 'a' to be returned")
+	}
+}
+
+func writeJSONForTest(t *testing.T, path string, data map[string]interface{}) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, b, 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
