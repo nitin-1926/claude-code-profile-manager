@@ -435,3 +435,440 @@ func containsString(xs []string, target string) bool {
 }
 
 // copyTreeMerging walks src and copies files into dst. Existing files are
+// preserved unless force=true.
+func copyTreeMerging(src, dst string, force bool) error {
+	return filetree.CopyTree(src, dst, !force)
+}
+
+// copyDirFiltered copies top-level entries of srcDir into dstDir. When allow
+// is nil every entry is copied (equivalent to copyTreeMerging). When allow is
+// set only matching top-level entry names are copied; each selected entry is
+// walked recursively with the same preserve-existing-unless-force semantics as
+// copyTreeMerging.
+func copyDirFiltered(srcDir, dstDir string, force bool, allow map[string]bool) error {
+	if allow == nil {
+		return copyTreeMerging(srcDir, dstDir, force)
+	}
+	if err := os.MkdirAll(dstDir, config.DirPerm); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !allow[name] {
+			continue
+		}
+		srcPath := filepath.Join(srcDir, name)
+		dstPath := filepath.Join(dstDir, name)
+
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if err := filetree.CopyTree(srcPath, dstPath, !force); err != nil {
+				return err
+			}
+			continue
+		}
+		if !force {
+			if _, err := os.Stat(dstPath); err == nil {
+				continue
+			}
+		}
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// importMCP reads MCP server definitions from ~/.claude.json and writes the
+// selected ones into a ccpm MCP fragment. Destination is determined by
+// opts.MCPScope: "global" writes to ~/.ccpm/share/mcp/global.json; anything
+// else falls back to the profile-scoped fragment for opts.ProfileName.
+func importMCP(plan *ImportPlan, opts ImportOptions) error {
+	if !ClaudeJSONExists() {
+		path, _ := ClaudeJSONPath()
+		plan.Actions = append(plan.Actions, ImportAction{
+			Target:     TargetMCP,
+			SourcePath: path,
+			Kind:       "skip-missing",
+			Note:       "~/.claude.json not found",
+		})
+		return nil
+	}
+
+	entries, err := LoadMCPEntries()
+	if err != nil {
+		return fmt.Errorf("reading MCP entries: %w", err)
+	}
+	allow := opts.ItemFilter[TargetMCP]
+
+	scope := opts.MCPScope
+	if scope == "" {
+		scope = MCPImportScopeProfile
+	}
+	fragmentName := "global"
+	if scope != MCPImportScopeGlobal {
+		fragmentName = opts.ProfileName
+		if fragmentName == "" {
+			return fmt.Errorf("profile-scoped MCP import requires ProfileName")
+		}
+	}
+
+	selected := make([]MCPEntry, 0, len(entries))
+	for _, e := range entries {
+		if allow != nil && !allow[e.ID()] {
+			continue
+		}
+		selected = append(selected, e)
+	}
+
+	if len(selected) == 0 {
+		plan.Actions = append(plan.Actions, ImportAction{
+			Target: TargetMCP,
+			Kind:   "skip-missing",
+			Note:   "no MCP entries selected",
+		})
+		return nil
+	}
+
+	mcpDir, err := share.MCPDir()
+	if err != nil {
+		return err
+	}
+	fragPath := filepath.Join(mcpDir, fragmentName+".json")
+
+	if !opts.DryRun {
+		if err := share.EnsureDirs(); err != nil {
+			return err
+		}
+		frag, err := settingsmerge.LoadJSON(fragPath)
+		if err != nil {
+			return fmt.Errorf("loading MCP fragment %s: %w", fragPath, err)
+		}
+		for _, e := range selected {
+			if _, exists := frag[e.Name]; exists && !opts.Force {
+				// Preserve existing definitions — matches the "don't clobber
+				// without --force" rule used elsewhere in Import.
+				continue
+			}
+			frag[e.Name] = e.Definition
+		}
+		if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
+			return fmt.Errorf("writing MCP fragment %s: %w", fragPath, err)
+		}
+
+		if opts.ProfileName != "" {
+			if err := recordMCPInstalls(selected, scope, opts.ProfileName); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, e := range selected {
+		plan.Actions = append(plan.Actions, ImportAction{
+			Target:     TargetMCP,
+			SourcePath: e.Source(),
+			TargetPath: fragPath,
+			Kind:       "mcp-add",
+			Note:       fmt.Sprintf("%s → %s scope", e.Name, scope),
+		})
+	}
+	return nil
+}
+
+// recordMCPInstalls updates the ccpm manifest so `ccpm mcp list` shows the
+// imported servers alongside ones added via `ccpm mcp add`. Scope+Profiles are
+// set to match where the fragment actually lives.
+func recordMCPInstalls(entries []MCPEntry, scope, profileName string) error {
+	m, err := manifest.Load()
+	if err != nil {
+		return fmt.Errorf("loading manifest: %w", err)
+	}
+	for _, e := range entries {
+		if existing := m.Find(e.Name, manifest.KindMCP); existing != nil {
+			m.Remove(e.Name, manifest.KindMCP)
+		}
+		inst := manifest.Install{
+			ID:     e.Name,
+			Kind:   manifest.KindMCP,
+			Source: e.Source(),
+		}
+		if scope == MCPImportScopeGlobal {
+			inst.Scope = manifest.ScopeGlobal
+		} else {
+			inst.Scope = manifest.ScopeProfile
+			inst.Profiles = []string{profileName}
+		}
+		m.Add(inst)
+	}
+	return manifest.Save(m)
+}
+
+// Fingerprint is a compact snapshot of the default ~/.claude tree used
+// for drift detection between ccpm runs and imports.
+type Fingerprint struct {
+	Version   string            `json:"version"`
+	TakenAt   string            `json:"taken_at"`
+	Root      string            `json:"root"`
+	LastNudge string            `json:"last_nudge,omitempty"`
+	Files     map[string]string `json:"files"` // relative path -> sha256 hex
+}
+
+const fingerprintVersion = "1"
+
+func fingerprintPath() (string, error) {
+	base, err := config.BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "default-claude-fingerprint.json"), nil
+}
+
+// LoadFingerprint returns the stored fingerprint or nil if none exists.
+func LoadFingerprint() (*Fingerprint, error) {
+	path, err := fingerprintPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading fingerprint: %w", err)
+	}
+	var fp Fingerprint
+	if err := json.Unmarshal(data, &fp); err != nil {
+		return nil, fmt.Errorf("parsing fingerprint: %w", err)
+	}
+	return &fp, nil
+}
+
+// SaveFingerprint writes the given fingerprint atomically.
+func SaveFingerprint(fp *Fingerprint) error {
+	path, err := fingerprintPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), config.DirPerm); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(fp, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, config.FilePerm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// Snapshot builds a fresh fingerprint of ~/.claude restricted to the given
+// targets. Plugins are excluded from hashing (large/binary/noisy) unless
+// explicitly requested via targets.
+func Snapshot(targets []Target) (*Fingerprint, error) {
+	root, err := DefaultDir()
+	if err != nil {
+		return nil, err
+	}
+
+	fp := &Fingerprint{
+		Version: fingerprintVersion,
+		TakenAt: time.Now().UTC().Format(time.RFC3339),
+		Root:    root,
+		Files:   map[string]string{},
+	}
+
+	if !Exists() {
+		return fp, nil
+	}
+
+	for _, t := range targets {
+		sub := targetPath(root, t)
+		info, err := os.Stat(sub)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !info.IsDir() {
+			hash, err := hashFile(sub)
+			if err != nil {
+				return nil, err
+			}
+			rel, _ := filepath.Rel(root, sub)
+			fp.Files[filepath.ToSlash(rel)] = hash
+			continue
+		}
+
+		if err := hashWalk(root, sub, sub, fp.Files); err != nil {
+			return nil, err
+		}
+	}
+
+	return fp, nil
+}
+
+// hashWalk adds every regular file reachable from physDir to files, keyed by
+// its logical path relative to root. Symlink-to-directory entries are
+// transparently followed (filepath.Walk uses Lstat and would misclassify them
+// as files, causing hashFile -> os.Open to fail with EISDIR — same bug class
+// as was fixed in CopyTree on 2026-04-17).
+//
+// logDir tracks the logical path under root so the fingerprint keys stay
+// pinned to ~/.claude/<...> even when the walk crosses into a resolved
+// symlink target that lives elsewhere on disk.
+func hashWalk(root, physDir, logDir string, files map[string]string) error {
+	entries, err := os.ReadDir(physDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		physPath := filepath.Join(physDir, e.Name())
+		logPath := filepath.Join(logDir, e.Name())
+
+		info, err := os.Lstat(physPath)
+		if err != nil {
+			return err
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Stat(physPath)
+			if err != nil {
+				// Broken symlinks are silently skipped — they can't be
+				// hashed and aren't a drift signal on their own.
+				continue
+			}
+			if target.IsDir() {
+				resolved, err := filepath.EvalSymlinks(physPath)
+				if err != nil {
+					return err
+				}
+				if err := hashWalk(root, resolved, logPath, files); err != nil {
+					return err
+				}
+				continue
+			}
+			// Symlink to regular file: fall through to the file-hash path
+			// below; os.Open will follow the link naturally.
+		}
+
+		if info.IsDir() {
+			if err := hashWalk(root, physPath, logPath, files); err != nil {
+				return err
+			}
+			continue
+		}
+
+		hash, err := hashFile(physPath)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, logPath)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = hash
+	}
+	return nil
+}
+
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Drift describes the difference between two fingerprints.
+type Drift struct {
+	Added    []string
+	Removed  []string
+	Modified []string
+}
+
+// HasChanges returns true when any category is non-empty.
+func (d Drift) HasChanges() bool {
+	return len(d.Added) > 0 || len(d.Removed) > 0 || len(d.Modified) > 0
+}
+
+// Compare reports the set of changes between an old and new fingerprint.
+// Either argument may be nil; a nil old fingerprint means "everything is new".
+func Compare(oldFP, newFP *Fingerprint) Drift {
+	d := Drift{}
+	oldFiles := map[string]string{}
+	if oldFP != nil {
+		oldFiles = oldFP.Files
+	}
+	newFiles := map[string]string{}
+	if newFP != nil {
+		newFiles = newFP.Files
+	}
+
+	for k, newHash := range newFiles {
+		oldHash, ok := oldFiles[k]
+		if !ok {
+			d.Added = append(d.Added, k)
+			continue
+		}
+		if oldHash != newHash {
+			d.Modified = append(d.Modified, k)
+		}
+	}
+	for k := range oldFiles {
+		if _, ok := newFiles[k]; !ok {
+			d.Removed = append(d.Removed, k)
+		}
+	}
+
+	sort.Strings(d.Added)
+	sort.Strings(d.Removed)
+	sort.Strings(d.Modified)
+	return d
+}
+
+// ShouldNudge returns true if drift should be reported to the user now,
+// taking the last-nudge timestamp into account. Nudges are debounced to
+// once every `interval`.
+func ShouldNudge(fp *Fingerprint, interval time.Duration) bool {
+	if fp == nil || fp.LastNudge == "" {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339, fp.LastNudge)
+	if err != nil {
+		return true
+	}
+	return time.Since(last) >= interval
+}
+
+// MarkNudged updates the LastNudge timestamp on the stored fingerprint.
+func MarkNudged() error {
+	fp, err := LoadFingerprint()
+	if err != nil {
+		return err
+	}
+	if fp == nil {
+		return nil
+	}
+	fp.LastNudge = time.Now().UTC().Format(time.RFC3339)
+	return SaveFingerprint(fp)
+}
