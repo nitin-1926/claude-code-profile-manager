@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nitin-1926/ccpm/internal/config"
 	"github.com/nitin-1926/ccpm/internal/share"
+	"github.com/nitin-1926/ccpm/internal/trust"
 )
 
 // loadHostClaudeJSONMCP reads the user's host ~/.claude.json (the one Claude
@@ -76,8 +78,15 @@ func loadHostClaudeSettings() (map[string]interface{}, error) {
 	return doc, nil
 }
 
-// DeepMerge merges src into dst recursively.
-// Objects merge key-by-key; all other types (arrays, scalars) in src overwrite dst.
+// DeepMerge merges src into dst recursively, returning a fresh top-level map.
+// Objects merge key-by-key; arrays and scalars in src replace the dst value.
+//
+// Aliasing note: the returned map shares value references with dst and src —
+// nested submaps are NOT deep-cloned. Callers should treat the result as
+// immutable (i.e. never mutate a submap after merging) so a later edit in
+// either source doesn't surprise the reader. Every ccpm caller today obeys
+// this by discarding dst/src after the merge and writing the result
+// atomically via WriteJSON.
 func DeepMerge(dst, src map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(dst))
 	for k, v := range dst {
@@ -111,9 +120,12 @@ func LoadJSON(path string) (map[string]interface{}, error) {
 	return m, nil
 }
 
-// WriteJSON atomically writes a map as formatted JSON.
+// WriteJSON atomically writes a map as formatted JSON with user-only perms
+// (0600) via config.FilePerm. Profile fragments may carry env entries with
+// tokens; keeping this file not-world-readable is part of the security
+// baseline for ~/.ccpm.
 func WriteJSON(path string, data map[string]interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), config.DirPerm); err != nil {
 		return err
 	}
 	bytes, err := json.MarshalIndent(data, "", "  ")
@@ -122,7 +134,7 @@ func WriteJSON(path string, data map[string]interface{}) error {
 	}
 	bytes = append(bytes, '\n')
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, bytes, 0644); err != nil {
+	if err := os.WriteFile(tmp, bytes, config.FilePerm); err != nil {
 		return fmt.Errorf("writing %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -132,7 +144,11 @@ func WriteJSON(path string, data map[string]interface{}) error {
 	return nil
 }
 
-// Materialize builds the effective settings.json for a profile.
+// ComputeMerged returns the fully-merged settings map for a profile without
+// writing to disk. It is the single source of truth for the settings-side
+// precedence pipeline; Materialize uses it to produce the on-disk state, and
+// advisory commands (`ccpm settings get/show`, `ccpm hooks list`,
+// `ccpm plugin list`) use it to describe that same state.
 //
 // Precedence (lowest → highest, higher wins):
 //  1. Existing <profileDir>/settings.json (preserves any keys Claude Code
@@ -148,171 +164,24 @@ func WriteJSON(path string, data map[string]interface{}) error {
 //     `ccpm settings set --profile`.
 //  5. Project <projectRoot>/.claude/settings.json (if projectRoot != "")
 //  6. Project <projectRoot>/.claude/settings.local.json (if projectRoot != "")
+//  7. Enterprise/managed settings — OS-level org policy file plus any
+//     drop-ins under managed-settings.d/. Highest precedence so admin
+//     policy always wins over per-user, per-profile, and per-project
+//     layers, matching native Claude Code semantics.
 //
-// Project layers (5, 6) are highest-precedence so per-repo overrides beat
-// ccpm's managed keys — an explicit per-project file is a stronger user
-// signal than a profile-wide default. Pass projectRoot="" from non-launch
-// codepaths that shouldn't bake CWD-relative state into the profile.
-//
-// Result is written back to profileDir/settings.json.
-func Materialize(profileDir, profileName, projectRoot string) error {
+// Pass projectRoot="" from non-launch codepaths that shouldn't bake
+// CWD-relative state into the profile.
+func ComputeMerged(profileDir, profileName, projectRoot string) (map[string]interface{}, error) {
 	shareDir, err := share.SettingsDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	profileFragPath := filepath.Join(shareDir, profileName+".json")
-	targetPath := filepath.Join(profileDir, "settings.json")
 
 	profileFrag, err := LoadJSON(profileFragPath)
 	if err != nil {
-		return fmt.Errorf("loading profile settings fragment: %w", err)
+		return nil, fmt.Errorf("loading profile settings fragment: %w", err)
 	}
 
-	existing, err := LoadJSON(targetPath)
+	existing, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if err != nil {
-		return fmt.Errorf("loading existing profile settings: %w", err)
-	}
-
-	hostSettings, err := loadHostClaudeSettings()
-	if err != nil {
-		return fmt.Errorf("loading host ~/.claude/settings.json: %w", err)
-	}
-
-	// Layers 1 → 2 → 3. Start from existing (claude auto-writes survive when
-	// nothing else redefines the key), overlay host settings, overlay the
-	// profile fragment.
-	merged := DeepMerge(existing, hostSettings)
-	merged = DeepMerge(merged, profileFrag)
-
-	// Layer 4: re-assert profile-level owned keys. This guarantees a key
-	// set via `ccpm settings set --profile` cannot be silently shadowed by
-	// a drift in <profileDir>/settings.json or by the host file.
-	profileOwned, err := LoadOwnedKeys(profileFragPath)
-	if err != nil {
-		return fmt.Errorf("loading owned-keys for profile fragment: %w", err)
-	}
-	merged = applyOwnedKeys(merged, profileFrag, profileOwned)
-
-	// Layers 5 + 6: project settings. mcpServers belong in .claude.json;
-	// strip them so the stale-mcpServers cleanup in MaterializeMCP doesn't
-	// immediately delete what we just merged in.
-	projectSettings, projectLocal, err := LoadProjectSettings(projectRoot)
-	if err != nil {
-		return err
-	}
-	delete(projectSettings, "mcpServers")
-	delete(projectLocal, "mcpServers")
-	merged = DeepMerge(merged, projectSettings)
-	merged = DeepMerge(merged, projectLocal)
-
-	return WriteJSON(targetPath, merged)
-}
-
-// MaterializeMCP merges MCP server definitions into the profile's .claude.json
-// under the top-level "mcpServers" key — that's where Claude Code actually
-// reads user-scope MCP config from. settings.json#mcpServers is a no-op as far
-// as Claude Code is concerned, so any stale entries left there by earlier ccpm
-// versions are cleaned up here.
-//
-// Merge precedence (later wins):
-//  1. Servers already present in <profile>/.claude.json#mcpServers (lowest —
-//     preserved so previously-materialized state survives when no newer
-//     source redefines a given server).
-//  2. Host top-level ~/.claude.json#mcpServers — so any MCP installed via
-//     `claude mcp add --scope user`, `npx <thing> setup`, etc. auto-
-//     propagates into every profile.
-//  3. ccpm global fragment ~/.ccpm/share/mcp/global.json — ccpm-managed
-//     servers shared across profiles.
-//  4. ccpm profile fragment ~/.ccpm/share/mcp/<profile>.json — profile-
-//     specific overrides.
-//  5. Project-level MCPs: <projectRoot>/.claude/settings.json#mcpServers
-//     followed by <projectRoot>/.mcp.json (.mcp.json wins on collision).
-//     Highest precedence so project MCPs override profile/global.
-//
-// Pass projectRoot="" to skip the project layer.
-func MaterializeMCP(profileDir, profileName, projectRoot string) error {
-	mcpDir, err := share.MCPDir()
-	if err != nil {
-		return err
-	}
-
-	claudeJSONPath := filepath.Join(profileDir, ".claude.json")
-	existing, err := LoadJSON(claudeJSONPath)
-	if err != nil {
-		return fmt.Errorf("loading profile .claude.json: %w", err)
-	}
-
-	// Layer 4 (lowest implicit priority — gets overwritten by everything else):
-	// preserve whatever the profile already had.
-	mcpServers := make(map[string]interface{})
-	if v, ok := existing["mcpServers"].(map[string]interface{}); ok {
-		for k, v := range v {
-			mcpServers[k] = v
-		}
-	}
-
-	// Layer 1: host ~/.claude.json top-level mcpServers.
-	if hostMCP, err := loadHostClaudeJSONMCP(); err != nil {
-		return fmt.Errorf("loading host ~/.claude.json mcpServers: %w", err)
-	} else {
-		for k, v := range hostMCP {
-			mcpServers[k] = v
-		}
-	}
-
-	// Layers 2 + 3: ccpm fragments. Only merge the global fragment and this
-	// profile's fragment — reading every *.json in the directory would leak
-	// other profiles' MCP servers into this profile's config.
-	if _, err := os.Stat(mcpDir); !os.IsNotExist(err) {
-		globalMCP, err := LoadJSON(filepath.Join(mcpDir, "global.json"))
-		if err != nil {
-			return fmt.Errorf("loading global MCP fragment: %w", err)
-		}
-		for k, v := range globalMCP {
-			mcpServers[k] = v
-		}
-
-		profileMCP, err := LoadJSON(filepath.Join(mcpDir, profileName+".json"))
-		if err != nil {
-			return fmt.Errorf("loading profile MCP fragment: %w", err)
-		}
-		for k, v := range profileMCP {
-			mcpServers[k] = v
-		}
-	}
-
-	// Layer 5: project-level MCPs from .claude/settings.json#mcpServers and
-	// .mcp.json at the project root. Highest precedence — wins over profile.
-	projectMCP, err := LoadProjectMCP(projectRoot)
-	if err != nil {
-		return err
-	}
-	for k, v := range projectMCP {
-		mcpServers[k] = v
-	}
-
-	if len(mcpServers) > 0 {
-		existing["mcpServers"] = mcpServers
-		if err := WriteJSON(claudeJSONPath, existing); err != nil {
-			return fmt.Errorf("writing profile .claude.json: %w", err)
-		}
-	}
-
-	// Clean up stale mcpServers left in settings.json by older ccpm versions.
-	// Claude Code never read that location, so any data there is either
-	// already-migrated (duplicated in .claude.json now) or was ineffective
-	// from the start.
-	settingsPath := filepath.Join(profileDir, "settings.json")
-	settings, serr := LoadJSON(settingsPath)
-	if serr == nil {
-		if _, present := settings["mcpServers"]; present {
-			delete(settings, "mcpServers")
-			if err := WriteJSON(settingsPath, settings); err != nil {
-				return fmt.Errorf("cleaning stale mcpServers from settings.json: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
