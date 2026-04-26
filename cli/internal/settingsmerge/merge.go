@@ -185,3 +185,190 @@ func ComputeMerged(profileDir, profileName, projectRoot string) (map[string]inte
 
 	existing, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if err != nil {
+		return nil, fmt.Errorf("loading existing profile settings: %w", err)
+	}
+
+	hostSettings, err := loadHostClaudeSettings()
+	if err != nil {
+		return nil, fmt.Errorf("loading host ~/.claude/settings.json: %w", err)
+	}
+
+	merged := DeepMerge(existing, hostSettings)
+	merged = DeepMerge(merged, profileFrag)
+
+	profileOwned, err := LoadOwnedKeys(profileFragPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading owned-keys for profile fragment: %w", err)
+	}
+	merged = applyOwnedKeys(merged, profileFrag, profileOwned)
+
+	projectSettings, projectLocal, err := LoadProjectSettings(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	delete(projectSettings, "mcpServers")
+	delete(projectLocal, "mcpServers")
+	// Strip security-sensitive keys from untrusted projects. A project's
+	// settings.json is controlled by whoever pushed the repo; we refuse to let
+	// it register hooks/permissions/statusLine silently until the user opts
+	// in via `ccpm trust add <path>`.
+	projectSettings, stripped := trust.FilterProjectLayer(projectSettings, projectRoot)
+	trust.WarnUntrusted(projectRoot, stripped)
+	projectLocal, strippedLocal := trust.FilterProjectLayer(projectLocal, projectRoot)
+	trust.WarnUntrusted(projectRoot, strippedLocal)
+	merged = DeepMerge(merged, projectSettings)
+	merged = DeepMerge(merged, projectLocal)
+
+	managed, err := LoadManagedSettings()
+	if err != nil {
+		return nil, fmt.Errorf("loading managed settings: %w", err)
+	}
+	delete(managed, "mcpServers")
+	merged = DeepMerge(merged, managed)
+
+	return merged, nil
+}
+
+// Materialize builds the effective settings.json for a profile and writes it
+// to <profileDir>/settings.json. See ComputeMerged for the precedence rules.
+func Materialize(profileDir, profileName, projectRoot string) error {
+	merged, err := ComputeMerged(profileDir, profileName, projectRoot)
+	if err != nil {
+		return err
+	}
+	return WriteJSON(filepath.Join(profileDir, "settings.json"), merged)
+}
+
+// MaterializeMCP merges MCP server definitions into the profile's .claude.json
+// under the top-level "mcpServers" key — that's where Claude Code actually
+// reads user-scope MCP config from. settings.json#mcpServers is a no-op as far
+// as Claude Code is concerned, so any stale entries left there by earlier ccpm
+// versions are cleaned up here.
+//
+// Merge precedence (later wins):
+//  1. Servers already present in <profile>/.claude.json#mcpServers (lowest —
+//     preserved so previously-materialized state survives when no newer
+//     source redefines a given server).
+//  2. Host top-level ~/.claude.json#mcpServers — so any MCP installed via
+//     `claude mcp add --scope user`, `npx <thing> setup`, etc. auto-
+//     propagates into every profile.
+//  3. ccpm global fragment ~/.ccpm/share/mcp/global.json — ccpm-managed
+//     servers shared across profiles.
+//  4. ccpm profile fragment ~/.ccpm/share/mcp/<profile>.json — profile-
+//     specific overrides.
+//  5. Project-level MCPs: <projectRoot>/.claude/settings.json#mcpServers
+//     followed by <projectRoot>/.mcp.json (.mcp.json wins on collision).
+//  6. Managed/enterprise MCPs from managed-settings.json#mcpServers (plus
+//     managed-settings.d/*.json). Highest precedence so admin-published
+//     servers beat project and profile ones, matching the settings layer.
+//
+// Pass projectRoot="" to skip the project layer.
+func MaterializeMCP(profileDir, profileName, projectRoot string) error {
+	mcpDir, err := share.MCPDir()
+	if err != nil {
+		return err
+	}
+
+	claudeJSONPath := filepath.Join(profileDir, ".claude.json")
+	existing, err := LoadJSON(claudeJSONPath)
+	if err != nil {
+		return fmt.Errorf("loading profile .claude.json: %w", err)
+	}
+
+	// Layer 4 (lowest implicit priority — gets overwritten by everything else):
+	// preserve whatever the profile already had.
+	mcpServers := make(map[string]interface{})
+	if v, ok := existing["mcpServers"].(map[string]interface{}); ok {
+		for k, v := range v {
+			mcpServers[k] = v
+		}
+	}
+
+	// Layer 1: host ~/.claude.json top-level mcpServers.
+	if hostMCP, err := loadHostClaudeJSONMCP(); err != nil {
+		return fmt.Errorf("loading host ~/.claude.json mcpServers: %w", err)
+	} else {
+		for k, v := range hostMCP {
+			mcpServers[k] = v
+		}
+	}
+
+	// Layers 2 + 3: ccpm fragments. Only merge the global fragment and this
+	// profile's fragment — reading every *.json in the directory would leak
+	// other profiles' MCP servers into this profile's config.
+	if _, err := os.Stat(mcpDir); !os.IsNotExist(err) {
+		globalMCP, err := LoadJSON(filepath.Join(mcpDir, "global.json"))
+		if err != nil {
+			return fmt.Errorf("loading global MCP fragment: %w", err)
+		}
+		for k, v := range globalMCP {
+			mcpServers[k] = v
+		}
+
+		profileMCP, err := LoadJSON(filepath.Join(mcpDir, profileName+".json"))
+		if err != nil {
+			return fmt.Errorf("loading profile MCP fragment: %w", err)
+		}
+		for k, v := range profileMCP {
+			mcpServers[k] = v
+		}
+	}
+
+	// Layer 5: project-level MCPs from .claude/settings.json#mcpServers and
+	// .mcp.json at the project root. Skipped entirely when the project isn't
+	// trusted: the whole layer is attacker-controllable via `git clone`.
+	if trust.IsTrusted(projectRoot) {
+		projectMCP, err := LoadProjectMCP(projectRoot)
+		if err != nil {
+			return err
+		}
+		for k, v := range projectMCP {
+			mcpServers[k] = v
+		}
+	} else if projectRoot != "" {
+		// Peek at what we would have merged so the one-time warning message
+		// accurately reports the dropped servers. Unconditional in
+		// Materialize above, but here we only warn when there's actually
+		// something to drop.
+		if projectMCP, err := LoadProjectMCP(projectRoot); err == nil && len(projectMCP) > 0 {
+			names := make([]string, 0, len(projectMCP))
+			for k := range projectMCP {
+				names = append(names, k)
+			}
+			trust.WarnUntrusted(projectRoot, []string{fmt.Sprintf("mcpServers(%v)", names)})
+		}
+	}
+
+	// Layer 6: managed/enterprise MCPs. Highest precedence.
+	managed, err := LoadManagedSettings()
+	if err != nil {
+		return fmt.Errorf("loading managed settings: %w", err)
+	}
+	for k, v := range ManagedMCP(managed) {
+		mcpServers[k] = v
+	}
+
+	if len(mcpServers) > 0 {
+		existing["mcpServers"] = mcpServers
+		if err := WriteJSON(claudeJSONPath, existing); err != nil {
+			return fmt.Errorf("writing profile .claude.json: %w", err)
+		}
+	}
+
+	// Clean up stale mcpServers left in settings.json by older ccpm versions.
+	// Claude Code never read that location, so any data there is either
+	// already-migrated (duplicated in .claude.json now) or was ineffective
+	// from the start.
+	settingsPath := filepath.Join(profileDir, "settings.json")
+	settings, serr := LoadJSON(settingsPath)
+	if serr == nil {
+		if _, present := settings["mcpServers"]; present {
+			delete(settings, "mcpServers")
+			if err := WriteJSON(settingsPath, settings); err != nil {
+				return fmt.Errorf("cleaning stale mcpServers from settings.json: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
