@@ -12,8 +12,12 @@ import (
 // available on Windows, so we spawn and propagate the exit code by calling
 // os.Exit when the child terminates, preserving the "exec semantics" that
 // callers expect (no code runs after Exec returns).
-func Exec(profileDir string, apiKey string, args []string) error {
-	bin, _, env, err := execEnv(profileDir, apiKey)
+//
+// profileEnv carries KEY=VALUE pairs persisted on the profile (e.g. via
+// `ccpm env set`); extraEnv carries one-shot overrides from the caller (e.g.
+// `ccpm run --env KEY=VAL`). Both may be nil.
+func Exec(profileDir string, apiKey string, profileEnv, extraEnv map[string]string, args []string) error {
+	bin, _, env, err := execEnv(profileDir, apiKey, profileEnv, extraEnv)
 	if err != nil {
 		return err
 	}
