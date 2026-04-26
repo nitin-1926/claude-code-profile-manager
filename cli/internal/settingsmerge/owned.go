@@ -75,3 +75,80 @@ func MarkOwned(fragmentPath, key string) error {
 func MarkOwnedFromPatch(fragmentPath string, patch map[string]interface{}) error {
 	set, err := LoadOwnedKeys(fragmentPath)
 	if err != nil {
+		return err
+	}
+	walkLeaves(patch, "", set)
+	return SaveOwnedKeys(fragmentPath, set)
+}
+
+func walkLeaves(v interface{}, prefix string, out map[string]struct{}) {
+	switch m := v.(type) {
+	case map[string]interface{}:
+		if len(m) == 0 {
+			if prefix != "" {
+				out[prefix] = struct{}{}
+			}
+			return
+		}
+		for k, vv := range m {
+			next := k
+			if prefix != "" {
+				next = prefix + "." + k
+			}
+			walkLeaves(vv, next, out)
+		}
+	default:
+		if prefix != "" {
+			out[prefix] = struct{}{}
+		}
+	}
+}
+
+// applyOwnedKeys walks `owned` and, for each path, copies the value (if any)
+// from `source` into `dst`. Missing source values are left alone so deleting
+// an owned key from the fragment also removes the override.
+func applyOwnedKeys(dst, source map[string]interface{}, owned map[string]struct{}) map[string]interface{} {
+	for key := range owned {
+		value, ok := lookupNested(source, key)
+		if !ok {
+			continue
+		}
+		setNested(dst, key, value)
+	}
+	return dst
+}
+
+func lookupNested(m map[string]interface{}, key string) (interface{}, bool) {
+	parts := strings.Split(key, ".")
+	var current interface{} = m
+	for _, p := range parts {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		v, ok := obj[p]
+		if !ok {
+			return nil, false
+		}
+		current = v
+	}
+	return current, true
+}
+
+func setNested(m map[string]interface{}, key string, value interface{}) {
+	parts := strings.Split(key, ".")
+	current := m
+	for i, p := range parts {
+		if i == len(parts)-1 {
+			current[p] = value
+			return
+		}
+		if next, ok := current[p].(map[string]interface{}); ok {
+			current = next
+			continue
+		}
+		next := make(map[string]interface{})
+		current[p] = next
+		current = next
+	}
+}
