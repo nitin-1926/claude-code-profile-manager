@@ -7,10 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	verbose bool
-	version = "0.3.2"
-)
+var version = "0.3.2"
 
 var rootCmd = &cobra.Command{
 	Use:   "ccpm",
@@ -22,6 +19,11 @@ data externally. Credentials are stored in your OS keychain, config lives in
 ~/.ccpm/, and vault backups use AES-256-GCM encryption with a local master key.
 No telemetry. No analytics. No network calls. Fully open source.`,
 	Version: version,
+	// Suppress the auto-printed usage block on RunE errors. ccpm commands
+	// already return human-readable error messages; reprinting the help text
+	// for every failure (missing profile, wrong flag, etc.) buries the real
+	// error in 40 lines of noise.
+	SilenceUsage: true,
 }
 
 func Execute() {
@@ -29,8 +31,4 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
-
-func init() {
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }
