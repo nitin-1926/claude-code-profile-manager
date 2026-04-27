@@ -18,7 +18,7 @@
 #   1. Preflight: verify git, go, node, npm, gh are installed; working tree clean;
 #      on main; up to date with origin; logged in to npm with publish access;
 #      logged in to gh; target tag doesn't already exist.
-#   2. Bumps cli/cmd/root.go and npm/package.json to the new version.
+#   2. Bumps ccpm/cmd/root.go and npm/package.json to the new version.
 #   3. Runs go build (host), GOOS=windows go build, go test ./..., docs tsc.
 #   4. Commits "chore: release vX.Y.Z", tags vX.Y.Z, pushes both.
 #   5. Waits for the GitHub "Release" workflow (goreleaser) to finish and
@@ -133,7 +133,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-readonly GO_VERSION_FILE="cli/cmd/root.go"
+readonly GO_VERSION_FILE="ccpm/cmd/root.go"
 readonly NPM_PKG_FILE="npm/package.json"
 readonly STASH_LABEL="ccpm-release-autostash-$$"
 
@@ -344,19 +344,19 @@ run_verification() {
   step "Verification"
 
   info "go build ./... (host)"
-  ( cd cli && go build ./... )
+  ( cd ccpm && go build ./... )
   ok "host build green"
 
   info "GOOS=windows go build ./..."
-  ( cd cli && GOOS=windows GOARCH=amd64 go build ./... )
+  ( cd ccpm && GOOS=windows GOARCH=amd64 go build ./... )
   ok "Windows cross-compile green"
 
   info "GOOS=linux go build ./..."
-  ( cd cli && GOOS=linux GOARCH=amd64 go build ./... )
+  ( cd ccpm && GOOS=linux GOARCH=amd64 go build ./... )
   ok "Linux cross-compile green"
 
   info "go test ./..."
-  ( cd cli && go test ./... )
+  ( cd ccpm && go test ./... )
   ok "tests green"
 
   if [[ -f docs/package.json ]]; then

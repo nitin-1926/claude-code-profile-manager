@@ -9,7 +9,7 @@ Thanks for your interest in contributing to ccpm. This document covers the basic
 3. Build the CLI:
 
 ```bash
-cd cli
+cd ccpm
 go build -o ccpm .
 ./ccpm --version
 ```
@@ -25,7 +25,7 @@ npm run dev
 ## Project structure
 
 ```
-cli/           Go CLI source code
+ccpm/          Go CLI source code
   cmd/         Cobra command definitions
   internal/    Internal packages (config, credentials, vault, etc.)
 docs/          Next.js documentation website
@@ -43,10 +43,10 @@ Two documents are load-bearing for non-trivial work:
 
 ### CLI (Go)
 
-- The CLI lives in `cli/`. All Go code is there.
-- Run tests with `cd cli && go test ./...`
+- The CLI lives in `ccpm/`. All Go code is there.
+- Run tests with `cd ccpm && go test ./...`
 - Follow existing code style. No external linters are enforced, but keep it clean.
-- If you add a new command, create a new file in `cli/cmd/` following the existing pattern.
+- If you add a new command, create a new file in `ccpm/cmd/` following the existing pattern.
 
 ### Docs site (Next.js)
 

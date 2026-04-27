@@ -4,10 +4,10 @@ project_name: ccpm
 
 before:
   hooks:
-    - sh -c "cd cli && go mod tidy"
+    - sh -c "cd ccpm && go mod tidy"
 
 builds:
-  - dir: cli
+  - dir: ccpm
     env:
       - CGO_ENABLED=0
     goos:
@@ -18,7 +18,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X github.com/nitin-1926/ccpm/cmd.version={{.Version}}
+      - -s -w -X github.com/nitin-1926/claude-code-profile-manager/ccpm/cmd.version={{.Version}}
     binary: ccpm
 
 archives:

@@ -24,7 +24,7 @@ npm i -g @ngcodes/ccpm
 curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh
 
 # go
-go install github.com/nitin-1926/ccpm@latest
+go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
 ```
 
 ## Quick start
@@ -155,7 +155,7 @@ Contributions are welcome. Please open an issue first to discuss what you want t
 1. Fork the repo
 2. Create a feature branch (`git checkout -b feature/your-feature`)
 3. Make your changes
-4. Run tests (`cd cli && go test ./...`)
+4. Run tests (`cd ccpm && go test ./...`)
 5. Open a pull request
 
 ## License

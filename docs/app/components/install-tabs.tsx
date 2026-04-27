@@ -18,7 +18,7 @@ export function InstallTabs() {
           label: "go",
           content: (
             <CodeBlock
-              code="go install github.com/nitin-1926/ccpm@latest"
+              code="go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest"
               lang="bash"
             />
           ),

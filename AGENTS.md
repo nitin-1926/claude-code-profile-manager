@@ -158,7 +158,7 @@ The entry template is defined in `SUMMARY.md` itself; follow it exactly.
 
 Secondary agent hygiene:
 
-- Always run `go build ./...` and `GOOS=windows go build ./...` from `cli/` before finishing a change that touches Go code. Windows cross-compile is a non-negotiable CI step.
+- Always run `go build ./...` and `GOOS=windows go build ./...` from `ccpm/` before finishing a change that touches Go code. Windows cross-compile is a non-negotiable CI step.
 - Always run `go test ./...` after changes to `internal/settingsmerge`, `internal/defaultclaude`, `internal/credentials`, `internal/share`, `internal/wizard`.
 - Prefer extending tests in place over writing new throwaway smoke tests.
 - Never update `go-keyring`, `cobra`, or other top-level deps without flagging it in the SUMMARY entry.
