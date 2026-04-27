@@ -17,67 +17,91 @@ import (
 	"github.com/nitin-1926/ccpm/internal/settingsmerge"
 )
 
-var (
-	importProfile string
-	importAll     bool
-	importDryRun  bool
-	importOnly    []string
-	importForce   bool
-
-	importFromSrc       string
-	importFromTarget    string
-	importNoShare       bool
-	importLiveSymlinks  bool
-	importNoLiveSymlink bool
-	importSelectAll     bool
-	importMCPScope      string
-)
-
-var importCmd = &cobra.Command{
-	Use:   "import",
-	Short: "Import assets from external sources into profiles",
+// importDefaultState and importFromProfileState encapsulate the flag-bound
+// values for each subcommand. Separated so the two subcommands don't share
+// --only / --force / --profile values by accident.
+type importDefaultState struct {
+	profile         string
+	all             bool
+	dryRun          bool
+	only            []string
+	force           bool
+	noShare         bool
+	liveSymlinks    bool
+	noLiveSymlink   bool
+	selectAll       bool
+	mcpScope        string
+	confirmHooks    bool
+	confirmMCP      bool
+	includeRunnable bool
 }
 
-var importDefaultCmd = &cobra.Command{
-	Use:   "default",
-	Short: "Import skills, hooks, MCP servers, and settings from ~/.claude into profiles",
-	Long: `Copy or merge selected subtrees from the default Claude Code config
+type importFromProfileState struct {
+	src    string
+	target string
+	only   []string
+	force  bool
+}
+
+func newImportCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "import",
+		Short: "Import assets from external sources into profiles",
+	}
+
+	defaults := &importDefaultState{}
+	defaultCmd := &cobra.Command{
+		Use:   "default",
+		Short: "Import skills, hooks, MCP servers, and settings from ~/.claude into profiles",
+		Long: `Copy or merge selected subtrees from the default Claude Code config
 directory (~/.claude) into one or all ccpm profiles.
 
-By default, imports skills, commands, rules, hooks, agents, settings, and MCP
-servers discovered in ~/.claude.json. Plugins are excluded unless passed
-explicitly via --only plugins.
+By default, imports inert assets only (skills, commands, rules, agents,
+settings). Hooks and MCP servers — both of which can execute shell commands
+or spawn processes — are excluded unless --include-runnable is set, because
+a compromised ~/.claude hook/MCP would silently apply to every profile.
+
+When hooks or MCP imports are requested, ccpm previews each item (command
+body for hooks, command+args+env or url for MCP) and requires explicit
+confirmation per item. In non-TTY contexts ccpm refuses to import hooks or
+MCP unless --yes-hooks / --yes-mcp is passed, so piping 'yes' or running
+under CI can't auto-grant shell access.
 
 Settings are deep-merged into the profile's settings.json via the same merge
-engine used by 'ccpm run'; directory targets are copied file-by-file, preserving
-existing profile files unless --force is passed; MCP servers are written into
-the appropriate ccpm MCP fragment (~/.ccpm/share/mcp/<scope>.json) and
-materialized into settings.json#mcpServers on 'ccpm use' / 'ccpm run'.
-
-Interactive runs drill down to per-item selection for skills, commands, rules,
-hooks, agents, and MCP — pick only the entries you want. Pass --select-all to
-skip the per-item prompt and import every entry under the selected targets.
-
-Use --live-symlinks with deduped imports (--no-share not set) so top-level
-skills/agents/commands that are symlinked directories in ~/.claude stay as
-symlinks into the share store (pointing at the resolved path). Edits in the
-original tree are then visible in every linked profile without re-import.
+engine used by 'ccpm run'; directory targets are copied file-by-file,
+preserving existing profile files unless --force is passed; MCP servers are
+written into the appropriate ccpm MCP fragment and materialized into
+settings.json#mcpServers on 'ccpm use' / 'ccpm run'.
 
 Examples:
-  ccpm import default --profile work
+  ccpm import default --profile work                # inert assets only
+  ccpm import default --profile work --include-runnable  # prompts for each hook/MCP
   ccpm import default --all --dry-run
-  ccpm import default --profile personal --only skills,hooks
-  ccpm import default --all --only settings --force
-  ccpm import default --all --only skills --live-symlinks
-  ccpm import default --profile work --only mcp --mcp-scope global
-  ccpm import default --all --select-all`,
-	RunE: runImportDefault,
-}
+  ccpm import default --profile personal --only skills,agents
+  ccpm import default --all --only settings --force`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runImportDefault(defaults)
+		},
+	}
+	defaultCmd.Flags().StringVar(&defaults.profile, "profile", "", "target profile name")
+	defaultCmd.Flags().BoolVar(&defaults.all, "all", false, "import into every profile")
+	defaultCmd.Flags().BoolVar(&defaults.dryRun, "dry-run", false, "preview without writing")
+	defaultCmd.Flags().StringSliceVar(&defaults.only, "only", nil, "comma-separated targets (skills, commands, rules, hooks, agents, settings, mcp, plugins)")
+	defaultCmd.Flags().BoolVar(&defaults.force, "force", false, "overwrite existing files in profiles")
+	defaultCmd.Flags().BoolVar(&defaults.noShare, "no-share", false, "copy assets directly into the profile instead of symlinking from ~/.ccpm/share")
+	defaultCmd.Flags().BoolVar(&defaults.liveSymlinks, "live-symlinks", false, "for deduped skills/agents/commands, keep symlink-to-dir entries as symlinks in the share store (live updates from source)")
+	defaultCmd.Flags().BoolVar(&defaults.noLiveSymlink, "no-live-symlinks", false, "always snapshot (disable the interactive symlink prompt)")
+	defaultCmd.Flags().BoolVar(&defaults.selectAll, "select-all", false, "skip per-item prompts and import every entry under the selected targets")
+	defaultCmd.Flags().StringVar(&defaults.mcpScope, "mcp-scope", "", "where imported MCP servers live: global (all profiles) or profile (selected profile only)")
+	defaultCmd.Flags().BoolVar(&defaults.includeRunnable, "include-runnable", false, "also import hooks and MCP servers (subject to per-item confirmation)")
+	defaultCmd.Flags().BoolVar(&defaults.confirmHooks, "yes-hooks", false, "non-TTY: confirm import of every discovered hook without prompting (use only for trusted ~/.claude state)")
+	defaultCmd.Flags().BoolVar(&defaults.confirmMCP, "yes-mcp", false, "non-TTY: confirm import of every discovered MCP server without prompting (use only for trusted ~/.claude state)")
 
-var importFromProfileCmd = &cobra.Command{
-	Use:   "from-profile",
-	Short: "Copy assets from one ccpm profile into another",
-	Long: `Clone skills, commands, rules, hooks, agents, and (optionally) settings
+	fromProfile := &importFromProfileState{}
+	fromProfileCmd := &cobra.Command{
+		Use:   "from-profile",
+		Short: "Copy assets from one ccpm profile into another",
+		Long: `Clone skills, commands, rules, hooks, agents, and (optionally) settings
 from a source ccpm profile into a target profile. Useful when spinning up a
 new profile that should start with the same loadout as an existing one.
 
@@ -85,42 +109,34 @@ Examples:
   ccpm import from-profile --src work --profile personal
   ccpm import from-profile --src work --profile playground --only skills
   ccpm import from-profile --src work --profile playground --force`,
-	RunE: runImportFromProfile,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runImportFromProfile(fromProfile)
+		},
+	}
+	fromProfileCmd.Flags().StringVar(&fromProfile.src, "src", "", "source profile to copy from (required)")
+	fromProfileCmd.Flags().StringVar(&fromProfile.target, "profile", "", "target profile to copy into (required)")
+	fromProfileCmd.Flags().StringSliceVar(&fromProfile.only, "only", nil, "comma-separated targets (skills, commands, rules, hooks, agents, settings)")
+	fromProfileCmd.Flags().BoolVar(&fromProfile.force, "force", false, "overwrite existing files in target profile")
+
+	root.AddCommand(defaultCmd, fromProfileCmd)
+	return root
 }
 
 func init() {
-	importDefaultCmd.Flags().StringVar(&importProfile, "profile", "", "target profile name")
-	importDefaultCmd.Flags().BoolVar(&importAll, "all", false, "import into every profile")
-	importDefaultCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview without writing")
-	importDefaultCmd.Flags().StringSliceVar(&importOnly, "only", nil, "comma-separated targets (skills, commands, rules, hooks, agents, settings, mcp, plugins)")
-	importDefaultCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files in profiles")
-	importDefaultCmd.Flags().BoolVar(&importNoShare, "no-share", false, "copy assets directly into the profile instead of symlinking from ~/.ccpm/share")
-	importDefaultCmd.Flags().BoolVar(&importLiveSymlinks, "live-symlinks", false, "for deduped skills/agents/commands, keep symlink-to-dir entries as symlinks in the share store (live updates from source)")
-	importDefaultCmd.Flags().BoolVar(&importNoLiveSymlink, "no-live-symlinks", false, "always snapshot (disable the interactive symlink prompt)")
-	importDefaultCmd.Flags().BoolVar(&importSelectAll, "select-all", false, "skip per-item prompts and import every entry under the selected targets")
-	importDefaultCmd.Flags().StringVar(&importMCPScope, "mcp-scope", "", "where imported MCP servers live: global (all profiles) or profile (selected profile only); default is interactive prompt / global when non-TTY")
-
-	importFromProfileCmd.Flags().StringVar(&importFromSrc, "src", "", "source profile to copy from (required)")
-	importFromProfileCmd.Flags().StringVar(&importFromTarget, "profile", "", "target profile to copy into (required)")
-	importFromProfileCmd.Flags().StringSliceVar(&importOnly, "only", nil, "comma-separated targets (skills, commands, rules, hooks, agents, settings)")
-	importFromProfileCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files in target profile")
-
-	importCmd.AddCommand(importDefaultCmd)
-	importCmd.AddCommand(importFromProfileCmd)
-	rootCmd.AddCommand(importCmd)
+	rootCmd.AddCommand(newImportCmd())
 }
 
-func runImportDefault(cmd *cobra.Command, args []string) error {
-	if importProfile != "" && importAll {
+func runImportDefault(state *importDefaultState) error {
+	if state.profile != "" && state.all {
 		return fmt.Errorf("use either --profile or --all, not both")
 	}
-	if importLiveSymlinks && importNoShare {
+	if state.liveSymlinks && state.noShare {
 		return fmt.Errorf("--live-symlinks only applies with deduped import; omit --no-share")
 	}
-	if importLiveSymlinks && importNoLiveSymlink {
+	if state.liveSymlinks && state.noLiveSymlink {
 		return fmt.Errorf("--live-symlinks and --no-live-symlinks are mutually exclusive")
 	}
-	if importMCPScope != "" && importMCPScope != defaultclaude.MCPImportScopeGlobal && importMCPScope != defaultclaude.MCPImportScopeProfile {
+	if state.mcpScope != "" && state.mcpScope != defaultclaude.MCPImportScopeGlobal && state.mcpScope != defaultclaude.MCPImportScopeProfile {
 		return fmt.Errorf("--mcp-scope must be %q or %q", defaultclaude.MCPImportScopeGlobal, defaultclaude.MCPImportScopeProfile)
 	}
 
@@ -134,18 +150,18 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if importProfile == "" && !importAll {
-		if err := pickImportTarget(cfg); err != nil {
+	if state.profile == "" && !state.all {
+		if err := pickImportTarget(state, cfg); err != nil {
 			return err
 		}
 	}
 
-	targets, err := defaultclaude.ParseTargets(importOnly)
+	targets, err := defaultclaude.ParseTargets(state.only)
 	if err != nil {
 		return err
 	}
-	if len(importOnly) == 0 {
-		picked, err := pickImportTargets()
+	if len(state.only) == 0 {
+		picked, err := pickImportTargets(state.includeRunnable)
 		if err == nil {
 			targets = picked
 		} else if !errors.Is(err, picker.ErrNonInteractive) {
@@ -153,10 +169,25 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Prompt once for live-symlink strategy if the user didn't pass either flag
-	// and there is at least one symlinked-directory entry under a dedupable
-	// target in ~/.claude. In non-TTY contexts we silently default to copy.
-	if !importLiveSymlinks && !importNoLiveSymlink && !importNoShare {
+	// Fail closed on runnable imports unless the user opted in.
+	if !state.includeRunnable {
+		filtered := make([]defaultclaude.Target, 0, len(targets))
+		dropped := []defaultclaude.Target{}
+		for _, t := range targets {
+			if t == defaultclaude.TargetHooks || t == defaultclaude.TargetMCP {
+				dropped = append(dropped, t)
+				continue
+			}
+			filtered = append(filtered, t)
+		}
+		if len(dropped) > 0 {
+			fmt.Fprintf(os.Stderr, "Skipping %v (shell/process-executing). Re-run with --include-runnable to import these after previewing each item.\n", dropped)
+		}
+		targets = filtered
+	}
+
+	// Prompt once for live-symlink strategy if the user didn't pass either flag.
+	if !state.liveSymlinks && !state.noLiveSymlink && !state.noShare {
 		if has, _ := anyLiveSymlinkCandidate(targets); has {
 			choice, err := picker.Select(
 				"Some skills/agents/commands in ~/.claude are symlinked. How should ccpm install them?",
@@ -166,19 +197,33 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 				},
 			)
 			if err == nil {
-				importLiveSymlinks = choice == "symlink"
+				state.liveSymlinks = choice == "symlink"
 			} else if !errors.Is(err, picker.ErrNonInteractive) {
 				return err
 			}
 		}
 	}
 
-	// Per-item selection: offer a multi-select for each granular target so the
-	// user can cherry-pick e.g. 3 skills + 1 MCP. Skipped when --select-all is
-	// passed or in non-interactive contexts (CI / piped stdin).
+	// Per-item selection.
 	itemFilter := map[defaultclaude.Target]map[string]bool{}
-	if !importSelectAll {
-		for _, t := range targets {
+	for _, t := range targets {
+		switch t {
+		case defaultclaude.TargetHooks:
+			picked, err := pickHooksWithPreview(state)
+			if err != nil {
+				return err
+			}
+			itemFilter[t] = picked
+		case defaultclaude.TargetMCP:
+			picked, err := pickMCPWithPreview(state)
+			if err != nil {
+				return err
+			}
+			itemFilter[t] = picked
+		default:
+			if state.selectAll {
+				continue
+			}
 			picked, err := pickItemsForTarget(t)
 			if err != nil {
 				if errors.Is(err, picker.ErrNonInteractive) {
@@ -192,15 +237,10 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Resolve MCP scope. We only need it when MCP is in the target set and the
-	// user actually selected at least one entry (otherwise the prompt is just
-	// noise). Interactive default is "global" because most users want
-	// gitnexus/playwright-style servers available everywhere.
-	mcpScope := importMCPScope
+	// Resolve MCP scope. Only relevant when MCP is being imported.
+	mcpScope := state.mcpScope
 	if containsTarget(targets, defaultclaude.TargetMCP) && mcpScope == "" {
 		mcpSelected, hasFilter := itemFilter[defaultclaude.TargetMCP]
-		// hasFilter false => user is importing all MCP entries (or --select-all);
-		// still prompt in that case as long as there are discoverable entries.
 		shouldPrompt := hasFilter && len(mcpSelected) > 0
 		if !hasFilter {
 			if entries, _ := defaultclaude.LoadMCPEntries(); len(entries) > 0 {
@@ -226,16 +266,16 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 	}
 
 	var names []string
-	if importAll {
+	if state.all {
 		names = config.ProfileNames(cfg)
 		if len(names) == 0 {
 			return fmt.Errorf("no profiles found — create one with 'ccpm add'")
 		}
 	} else {
-		if _, ok := cfg.Profiles[importProfile]; !ok {
-			return fmt.Errorf("profile %q not found", importProfile)
+		if _, ok := cfg.Profiles[state.profile]; !ok {
+			return fmt.Errorf("profile %q not found", state.profile)
 		}
-		names = []string{importProfile}
+		names = []string{state.profile}
 	}
 
 	green := color.New(color.FgGreen, color.Bold)
@@ -245,8 +285,6 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 	for idx, name := range names {
 		p := cfg.Profiles[name]
 
-		// When MCP scope is "global", only materialize it on the first iteration
-		// so the action log doesn't repeat identical writes once per profile.
 		perProfileTargets := targets
 		if mcpScope == defaultclaude.MCPImportScopeGlobal && idx > 0 {
 			perProfileTargets = filterOutTarget(targets, defaultclaude.TargetMCP)
@@ -254,11 +292,11 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 
 		plan, err := defaultclaude.Import(p.Dir, defaultclaude.ImportOptions{
 			Targets:      perProfileTargets,
-			DryRun:       importDryRun,
-			Force:        importForce,
-			Dedupe:       !importNoShare,
+			DryRun:       state.dryRun,
+			Force:        state.force,
+			Dedupe:       !state.noShare,
 			ProfileName:  name,
-			LiveSymlinks: importLiveSymlinks && !importNoShare,
+			LiveSymlinks: state.liveSymlinks && !state.noShare,
 			ItemFilter:   itemFilter,
 			MCPScope:     mcpScope,
 		})
@@ -267,7 +305,7 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		}
 
 		header := fmt.Sprintf("Profile %q", name)
-		if importDryRun {
+		if state.dryRun {
 			header += " (dry-run)"
 		}
 		cyan.Println(header)
@@ -289,7 +327,7 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if !importDryRun {
+		if !state.dryRun {
 			if err := mergeImportedSettings(p.Dir); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: settings merge failed: %v\n", err)
 			}
@@ -303,7 +341,7 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if !importDryRun {
+	if !state.dryRun {
 		snap, err := defaultclaude.Snapshot(defaultclaude.DefaultTargets())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not snapshot ~/.claude: %v\n", err)
@@ -318,8 +356,7 @@ func runImportDefault(cmd *cobra.Command, args []string) error {
 }
 
 // mergeImportedSettings consumes the staged settings.json.ccpm-import produced
-// by Import and deep-merges it into the profile's settings.json. The staged
-// file is removed after a successful merge.
+// by Import and deep-merges it into the profile's settings.json.
 func mergeImportedSettings(profileDir string) error {
 	staged := filepath.Join(profileDir, "settings.json.ccpm-import")
 	if _, err := os.Stat(staged); os.IsNotExist(err) {
@@ -344,14 +381,14 @@ func mergeImportedSettings(profileDir string) error {
 	return os.Remove(staged)
 }
 
-func runImportFromProfile(cmd *cobra.Command, args []string) error {
+func runImportFromProfile(state *importFromProfileState) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	names := config.ProfileNames(cfg)
 
-	if importFromSrc == "" {
+	if state.src == "" {
 		if len(names) == 0 {
 			return fmt.Errorf("no profiles exist yet — create one with `ccpm add <name>`")
 		}
@@ -366,12 +403,12 @@ func runImportFromProfile(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
-		importFromSrc = choice
+		state.src = choice
 	}
-	if importFromTarget == "" {
+	if state.target == "" {
 		remaining := make([]string, 0, len(names))
 		for _, n := range names {
-			if n != importFromSrc {
+			if n != state.src {
 				remaining = append(remaining, n)
 			}
 		}
@@ -389,348 +426,18 @@ func runImportFromProfile(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
-		importFromTarget = choice
+		state.target = choice
 	}
-	if importFromSrc == importFromTarget {
+	if state.src == state.target {
 		return fmt.Errorf("source and target profiles must differ")
 	}
 
-	src, ok := cfg.Profiles[importFromSrc]
+	src, ok := cfg.Profiles[state.src]
 	if !ok {
-		return fmt.Errorf("source profile %q not found", importFromSrc)
+		return fmt.Errorf("source profile %q not found", state.src)
 	}
-	dst, ok := cfg.Profiles[importFromTarget]
+	dst, ok := cfg.Profiles[state.target]
 	if !ok {
-		return fmt.Errorf("target profile %q not found", importFromTarget)
+		return fmt.Errorf("target profile %q not found", state.target)
 	}
 
-	targets, err := defaultclaude.ParseTargets(importOnly)
-	if err != nil {
-		return err
-	}
-	if len(importOnly) == 0 {
-		picked, err := pickImportTargets()
-		if err == nil {
-			targets = picked
-		} else if !errors.Is(err, picker.ErrNonInteractive) {
-			return err
-		}
-	}
-
-	if err := importFromProfile(src.Dir, dst.Dir, targets, importForce); err != nil {
-		return err
-	}
-
-	if err := settingsmerge.Materialize(dst.Dir, importFromTarget, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: re-materializing settings: %v\n", err)
-	}
-	if err := settingsmerge.MaterializeMCP(dst.Dir, importFromTarget, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: re-materializing MCP: %v\n", err)
-	}
-
-	color.New(color.FgGreen, color.Bold).Printf("✓ Imported assets from %q into %q\n", importFromSrc, importFromTarget)
-	return nil
-}
-
-// importFromProfile copies selected targets from srcProfileDir into
-// dstProfileDir. Settings are deep-merged; directory targets are walked
-// and merged with the "preserve existing unless --force" rule used by
-// `ccpm import default`.
-func importFromProfile(srcProfileDir, dstProfileDir string, targets []defaultclaude.Target, force bool) error {
-	for _, t := range targets {
-		srcPath := profileTargetPath(srcProfileDir, t)
-		dstPath := profileTargetPath(dstProfileDir, t)
-
-		info, err := os.Stat(srcPath)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("stat %s: %w", srcPath, err)
-		}
-
-		if t == defaultclaude.TargetSettings {
-			if err := mergeProfileSettings(srcPath, dstPath); err != nil {
-				return fmt.Errorf("merging settings from %s: %w", srcProfileDir, err)
-			}
-			continue
-		}
-
-		if info.IsDir() {
-			if err := copyProfileTree(srcPath, dstPath, force); err != nil {
-				return fmt.Errorf("copying %s: %w", srcPath, err)
-			}
-			continue
-		}
-	}
-	return nil
-}
-
-func profileTargetPath(root string, t defaultclaude.Target) string {
-	if t == defaultclaude.TargetSettings {
-		return filepath.Join(root, "settings.json")
-	}
-	return filepath.Join(root, string(t))
-}
-
-// mergeProfileSettings deep-merges src settings.json into dst. Existing keys
-// in dst win so we don't clobber profile-specific overrides.
-func mergeProfileSettings(src, dst string) error {
-	srcData, err := settingsmerge.LoadJSON(src)
-	if err != nil {
-		return err
-	}
-	dstData, err := settingsmerge.LoadJSON(dst)
-	if err != nil {
-		return err
-	}
-	merged := settingsmerge.DeepMerge(srcData, dstData)
-	return settingsmerge.WriteJSON(dst, merged)
-}
-
-func copyProfileTree(src, dst string, force bool) error {
-	return filetree.CopyTree(src, dst, !force)
-}
-
-// pickImportTarget lets the user choose a single profile or "all" when
-// neither --profile nor --all was passed. Sets importProfile / importAll as a
-// side effect. In non-TTY contexts returns the existing required-flag error.
-func pickImportTarget(cfg *config.Config) error {
-	names := config.ProfileNames(cfg)
-	if len(names) == 0 {
-		return fmt.Errorf("no profiles found — create one with `ccpm add <name>`")
-	}
-	opts := []picker.Option{{Value: "__all__", Label: "All profiles", Description: "import into every profile"}}
-	for _, n := range names {
-		opts = append(opts, picker.Option{Value: n, Label: n})
-	}
-	choice, err := picker.Select("Which profile should we import into?", opts)
-	if err != nil {
-		if errors.Is(err, picker.ErrNonInteractive) {
-			return fmt.Errorf("specify --profile <name> or --all")
-		}
-		return err
-	}
-	if choice == "__all__" {
-		importAll = true
-	} else {
-		importProfile = choice
-	}
-	return nil
-}
-
-// pickImportTargets offers a multi-select over the known target subtrees
-// (skills, commands, rules, hooks, agents, settings). Defaults match
-// DefaultTargets so hitting enter immediately yields the same set as if --only
-// weren't passed.
-func pickImportTargets() ([]defaultclaude.Target, error) {
-	all := []defaultclaude.Target{
-		defaultclaude.TargetSkills,
-		defaultclaude.TargetCommands,
-		defaultclaude.TargetRules,
-		defaultclaude.TargetHooks,
-		defaultclaude.TargetAgents,
-		defaultclaude.TargetSettings,
-		defaultclaude.TargetMCP,
-		defaultclaude.TargetPlugins,
-	}
-	defaults := map[defaultclaude.Target]bool{}
-	for _, t := range defaultclaude.DefaultTargets() {
-		defaults[t] = true
-	}
-	opts := make([]picker.Option, len(all))
-	defs := []string{}
-	for i, t := range all {
-		opts[i] = picker.Option{Value: string(t), Label: string(t)}
-		if defaults[t] {
-			defs = append(defs, string(t))
-		}
-	}
-	values, err := picker.MultiSelect("Which targets should we import?", opts, defs)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]defaultclaude.Target, 0, len(values))
-	for _, v := range values {
-		out = append(out, defaultclaude.Target(v))
-	}
-	if len(out) == 0 {
-		return defaultclaude.DefaultTargets(), nil
-	}
-	return out, nil
-}
-
-// anyLiveSymlinkCandidate reports whether any top-level entry under the given
-// dedupable targets in ~/.claude is itself a symlink to a directory. Used to
-// decide whether to prompt about the live-symlink strategy.
-func anyLiveSymlinkCandidate(targets []defaultclaude.Target) (bool, error) {
-	root, err := defaultclaude.DefaultDir()
-	if err != nil {
-		return false, err
-	}
-	dedupable := map[defaultclaude.Target]bool{
-		defaultclaude.TargetSkills:   true,
-		defaultclaude.TargetAgents:   true,
-		defaultclaude.TargetCommands: true,
-	}
-	for _, t := range targets {
-		if !dedupable[t] {
-			continue
-		}
-		dir := filepath.Join(root, string(t))
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			isLink, _ := filetree.SymlinkToDirectory(filepath.Join(dir, e.Name()))
-			if isLink {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func relOrAbs(p string) string {
-	if home, err := os.UserHomeDir(); err == nil {
-		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
-			return "~/" + rel
-		}
-	}
-	return p
-}
-
-// granularTargets is the set of targets that expose per-item selection. Settings
-// is excluded because it's a single file; plugins is excluded because we don't
-// want to break opaque plugin payloads mid-flight.
-func granularTargets() map[defaultclaude.Target]bool {
-	return map[defaultclaude.Target]bool{
-		defaultclaude.TargetSkills:   true,
-		defaultclaude.TargetCommands: true,
-		defaultclaude.TargetRules:    true,
-		defaultclaude.TargetHooks:    true,
-		defaultclaude.TargetAgents:   true,
-		defaultclaude.TargetMCP:      true,
-	}
-}
-
-// pickItemsForTarget offers a multi-select listing the top-level entries of a
-// target. Returns the set of selected item IDs, or nil if the target isn't
-// granular / has no candidates / the user kept everything selected.
-//
-// "Kept everything selected" intentionally collapses to a nil filter so the
-// fast path in Import (no per-entry iteration) is preserved.
-func pickItemsForTarget(t defaultclaude.Target) (map[string]bool, error) {
-	if !granularTargets()[t] {
-		return nil, nil
-	}
-	items, err := listTargetItems(t)
-	if err != nil {
-		return nil, err
-	}
-	if len(items) == 0 {
-		return nil, nil
-	}
-	opts := make([]picker.Option, len(items))
-	defs := make([]string, len(items))
-	for i, it := range items {
-		opts[i] = picker.Option{Value: it.id, Label: it.label, Description: it.description}
-		defs[i] = it.id
-	}
-	title := fmt.Sprintf("Which %s should we import? (all selected by default)", t)
-	chosen, err := picker.MultiSelect(title, opts, defs)
-	if err != nil {
-		return nil, err
-	}
-	if len(chosen) == len(items) {
-		return nil, nil
-	}
-	m := make(map[string]bool, len(chosen))
-	for _, id := range chosen {
-		m[id] = true
-	}
-	return m, nil
-}
-
-type targetItem struct {
-	id          string
-	label       string
-	description string
-}
-
-// listTargetItems enumerates the candidates for a granular target. For
-// directory targets it lists top-level entries of ~/.claude/<target>. For MCP
-// it flattens every entry found in ~/.claude.json and annotates each with its
-// source so the user can disambiguate duplicates.
-func listTargetItems(t defaultclaude.Target) ([]targetItem, error) {
-	if t == defaultclaude.TargetMCP {
-		entries, err := defaultclaude.LoadMCPEntries()
-		if err != nil {
-			return nil, err
-		}
-		out := make([]targetItem, 0, len(entries))
-		for _, e := range entries {
-			out = append(out, targetItem{
-				id:          e.ID(),
-				label:       e.Name,
-				description: e.Source(),
-			})
-		}
-		return out, nil
-	}
-	root, err := defaultclaude.DefaultDir()
-	if err != nil {
-		return nil, err
-	}
-	dir := filepath.Join(root, string(t))
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out := make([]targetItem, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, targetItem{
-			id:    e.Name(),
-			label: e.Name(),
-		})
-	}
-	return out, nil
-}
-
-func containsTarget(targets []defaultclaude.Target, t defaultclaude.Target) bool {
-	for _, x := range targets {
-		if x == t {
-			return true
-		}
-	}
-	return false
-}
-
-func filterOutTarget(targets []defaultclaude.Target, drop defaultclaude.Target) []defaultclaude.Target {
-	out := make([]defaultclaude.Target, 0, len(targets))
-	for _, t := range targets {
-		if t == drop {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
-func fallback(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
-}
-
-func noteSuffix(note string) string {
-	if note == "" {
-		return ""
-	}
-	return " (" + note + ")"
-}
