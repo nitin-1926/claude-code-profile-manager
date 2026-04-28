@@ -64,3 +64,69 @@ func TestBuildServerDef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdio: %v", err)
 	}
+	if def["type"] != "stdio" || def["command"] != "npx" {
+		t.Errorf("stdio def = %v", def)
+	}
+	args, _ := def["args"].([]interface{})
+	if len(args) != 2 || args[0] != "-y" {
+		t.Errorf("stdio args = %v", args)
+	}
+
+	stateHTTP := &mcpState{transport: "http", url: "https://example.com/mcp", headers: []string{"Authorization=Bearer x"}}
+	def, err = buildServerDef(stateHTTP)
+	if err != nil {
+		t.Fatalf("http: %v", err)
+	}
+	if def["type"] != "http" || def["url"] != "https://example.com/mcp" {
+		t.Errorf("http def = %v", def)
+	}
+	hdrs, _ := def["headers"].(map[string]interface{})
+	if hdrs["Authorization"] != "Bearer x" {
+		t.Errorf("http headers = %v", hdrs)
+	}
+
+	stateBad := &mcpState{transport: "stdio", command: "x", url: "https://oops"}
+	if _, err := buildServerDef(stateBad); err == nil {
+		t.Error("stdio + url should be rejected")
+	}
+
+	stateMissing := &mcpState{transport: "stdio"}
+	if _, err := buildServerDef(stateMissing); err == nil {
+		t.Error("stdio without command should error")
+	}
+
+	stateBadTransport := &mcpState{transport: "websocket", url: "x"}
+	if _, err := buildServerDef(stateBadTransport); err == nil {
+		t.Error("unknown transport should error")
+	}
+}
+
+func TestTypeOfMCPDef(t *testing.T) {
+	cases := map[string]struct {
+		in   interface{}
+		want string
+	}{
+		"explicit-http":   {map[string]interface{}{"type": "http", "url": "u"}, "http"},
+		"command-stdio":   {map[string]interface{}{"command": "npx"}, "stdio"},
+		"url-only":        {map[string]interface{}{"url": "u"}, "http"},
+		"opaque":          {map[string]interface{}{"foo": "bar"}, "—"},
+		"not-a-map":       {"string", "—"},
+	}
+	for name, c := range cases {
+		if got := typeOfMCPDef(c.in); got != c.want {
+			t.Errorf("%s: got %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+func TestStringSliceContains(t *testing.T) {
+	if !stringSliceContains([]string{"a", "b"}, "b") {
+		t.Error("should find b")
+	}
+	if stringSliceContains([]string{"a", "b"}, "c") {
+		t.Error("should not find c")
+	}
+	if stringSliceContains(nil, "a") {
+		t.Error("nil slice must not match")
+	}
+}
