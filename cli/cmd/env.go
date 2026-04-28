@@ -92,3 +92,98 @@ func runEnvSet(state *envState, args []string) error {
 	pairs, err := parseEnvKVs(args)
 	if err != nil {
 		return err
+	}
+	for key := range pairs {
+		if reason, reserved := reservedEnvKeys[key]; reserved {
+			return fmt.Errorf("%q is reserved (%s) — set it with `ccpm run --ccpm-env KEY=VALUE` for a one-shot override instead", key, reason)
+		}
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	p, exists := cfg.Profiles[state.profile]
+	if !exists {
+		return fmt.Errorf("profile %q not found", state.profile)
+	}
+	if p.Env == nil {
+		p.Env = map[string]string{}
+	}
+	for k, v := range pairs {
+		p.Env[k] = v
+	}
+	cfg.Profiles[state.profile] = p
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+
+	green := color.New(color.FgGreen, color.Bold)
+	keys := sortedKeys(pairs)
+	green.Printf("✓ Set %d env var(s) on profile %q: %s\n", len(pairs), state.profile, strings.Join(keys, ", "))
+	return nil
+}
+
+func runEnvUnset(state *envState, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	p, exists := cfg.Profiles[state.profile]
+	if !exists {
+		return fmt.Errorf("profile %q not found", state.profile)
+	}
+	if len(p.Env) == 0 {
+		fmt.Printf("Profile %q has no persisted env vars.\n", state.profile)
+		return nil
+	}
+
+	removed := 0
+	for _, key := range args {
+		if _, ok := p.Env[key]; ok {
+			delete(p.Env, key)
+			removed++
+		}
+	}
+	if len(p.Env) == 0 {
+		p.Env = nil
+	}
+	cfg.Profiles[state.profile] = p
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+	color.New(color.FgGreen, color.Bold).Printf("✓ Unset %d env var(s) on profile %q\n", removed, state.profile)
+	return nil
+}
+
+func runEnvList(state *envState) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	p, exists := cfg.Profiles[state.profile]
+	if !exists {
+		return fmt.Errorf("profile %q not found", state.profile)
+	}
+	if len(p.Env) == 0 {
+		fmt.Printf("No env vars set on profile %q. Add one with: ccpm env set KEY=VALUE --profile %s\n", state.profile, state.profile)
+		return nil
+	}
+
+	bold := color.New(color.Bold).SprintFunc()
+	fmt.Printf("  %-30s %s\n", bold("KEY"), bold("VALUE"))
+	fmt.Printf("  %s\n", strings.Repeat("─", 60))
+	for _, k := range sortedKeys(p.Env) {
+		fmt.Printf("  %-30s %s\n", k, p.Env[k])
+	}
+	return nil
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
