@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,11 +14,27 @@ import (
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run <name> [-- claude-args...]",
+	Use:   "run <name> [claude-args...]",
 	Short: "Launch Claude Code with the given profile",
-	Long:  "Starts Claude Code with CLAUDE_CONFIG_DIR set to the profile's directory. Pass additional args to claude after --.",
-	Args:  cobra.MinimumNArgs(1),
-	RunE:  runRun,
+	Long: `Starts Claude Code with CLAUDE_CONFIG_DIR set to the profile's directory.
+
+Everything after the profile name is forwarded to claude, including flags
+ccpm doesn't know about:
+
+  ccpm run work --dangerously-skip-permissions
+  ccpm run work --model claude-sonnet-4-6
+
+Three flags are intercepted by ccpm before they reach claude:
+  --ccpm-env KEY=VALUE  — one-shot env override (repeatable)
+  --help / -h           — show this help
+  --version             — show ccpm version
+
+To forward --help or --version to claude, use:
+  ccpm run work -- --help
+  ccpm run work -- --version`,
+	Args:               cobra.MinimumNArgs(1),
+	DisableFlagParsing: true,
+	RunE:               runRun,
 }
 
 func init() {
@@ -25,8 +42,24 @@ func init() {
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
-	name := args[0]
-	claudeArgs := args[1:]
+	// With DisableFlagParsing the first arg after "run" is still the profile
+	// name, but we own the parsing of anything ccpm-specific before it.
+	claudeArgs, envOverrides, helpRequested, versionRequested, err := extractCCPMRunFlags(args)
+	if err != nil {
+		return err
+	}
+	if helpRequested {
+		return cmd.Help()
+	}
+	if versionRequested {
+		fmt.Println(rootCmd.Version)
+		return nil
+	}
+	if len(claudeArgs) == 0 {
+		return fmt.Errorf("profile name is required. See `ccpm run --help`")
+	}
+	name := claudeArgs[0]
+	claudeArgs = claudeArgs[1:]
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -58,21 +91,3 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	if err := settingsmerge.MaterializeMCP(p.Dir, name, projectRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
-	}
-
-	// Get API key if needed
-	var apiKey string
-	if p.AuthMethod == "api_key" {
-		store := keystore.New()
-		apiKey, err = store.GetAPIKey(name)
-		if err != nil {
-			return fmt.Errorf("retrieving API key: %w\nRun 'ccpm auth refresh %s' to re-enter your key", err, name)
-		}
-	}
-
-	fmt.Printf("Launching Claude Code with profile: %s\n", name)
-	fmt.Printf("Config dir: %s\n\n", p.Dir)
-
-	// Exec replaces this process with claude
-	return claudepkg.Exec(p.Dir, apiKey, claudeArgs)
-}
