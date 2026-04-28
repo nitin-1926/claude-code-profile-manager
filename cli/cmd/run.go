@@ -91,3 +91,97 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	if err := settingsmerge.MaterializeMCP(p.Dir, name, projectRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
+	}
+
+	// Get API key if needed
+	var apiKey string
+	if p.AuthMethod == "api_key" {
+		store := keystore.New()
+		apiKey, err = store.GetAPIKey(name)
+		if err != nil {
+			return fmt.Errorf("retrieving API key: %w\nRun 'ccpm auth refresh %s' to re-enter your key", err, name)
+		}
+	}
+
+	extraEnv, err := parseEnvKVs(envOverrides)
+	if err != nil {
+		return fmt.Errorf("parsing --ccpm-env: %w", err)
+	}
+
+	fmt.Printf("Launching Claude Code with profile: %s\n", name)
+	fmt.Printf("Config dir: %s\n\n", p.Dir)
+
+	// Exec replaces this process with claude
+	return claudepkg.Exec(p.Dir, apiKey, p.Env, extraEnv, claudeArgs)
+}
+
+// parseEnvKVs converts a slice of "KEY=VALUE" strings to a map. An entry
+// without "=" is an error so a typo can't silently drop a variable.
+func parseEnvKVs(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, raw := range pairs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		idx := strings.IndexByte(raw, '=')
+		if idx <= 0 {
+			return nil, fmt.Errorf("expected KEY=VALUE, got %q", raw)
+		}
+		key := raw[:idx]
+		value := raw[idx+1:]
+		out[key] = value
+	}
+	return out, nil
+}
+
+// extractCCPMRunFlags scans args for ccpm-owned flags (--ccpm-env, --help,
+// --version) while leaving everything else — including flags unknown to ccpm
+// — intact so they flow through to claude.
+//
+// Recognised shapes:
+//
+//	--ccpm-env KEY=VAL        two-token form
+//	--ccpm-env=KEY=VAL        single-token form
+//	--help / -h / --version   boolean flags
+//	--                        stop processing, pass the rest through verbatim
+//
+// Anything after a bare "--" is copied verbatim (including further --help or
+// --ccpm-env occurrences), matching native shell convention.
+func extractCCPMRunFlags(args []string) (forwarded []string, envOverrides []string, help, ver bool, err error) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			forwarded = append(forwarded, args[i+1:]...)
+			return forwarded, envOverrides, help, ver, nil
+		}
+		switch {
+		case a == "--ccpm-env":
+			if i+1 >= len(args) {
+				return nil, nil, false, false, fmt.Errorf("--ccpm-env requires a KEY=VALUE argument")
+			}
+			envOverrides = append(envOverrides, args[i+1])
+			i += 2
+			continue
+		case strings.HasPrefix(a, "--ccpm-env="):
+			envOverrides = append(envOverrides, strings.TrimPrefix(a, "--ccpm-env="))
+			i++
+			continue
+		case a == "--help" || a == "-h":
+			help = true
+			i++
+			continue
+		case a == "--version":
+			ver = true
+			i++
+			continue
+		}
+		forwarded = append(forwarded, a)
+		i++
+	}
+	return forwarded, envOverrides, help, ver, nil
+}
