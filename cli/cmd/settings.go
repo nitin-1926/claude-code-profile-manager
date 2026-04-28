@@ -223,3 +223,228 @@ func runSettingsOutputStyle(state *settingsState, cmd *cobra.Command, args []str
 	if err := settingsmerge.MarkOwned(fragPath, "outputStyle"); err != nil {
 		return fmt.Errorf("recording owned key: %w", err)
 	}
+	color.New(color.FgGreen, color.Bold).Printf("✓ outputStyle = %q (profile %q)\n", style, state.profile)
+	return nil
+}
+
+// settingsFragmentPath returns the profile-scoped fragment path. Global
+// fragments are no longer supported — shared settings live in
+// ~/.claude/settings.json instead.
+func settingsFragmentPath(profileName string) (string, error) {
+	settingsDir, err := share.SettingsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(settingsDir, profileName+".json"), nil
+}
+
+func ensureProfileExists(profileName string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if _, exists := cfg.Profiles[profileName]; !exists {
+		return fmt.Errorf("profile %q not found", profileName)
+	}
+	return nil
+}
+
+func runSettingsSet(state *settingsState, args []string) error {
+	key := args[0]
+	rawValue := args[1]
+
+	if err := ensureProfileExists(state.profile); err != nil {
+		return err
+	}
+	if err := share.EnsureDirs(); err != nil {
+		return err
+	}
+
+	fragPath, err := settingsFragmentPath(state.profile)
+	if err != nil {
+		return err
+	}
+
+	frag, err := settingsmerge.LoadJSON(fragPath)
+	if err != nil {
+		return fmt.Errorf("loading fragment: %w", err)
+	}
+
+	var value interface{}
+	if err := json.Unmarshal([]byte(rawValue), &value); err != nil {
+		value = rawValue
+	}
+
+	setNestedKey(frag, key, value)
+
+	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
+		return fmt.Errorf("writing fragment: %w", err)
+	}
+
+	if err := settingsmerge.MarkOwned(fragPath, key); err != nil {
+		return fmt.Errorf("recording owned key: %w", err)
+	}
+
+	color.New(color.FgGreen, color.Bold).Printf("✓ Set %s = %s (profile %q)\n", key, rawValue, state.profile)
+	return nil
+}
+
+func runSettingsGet(state *settingsState, args []string) error {
+	key := args[0]
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	p, exists := cfg.Profiles[state.profile]
+	if !exists {
+		return fmt.Errorf("profile %q not found", state.profile)
+	}
+
+	merged, err := buildMergedSettings(p.Dir, state.profile)
+	if err != nil {
+		return err
+	}
+
+	val := getNestedKey(merged, key)
+	if val == nil {
+		fmt.Printf("%s: <not set>\n", key)
+		return nil
+	}
+
+	out, err := json.MarshalIndent(val, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s: %s\n", key, string(out))
+	return nil
+}
+
+func runSettingsApply(state *settingsState, args []string, allowDangerous bool) error {
+	filePath := args[0]
+
+	if err := ensureProfileExists(state.profile); err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", filePath, err)
+	}
+
+	var patch map[string]interface{}
+	if err := json.Unmarshal(data, &patch); err != nil {
+		return fmt.Errorf("parsing %s: %w", filePath, err)
+	}
+
+	if triggered := dangerousKeysIn(patch); len(triggered) > 0 && !allowDangerous {
+		return fmt.Errorf("patch touches security-sensitive keys %v — re-run with --i-know-what-this-does if that is intended. These keys can grant shell access or bypass permission checks", triggered)
+	}
+
+	if err := share.EnsureDirs(); err != nil {
+		return err
+	}
+
+	fragPath, err := settingsFragmentPath(state.profile)
+	if err != nil {
+		return err
+	}
+
+	frag, err := settingsmerge.LoadJSON(fragPath)
+	if err != nil {
+		return fmt.Errorf("loading fragment: %w", err)
+	}
+
+	merged := settingsmerge.DeepMerge(frag, patch)
+	if err := settingsmerge.WriteJSON(fragPath, merged); err != nil {
+		return fmt.Errorf("writing fragment: %w", err)
+	}
+
+	if err := settingsmerge.MarkOwnedFromPatch(fragPath, patch); err != nil {
+		return fmt.Errorf("recording owned keys: %w", err)
+	}
+
+	color.New(color.FgGreen, color.Bold).Printf("✓ Applied settings from %s (profile %q)\n", filePath, state.profile)
+	return nil
+}
+
+func runSettingsShow(state *settingsState) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	p, exists := cfg.Profiles[state.profile]
+	if !exists {
+		return fmt.Errorf("profile %q not found", state.profile)
+	}
+
+	merged, err := buildMergedSettings(p.Dir, state.profile)
+	if err != nil {
+		return err
+	}
+
+	out, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(out))
+	return nil
+}
+
+// buildMergedSettings returns the merge result used by advisory commands
+// (`settings get/show`, `hooks list`, `plugin list`). Delegates to
+// settingsmerge.ComputeMerged so every caller sees the exact layer stack
+// Claude Code will see — including owned-keys re-assertion, project settings
+// discovered from the CWD, and enterprise managed settings.
+func buildMergedSettings(profileDir, profileName string) (map[string]interface{}, error) {
+	projectRoot := ""
+	if cwd, err := os.Getwd(); err == nil {
+		projectRoot = settingsmerge.FindProjectRoot(cwd)
+	}
+	return settingsmerge.ComputeMerged(profileDir, profileName, projectRoot)
+}
+
+// dangerousKeysIn returns the subset of top-level keys in patch that appear
+// in dangerousSettingsKeys.
+func dangerousKeysIn(patch map[string]interface{}) []string {
+	var hit []string
+	for _, k := range dangerousSettingsKeys {
+		if _, ok := patch[k]; ok {
+			hit = append(hit, k)
+		}
+	}
+	return hit
+}
+
+func setNestedKey(m map[string]interface{}, key string, value interface{}) {
+	parts := strings.Split(key, ".")
+	current := m
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			current[part] = value
+			return
+		}
+		if next, ok := current[part].(map[string]interface{}); ok {
+			current = next
+		} else {
+			next := make(map[string]interface{})
+			current[part] = next
+			current = next
+		}
+	}
+}
+
+func getNestedKey(m map[string]interface{}, key string) interface{} {
+	parts := strings.Split(key, ".")
+	var current interface{} = m
+	for _, part := range parts {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		current = obj[part]
+	}
+	return current
+}
