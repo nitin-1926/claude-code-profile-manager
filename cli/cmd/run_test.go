@@ -62,3 +62,67 @@ func TestExtractCCPMRunFlags(t *testing.T) {
 		},
 	}
 
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forward, env, help, ver, err := extractCCPMRunFlags(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(forward, tc.wantForward) && (len(forward) != 0 || len(tc.wantForward) != 0) {
+				t.Fatalf("forward: got %v, want %v", forward, tc.wantForward)
+			}
+			if !reflect.DeepEqual(env, tc.wantEnv) && (len(env) != 0 || len(tc.wantEnv) != 0) {
+				t.Fatalf("env: got %v, want %v", env, tc.wantEnv)
+			}
+			if help != tc.wantHelp {
+				t.Fatalf("help: got %v, want %v", help, tc.wantHelp)
+			}
+			if ver != tc.wantVersion {
+				t.Fatalf("version: got %v, want %v", ver, tc.wantVersion)
+			}
+		})
+	}
+}
+
+func TestParseEnvKVs(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   []string
+		want    map[string]string
+		wantErr bool
+	}{
+		{name: "empty", input: nil, want: nil},
+		{name: "single kv", input: []string{"FOO=bar"}, want: map[string]string{"FOO": "bar"}},
+		{name: "value with equals", input: []string{"URL=https://x.example/path?a=b"}, want: map[string]string{"URL": "https://x.example/path?a=b"}},
+		{name: "missing equals", input: []string{"FOO"}, wantErr: true},
+		{name: "empty key", input: []string{"=bar"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseEnvKVs(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("len mismatch: got %v, want %v", got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Fatalf("key %q: got %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
