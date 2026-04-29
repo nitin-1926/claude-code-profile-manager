@@ -41,3 +41,46 @@ func TestListBucket(t *testing.T) {
 		{"wrong type", map[string]interface{}{"allow": "not-a-list"}, permAllow, nil},
 	}
 	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := listBucket(c.root, c.in)
+			if len(got) != len(c.want) {
+				t.Fatalf("len mismatch: got %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("at %d: got %q, want %q", i, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestPruneEmptyBuckets(t *testing.T) {
+	t.Run("strips empty []string bucket", func(t *testing.T) {
+		root := map[string]interface{}{"allow": []string{}, "ask": []string{"x"}}
+		pruneEmptyBuckets(root)
+		if _, ok := root["allow"]; ok {
+			t.Error("empty allow should be removed")
+		}
+		if _, ok := root["ask"]; !ok {
+			t.Error("non-empty ask must stay")
+		}
+	})
+	t.Run("strips empty []interface{} bucket", func(t *testing.T) {
+		// Pre-refactor this path silently kept the empty array because the
+		// type switch only matched []string. Test that the new behavior
+		// covers the post-LoadJSON case too.
+		root := map[string]interface{}{"deny": []interface{}{}}
+		pruneEmptyBuckets(root)
+		if _, ok := root["deny"]; ok {
+			t.Error("empty []interface{} deny must be removed")
+		}
+	})
+	t.Run("preserves non-permission keys", func(t *testing.T) {
+		root := map[string]interface{}{"allow": []string{}, "defaultMode": "acceptEdits"}
+		pruneEmptyBuckets(root)
+		if root["defaultMode"] != "acceptEdits" {
+			t.Error("defaultMode must survive prune")
+		}
+	})
+}
