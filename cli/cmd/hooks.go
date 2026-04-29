@@ -150,3 +150,156 @@ func runHooksAdd(state *hooksState, cmd *cobra.Command, args []string) error {
 		"hooks": []interface{}{
 			map[string]interface{}{
 				"type":    "command",
+				"command": command,
+			},
+		},
+	}
+	events = append(events, entry)
+	hooksRoot[event] = events
+
+	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
+		return fmt.Errorf("writing fragment: %w", err)
+	}
+	if err := settingsmerge.MarkOwned(fragPath, "hooks."+event); err != nil {
+		return fmt.Errorf("recording owned key: %w", err)
+	}
+
+	color.New(color.FgGreen, color.Bold).Printf("✓ Hook added to %s for profile %q\n", event, state.profile)
+	return nil
+}
+
+func runHooksRemove(state *hooksState, args []string) error {
+	event := args[0]
+
+	if err := ensureProfileExists(state.profile); err != nil {
+		return err
+	}
+
+	fragPath, err := settingsFragmentPath(state.profile)
+	if err != nil {
+		return err
+	}
+
+	frag, err := settingsmerge.LoadJSON(fragPath)
+	if err != nil {
+		return fmt.Errorf("loading fragment: %w", err)
+	}
+
+	hooksRoot, _ := frag["hooks"].(map[string]interface{})
+	events, _ := hooksRoot[event].([]interface{})
+	if len(events) == 0 {
+		return fmt.Errorf("no hooks set for event %q on profile %q", event, state.profile)
+	}
+
+	idx := state.index
+	if idx < 0 {
+		idx = len(events) - 1
+	}
+	if idx >= len(events) {
+		return fmt.Errorf("index %d out of range (profile has %d entries for %s)", idx, len(events), event)
+	}
+
+	events = append(events[:idx], events[idx+1:]...)
+	if len(events) == 0 {
+		delete(hooksRoot, event)
+	} else {
+		hooksRoot[event] = events
+	}
+	if len(hooksRoot) == 0 {
+		delete(frag, "hooks")
+	}
+
+	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
+		return fmt.Errorf("writing fragment: %w", err)
+	}
+
+	color.New(color.FgGreen, color.Bold).Printf("✓ Hook removed from %s (index %d) for profile %q\n", event, idx, state.profile)
+	return nil
+}
+
+func runHooksList(state *hooksState) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	p, exists := cfg.Profiles[state.profile]
+	if !exists {
+		return fmt.Errorf("profile %q not found", state.profile)
+	}
+
+	merged, err := buildMergedSettings(p.Dir, state.profile)
+	if err != nil {
+		return err
+	}
+
+	// Layer in project-level hooks from the nearest .claude/settings.json so
+	// users see everything Claude Code will actually run in the profile.
+	if cwd, werr := os.Getwd(); werr == nil {
+		if root := settingsmerge.FindProjectRoot(cwd); root != "" {
+			if projectSettings, _, perr := settingsmerge.LoadProjectSettings(root); perr == nil {
+				merged = settingsmerge.DeepMerge(merged, projectSettings)
+			}
+		}
+	}
+
+	hooksRoot, _ := merged["hooks"].(map[string]interface{})
+	if len(hooksRoot) == 0 {
+		fmt.Printf("No hooks set for profile %q (check ~/.claude/settings.json for global hooks).\n", state.profile)
+		return nil
+	}
+
+	events := make([]string, 0, len(hooksRoot))
+	for k := range hooksRoot {
+		events = append(events, k)
+	}
+	sort.Strings(events)
+
+	bold := color.New(color.Bold).SprintFunc()
+	for _, event := range events {
+		entries, _ := hooksRoot[event].([]interface{})
+		fmt.Printf("%s\n", bold(event))
+		for i, raw := range entries {
+			entry, _ := raw.(map[string]interface{})
+			matcher, _ := entry["matcher"].(string)
+			cmds := describeHookCommands(entry)
+			fmt.Printf("  [%d] matcher=%q  %s\n", i, matcher, cmds)
+		}
+	}
+	return nil
+}
+
+func ensureHooksRoot(frag map[string]interface{}) map[string]interface{} {
+	existing, _ := frag["hooks"].(map[string]interface{})
+	if existing == nil {
+		existing = map[string]interface{}{}
+		frag["hooks"] = existing
+	}
+	return existing
+}
+
+func describeHookCommands(entry map[string]interface{}) string {
+	list, _ := entry["hooks"].([]interface{})
+	parts := make([]string, 0, len(list))
+	for _, raw := range list {
+		cmd, _ := raw.(map[string]interface{})
+		t, _ := cmd["type"].(string)
+		c, _ := cmd["command"].(string)
+		if t == "" {
+			t = "command"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%q", t, c))
+	}
+	if len(parts) == 0 {
+		return "(no commands)"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func isKnownHookEvent(event string) bool {
+	for _, e := range knownHookEvents {
+		if e == event {
+			return true
+		}
+	}
+	return false
+}
