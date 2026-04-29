@@ -34,3 +34,40 @@ func TestExtractUserPrompt(t *testing.T) {
 		},
 		{
 			name: "v2 message.content string",
+			entry: map[string]interface{}{
+				"message": map[string]interface{}{"role": "user", "content": "hi there"},
+			},
+			want: "hi there",
+		},
+		{
+			name: "v2 message.content typed blocks",
+			entry: map[string]interface{}{
+				"message": map[string]interface{}{
+					"role": "user",
+					"content": []interface{}{
+						map[string]interface{}{"type": "image"},
+						map[string]interface{}{"type": "text", "text": "   question   "},
+					},
+				},
+			},
+			want: "question",
+		},
+		{
+			name:  "assistant role returns empty",
+			entry: map[string]interface{}{"role": "assistant", "content": "nope"},
+			want:  "",
+		},
+		{
+			name:  "no known shape",
+			entry: map[string]interface{}{"foo": "bar"},
+			want:  "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := extractUserPrompt(c.entry); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
