@@ -37,3 +37,43 @@ func TestFindStoreEntry(t *testing.T) {
 	t.Setenv("USERPROFILE", tmp)
 
 	if err := share.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+
+	agentsDir, _ := share.AgentsDir()
+	// File-based entry: logical ID "foo", on-disk "foo.md".
+	if err := os.WriteFile(filepath.Join(agentsDir, "foo.md"), []byte("..."), 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	// Directory-based entry: logical ID == basename.
+	if err := os.MkdirAll(filepath.Join(agentsDir, "bar"), 0755); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+
+	spec := AssetSpec{Name: "agent", Kind: manifest.KindAgent, SharedDir: share.AgentsDir}
+
+	if got := findStoreEntry(spec, "foo"); got != "foo.md" {
+		t.Errorf("findStoreEntry(foo) = %q, want foo.md", got)
+	}
+	if got := findStoreEntry(spec, "bar"); got != "bar" {
+		t.Errorf("findStoreEntry(bar) = %q, want bar", got)
+	}
+	// Unknown ID falls back to the ID itself (caller will get a stat error later).
+	if got := findStoreEntry(spec, "missing"); got != "missing" {
+		t.Errorf("findStoreEntry(missing) = %q, want missing (fallback)", got)
+	}
+}
+
+func TestTitleCase(t *testing.T) {
+	cases := map[string]string{
+		"":        "",
+		"a":       "A",
+		"agent":   "Agent",
+		"command": "Command",
+	}
+	for in, want := range cases {
+		if got := titleCase(in); got != want {
+			t.Errorf("titleCase(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
