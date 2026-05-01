@@ -9,15 +9,15 @@ const base =
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-accent text-accent-fg hover:opacity-90 active:opacity-80 shadow-[0_0_0_1px_var(--c-accent)]",
+    "btn-primary bg-accent text-accent-fg hover:opacity-92 active:opacity-85 shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_2px_6px_-1px_rgba(184,90,58,0.35),0_0_0_1px_var(--c-accent)]",
   secondary:
-    "bg-surface text-fg border border-border hover:border-border-strong hover:bg-surface-hover",
+    "btn-secondary bg-surface text-fg border border-border hover:border-border-strong hover:bg-surface-hover shadow-[var(--shadow-card)]",
   ghost: "text-fg-muted hover:text-fg hover:bg-surface-hover",
 };
 
 const sizes: Record<Size, string> = {
-  sm: "h-9 px-3.5 text-sm min-w-[44px]",
-  md: "h-11 px-5 text-sm min-w-[44px]",
+  sm: "h-9 px-3.5 text-[0.8125rem] min-w-[44px]",
+  md: "h-10 px-4 text-[0.875rem] min-w-[44px]",
 };
 
 type ButtonProps = {
@@ -31,37 +31,3 @@ type ButtonProps = {
 export function Button({
   variant = "primary",
   size = "md",
-  href,
-  external,
-  className = "",
-  children,
-  ...rest
-}: ButtonProps) {
-  const cls = `${base} ${variants[variant]} ${sizes[size]} ${className}`;
-
-  if (href) {
-    if (external) {
-      return (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cls}
-        >
-          {children}
-        </a>
-      );
-    }
-    return (
-      <Link href={href} className={cls}>
-        {children}
-      </Link>
-    );
-  }
-
-  return (
-    <button className={cls} {...rest}>
-      {children}
-    </button>
-  );
-}
