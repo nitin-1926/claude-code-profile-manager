@@ -31,3 +31,37 @@ type ButtonProps = {
 export function Button({
   variant = "primary",
   size = "md",
+  href,
+  external,
+  className = "",
+  children,
+  ...rest
+}: ButtonProps) {
+  const cls = `${base} ${variants[variant]} ${sizes[size]} ${className}`;
+
+  if (href) {
+    if (external) {
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cls}
+        >
+          {children}
+        </a>
+      );
+    }
+    return (
+      <Link href={href} className={cls}>
+        {children}
+      </Link>
+    );
+  }
+
+  return (
+    <button className={cls} {...rest}>
+      {children}
+    </button>
+  );
+}
