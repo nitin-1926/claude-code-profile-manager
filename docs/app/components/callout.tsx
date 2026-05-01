@@ -5,68 +5,30 @@ type Type = "info" | "warn" | "tip" | "danger";
 
 const config: Record<
   Type,
-  { icon: typeof Info; label: string; tone: string }
+  { icon: typeof Info; label: string; tone: string; iconClass: string }
 > = {
   info: {
     icon: Info,
     label: "Note",
-    tone: "border-border bg-bg-subtle text-fg",
+    tone: "border-border bg-bg-subtle",
+    iconClass: "text-fg-muted",
   },
   warn: {
     icon: AlertTriangle,
     label: "Warning",
     tone:
-      "border-[color:var(--c-warning)]/40 bg-[color:var(--c-warning)]/[0.06] text-fg",
+      "border-[color:var(--c-warning)]/30 bg-[color:var(--c-warning)]/[0.06]",
+    iconClass: "text-[color:var(--c-warning)]",
   },
   tip: {
     icon: Lightbulb,
     label: "Tip",
-    tone: "border-accent/40 bg-accent-muted text-fg",
+    tone: "border-accent/30 bg-accent-soft",
+    iconClass: "text-accent",
   },
   danger: {
     icon: OctagonAlert,
     label: "Danger",
     tone:
-      "border-[color:var(--c-danger)]/40 bg-[color:var(--c-danger)]/[0.06] text-fg",
-  },
-};
-
-export function Callout({
-  type = "info",
-  title,
-  children,
-}: {
-  type?: Type;
-  title?: string;
-  children: ReactNode;
-}) {
-  const { icon: Icon, label, tone } = config[type];
-
-  return (
-    <div className={`my-5 rounded-xl border p-4 ${tone}`}>
-      <div className="flex items-start gap-3">
-        <Icon
-          size={18}
-          strokeWidth={1.75}
-          className={
-            type === "info"
-              ? "text-fg-muted mt-0.5 shrink-0"
-              : type === "warn"
-                ? "text-[color:var(--c-warning)] mt-0.5 shrink-0"
-                : type === "tip"
-                  ? "text-accent mt-0.5 shrink-0"
-                  : "text-[color:var(--c-danger)] mt-0.5 shrink-0"
-          }
-        />
-        <div className="min-w-0 flex-1">
-          <div className="font-mono text-[0.7rem] font-semibold uppercase tracking-wider text-fg-muted">
-            {title || label}
-          </div>
-          <div className="mt-1 text-sm leading-relaxed text-fg-muted [&_strong]:text-fg [&_a]:text-accent [&_a]:underline">
-            {children}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+      "border-[color:var(--c-danger)]/30 bg-[color:var(--c-danger)]/[0.06]",
+    iconClass: "text-[color:var(--c-danger)]",
