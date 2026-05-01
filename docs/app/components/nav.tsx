@@ -49,3 +49,55 @@ export function Nav() {
               className="text-accent"
             />
           </span>
+          <span className="font-mono font-semibold tracking-tight text-fg">
+            ccpm
+          </span>
+        </Link>
+
+        <div className="hidden md:flex items-center gap-0.5 text-[0.8125rem]">
+          {navLinks.map((l) => {
+            const active =
+              l.href === "/docs"
+                ? pathname?.startsWith("/docs")
+                : pathname === l.href;
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                aria-current={active ? "page" : undefined}
+                className={`px-3 py-1.5 rounded-md transition-colors ${
+                  active
+                    ? "text-fg bg-surface-hover"
+                    : "text-fg-muted hover:text-fg hover:bg-surface-hover"
+                }`}
+              >
+                {l.label}
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <a
+            href="https://github.com/nitin-1926/claude-code-profile-manager"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="GitHub repository"
+            className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-md text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
+          >
+            <GithubIcon size={16} />
+          </a>
+          <ThemeToggle />
+          <Link
+            href="/docs"
+            className="hidden sm:inline-flex items-center gap-1 h-9 px-3.5 rounded-md bg-accent text-accent-fg text-[0.8125rem] font-medium hover:opacity-90 transition-opacity shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_1px_2px_rgba(0,0,0,0.1)]"
+          >
+            Get started
+            <ArrowUpRight size={13} strokeWidth={2.25} />
+          </Link>
+          <NavMobile />
+        </div>
+      </div>
+    </nav>
+  );
+}
