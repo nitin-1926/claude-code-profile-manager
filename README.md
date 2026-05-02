@@ -304,6 +304,18 @@ MCP servers authenticate in one of three ways, and ccpm isolates each differentl
 - **Linux headless**: `go-keyring` requires D-Bus and a secret service (gnome-keyring or kwallet). On headless servers, API-key profiles need a running secret service.
 - **Globally-cached MCP servers**: see the MCP auth section above — these cannot be isolated across profiles.
 
+## Troubleshooting
+
+### `/plugin install` fails with `git@github.com: Permission denied (publickey)`
+
+Claude Code clones plugin marketplaces over SSH by default, which requires a GitHub SSH key. If you authenticate over HTTPS only, the clone fails inside `ccpm run` with a `Permission denied (publickey)` error. Force git to rewrite SSH URLs to HTTPS for github.com:
+
+```sh
+git config --global url."https://github.com/".insteadOf "git@github.com:"
+```
+
+This applies to every tool that uses git, not just Claude Code.
+
 ## Build from source
 
 ```bash

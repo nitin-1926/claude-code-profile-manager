@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -134,11 +135,6 @@ func runPluginList(state *pluginState) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	installed, err := loadInstalledPlugins()
-	if err != nil {
-		return fmt.Errorf("reading installed plugins: %w", err)
-	}
-
 	profiles := config.ProfileNames(cfg)
 	if state.profile != "" {
 		if _, ok := cfg.Profiles[state.profile]; !ok {
@@ -148,8 +144,12 @@ func runPluginList(state *pluginState) error {
 	}
 	sort.Strings(profiles)
 
-	// Build enablement matrix: pluginID -> (profileName -> bool).
+	// Build enablement matrix: pluginID -> (profileName -> bool) and the
+	// installed-in matrix: pluginID -> (profileName -> bool). With ccpm,
+	// each profile has its own <profileDir>/plugins/installed_plugins.json,
+	// so a plugin can be present in profile A and absent in profile B.
 	enabled := make(map[string]map[string]bool)
+	installedIn := make(map[string]map[string]bool)
 	for _, name := range profiles {
 		p := cfg.Profiles[name]
 		merged, err := buildMergedSettings(p.Dir, name)
@@ -164,20 +164,32 @@ func runPluginList(state *pluginState) error {
 			}
 			enabled[pluginID][name] = b
 		}
+
+		installed, err := loadInstalledPlugins(p.Dir)
+		if err != nil {
+			return fmt.Errorf("reading installed plugins for %s: %w", name, err)
+		}
+		for _, ip := range installed {
+			id := ip.id()
+			if _, ok := installedIn[id]; !ok {
+				installedIn[id] = make(map[string]bool)
+			}
+			installedIn[id][name] = true
+		}
 	}
 
 	// Union of installed + any enabled plugin (covers cases where a plugin
 	// is enabled in a profile but no longer present in installed_plugins.json).
 	ids := make(map[string]bool)
-	for _, p := range installed {
-		ids[p.id()] = true
+	for id := range installedIn {
+		ids[id] = true
 	}
 	for id := range enabled {
 		ids[id] = true
 	}
 
 	if len(ids) == 0 {
-		fmt.Println("No plugins installed. Run `/plugin install <name>` inside a Claude Code session.")
+		fmt.Println("No plugins installed. Run `/plugin install <name>` inside a `ccpm run <profile>` session.")
 		return nil
 	}
 
@@ -188,18 +200,19 @@ func runPluginList(state *pluginState) error {
 	sort.Strings(sortedIDs)
 
 	bold := color.New(color.Bold).SprintFunc()
-	fmt.Printf("  %-40s %-10s %s\n", bold("PLUGIN"), bold("INSTALLED"), bold("ENABLED IN"))
-	fmt.Printf("  %s\n", strings.Repeat("─", 80))
-
-	installedSet := make(map[string]bool)
-	for _, p := range installed {
-		installedSet[p.id()] = true
-	}
+	fmt.Printf("  %-40s %-22s %s\n", bold("PLUGIN"), bold("INSTALLED IN"), bold("ENABLED IN"))
+	fmt.Printf("  %s\n", strings.Repeat("─", 90))
 
 	for _, id := range sortedIDs {
-		installedCol := "—"
-		if installedSet[id] {
-			installedCol = "yes"
+		var installedNames []string
+		for _, name := range profiles {
+			if installedIn[id][name] {
+				installedNames = append(installedNames, name)
+			}
+		}
+		installedCol := strings.Join(installedNames, ", ")
+		if installedCol == "" {
+			installedCol = "—"
 		}
 
 		var enabledIn []string
@@ -208,17 +221,16 @@ func runPluginList(state *pluginState) error {
 				enabledIn = append(enabledIn, name)
 			}
 		}
-		sort.Strings(enabledIn)
 		enabledCol := strings.Join(enabledIn, ", ")
 		if enabledCol == "" {
 			enabledCol = "(none)"
 		}
-		fmt.Printf("  %-40s %-10s %s\n", id, installedCol, enabledCol)
+		fmt.Printf("  %-40s %-22s %s\n", id, installedCol, enabledCol)
 	}
 	return nil
 }
 
-// installedPlugin mirrors one entry in ~/.claude/plugins/installed_plugins.json.
+// installedPlugin mirrors one entry in <profile>/plugins/installed_plugins.json.
 type installedPlugin struct {
 	Name        string `json:"name"`
 	Marketplace string `json:"marketplace"`
@@ -232,15 +244,20 @@ func (p installedPlugin) id() string {
 	return p.Name
 }
 
-// loadInstalledPlugins reads ~/.claude/plugins/installed_plugins.json. Missing
-// file is not an error (returns empty slice). The file's schema has shifted
-// between Claude Code releases, so this tries a few common shapes.
-func loadInstalledPlugins() ([]installedPlugin, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
+// loadInstalledPlugins reads <profileDir>/plugins/installed_plugins.json. With
+// CLAUDE_CONFIG_DIR pointing at the profile, Claude Code writes plugin state
+// into the profile dir — the global ~/.claude path is empty for ccpm-managed
+// installs. Missing file is not an error (returns empty slice).
+//
+// The file's schema has shifted across Claude Code releases, so this tries
+// each known shape in order from newest to oldest. Today's shape (v2) is:
+//
+//	{"version": 2, "plugins": {"<name>@<marketplace>": [{"version": ...}]}}
+func loadInstalledPlugins(profileDir string) ([]installedPlugin, error) {
+	if profileDir == "" {
+		return nil, fmt.Errorf("profileDir is required")
 	}
-	path := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	path := filepath.Join(profileDir, "plugins", "installed_plugins.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -249,34 +266,59 @@ func loadInstalledPlugins() ([]installedPlugin, error) {
 		return nil, err
 	}
 
-	// Shape 1: top-level array of plugin objects.
+	// Shape v2 (current Claude Code): {version: int, plugins: map[id][]entry}.
+	// Multiple entries per ID represent successive installs of the same plugin
+	// at different versions; the most recent (by lastUpdated, then installedAt)
+	// is the live one.
+	var v2 struct {
+		Version int                                 `json:"version"`
+		Plugins map[string][]map[string]interface{} `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &v2); err == nil && v2.Version >= 2 && v2.Plugins != nil {
+		out := make([]installedPlugin, 0, len(v2.Plugins))
+		for id, entries := range v2.Plugins {
+			if len(entries) == 0 {
+				continue
+			}
+			pick := entries[len(entries)-1]
+			pickStamp := entryTimestamp(pick)
+			for _, e := range entries[:len(entries)-1] {
+				if entryTimestamp(e).After(pickStamp) {
+					pick = e
+					pickStamp = entryTimestamp(e)
+				}
+			}
+			name, marketplace := splitPluginID(id)
+			version, _ := pick["version"].(string)
+			out = append(out, installedPlugin{Name: name, Marketplace: marketplace, Version: version})
+		}
+		return out, nil
+	}
+
+	// Shape: top-level array of plugin objects.
 	var arr []installedPlugin
 	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
 		return arr, nil
 	}
 
-	// Shape 2: object keyed by plugin ID with metadata values.
+	// Shape: object keyed by plugin ID with metadata values.
 	var obj map[string]struct {
 		Marketplace string `json:"marketplace"`
 		Version     string `json:"version"`
 	}
-	if err := json.Unmarshal(data, &obj); err == nil {
+	if err := json.Unmarshal(data, &obj); err == nil && len(obj) > 0 {
 		out := make([]installedPlugin, 0, len(obj))
 		for id, meta := range obj {
-			name := id
-			marketplace := meta.Marketplace
-			if i := strings.Index(id, "@"); i >= 0 {
-				name = id[:i]
-				if marketplace == "" {
-					marketplace = id[i+1:]
-				}
+			name, marketplace := splitPluginID(id)
+			if meta.Marketplace != "" {
+				marketplace = meta.Marketplace
 			}
 			out = append(out, installedPlugin{Name: name, Marketplace: marketplace, Version: meta.Version})
 		}
 		return out, nil
 	}
 
-	// Shape 3: object with an "installs" or "plugins" array.
+	// Shape: object with an "installs" or "plugins" array.
 	var wrap struct {
 		Installs []installedPlugin `json:"installs"`
 		Plugins  []installedPlugin `json:"plugins"`
@@ -291,4 +333,22 @@ func loadInstalledPlugins() ([]installedPlugin, error) {
 	}
 
 	return nil, nil
+}
+
+func splitPluginID(id string) (name, marketplace string) {
+	if i := strings.Index(id, "@"); i >= 0 {
+		return id[:i], id[i+1:]
+	}
+	return id, ""
+}
+
+func entryTimestamp(e map[string]interface{}) time.Time {
+	for _, key := range []string{"lastUpdated", "installedAt"} {
+		if s, ok := e[key].(string); ok && s != "" {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Time{}
 }
