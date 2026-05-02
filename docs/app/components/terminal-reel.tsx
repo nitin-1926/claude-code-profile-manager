@@ -117,3 +117,122 @@ export function TerminalReel({
               pausedRef.current = true;
             }
           }
+        },
+        { threshold: 0.01 },
+      );
+      io.observe(node);
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        pausedRef.current = true;
+      } else if (node) {
+        // Only resume when the reel is still on-screen.
+        const rect = node.getBoundingClientRect();
+        const onScreen =
+          rect.bottom > 0 && rect.top < window.innerHeight;
+        if (onScreen) {
+          pausedRef.current = false;
+          resumeSignal.current?.();
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    async function playOnce() {
+      if (cancelled) return;
+      setVisibleCount(0);
+      setTypedText("");
+      await sleep(startDelay);
+      if (cancelled) return;
+
+      for (let i = 0; i < script.length; i++) {
+        if (cancelled) return;
+        await waitWhilePaused();
+        if (cancelled) return;
+
+        const step = script[i];
+
+        if (step.kind === "typed") {
+          setTypedText("");
+        } else {
+          setTypedText(step.text);
+        }
+        setVisibleCount(i + 1);
+
+        if (step.kind === "typed") {
+          for (let j = 1; j <= step.text.length; j++) {
+            if (cancelled) return;
+            await waitWhilePaused();
+            if (cancelled) return;
+            setTypedText(step.text.slice(0, j));
+            await sleep(38 + Math.random() * 32);
+          }
+        }
+
+        await sleep(step.afterMs ?? 280);
+      }
+    }
+
+    (async () => {
+      while (!cancelled) {
+        await playOnce();
+        if (!loop || cancelled) break;
+        await sleep(loopPauseMs);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (activeTimer) {
+        clearTimeout(activeTimer);
+        activeTimer = null;
+      }
+      io?.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [script, startDelay, loop, loopPauseMs]);
+
+  const reserved = Math.max(minLines ?? script.length, script.length);
+  const rows: React.ReactNode[] = [];
+
+  for (let i = 0; i < reserved; i++) {
+    const step = script[i];
+    const isCurrent = i === visibleCount - 1;
+
+    if (!step || i >= visibleCount) {
+      rows.push(
+        <div key={i} aria-hidden="true">
+          &nbsp;
+        </div>,
+      );
+      continue;
+    }
+
+    const text =
+      isCurrent && step.kind === "typed" ? typedText : step.text;
+    const showCursor =
+      isCurrent && step.kind === "typed" && text.length < step.text.length;
+    const cls = colorClass[step.color ?? "fg"];
+
+    rows.push(
+      <div key={i} className={cls}>
+        {step.prompt && (
+          <span className="term-text-accent select-none">
+            {step.prompt}{" "}
+          </span>
+        )}
+        {text}
+        {showCursor && (
+          <span className="terminal-cursor align-middle ml-0.5" />
+        )}
+      </div>,
+    );
+  }
+
+  // The outer wrapper exists only for the IntersectionObserver target. It's
+  // decorative, so it inherits its parent's semantic role. Callers attach
+  // aria-label / role="img" at the surrounding chrome (HeroTerminal) so screen
+  // readers hear one cohesive "demo terminal" description.
+  return <div ref={containerRef}>{rows}</div>;
+}
