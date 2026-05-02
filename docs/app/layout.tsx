@@ -13,60 +13,49 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Setting metadataBase removes the Next.js build-time warning about relative
+// URLs (openGraph.images, twitter.images, etc.) and anchors canonical URLs
+// when per-page generateMetadata exports land.
 export const metadata: Metadata = {
-  title: "ccpm — Claude Code Profile Manager",
+  metadataBase: new URL("https://ccpm.dev"),
+  title: {
+    default: "ccpm — Claude Code Profile Manager",
+    template: "%s — ccpm",
+  },
   description:
     "Run multiple Claude Code accounts in parallel with full isolation. OAuth + API key. Encrypted vault. 100% local.",
+  applicationName: "ccpm",
+  keywords: [
+    "Claude Code",
+    "profile manager",
+    "Anthropic",
+    "CLI",
+    "multi-account",
+  ],
   openGraph: {
+    type: "website",
     title: "ccpm — Claude Code Profile Manager",
     description:
       "Run multiple Claude Code accounts in parallel with full isolation.",
-    url: "https://ccpm.dev",
+    url: "/",
     siteName: "ccpm",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "ccpm — Claude Code Profile Manager",
+      },
+    ],
   },
-};
-
-// Inline script that runs before paint: saved preference, else system
-// (prefers-color-scheme), else dark. Loaded via next/script beforeInteractive.
-const themeInitScript = `
-(function() {
-  function systemOrDark() {
-    try {
-      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-    } catch (e) {
-      return 'dark';
-    }
-  }
-  try {
-    var stored = localStorage.getItem('theme');
-    var theme = stored === 'light' || stored === 'dark' ? stored : systemOrDark();
-    document.documentElement.setAttribute('data-theme', theme);
-  } catch (e) {
-    document.documentElement.setAttribute('data-theme', systemOrDark());
-  }
-})();
-`;
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html
-      lang="en"
-      data-theme="dark"
-      suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-bg text-fg">
-        <Script
-          id="ccpm-theme-init"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{ __html: themeInitScript }}
-        />
-        {children}
-      </body>
-    </html>
-  );
-}
+  twitter: {
+    card: "summary_large_image",
+    title: "ccpm — Claude Code Profile Manager",
+    description:
+      "Run multiple Claude Code accounts in parallel with full isolation.",
+    images: ["/opengraph-image"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
