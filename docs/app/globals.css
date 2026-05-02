@@ -486,3 +486,492 @@ code:not(pre code):not(.code-block code) {
   inset: 0;
   pointer-events: none;
   border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0) 40%
+  );
+}
+
+[data-theme="light"] .term-window::after {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 255, 255, 0) 40%
+  );
+}
+
+.term-window__chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--c-code-border);
+  background: var(--c-code-chrome);
+}
+
+.term-window__dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 9999px;
+}
+
+/* Theme-aware terminal text tokens used by hero <T /> component.
+   The base mix is suitable for the dark-mode terminal (#8c8b88 on #0e0e0e ≈
+   5.8:1). Light mode needs more contrast — the cream background is close to
+   the code-fg, so 60% mix falls to ~3.7:1. Override to 82% for light theme so
+   11px muted lines in the hero terminals clear WCAG AA. */
+.term-text-fg {
+  color: var(--c-code-fg);
+}
+.term-text-muted {
+  color: color-mix(in oklab, var(--c-code-fg) 62%, transparent);
+}
+[data-theme="light"] .term-text-muted {
+  color: color-mix(in oklab, var(--c-code-fg) 82%, transparent);
+}
+.term-text-accent {
+  color: var(--c-code-prompt);
+}
+.term-text-success {
+  color: #35c46a;
+}
+[data-theme="light"] .term-text-success {
+  color: #15803d;
+}
+
+/* Boot-up: slight scale + fade for each terminal window as it appears */
+@keyframes term-boot {
+  0% { opacity: 0; transform: translateY(8px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.term-boot {
+  animation: term-boot 0.7s var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .term-boot {
+    animation: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Prose (docs body)
+   ───────────────────────────────────────────────────────────────────────── */
+
+.prose-doc {
+  color: var(--c-fg);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+.prose-doc :where(h2):not(:where(.not-prose, .not-prose *)) {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  line-height: 1.25;
+  margin-top: 3.25rem;
+  margin-bottom: 0.875rem;
+  scroll-margin-top: 5rem;
+  color: var(--c-fg);
+}
+.prose-doc :where(h3):not(:where(.not-prose, .not-prose *)) {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+  margin-top: 1.875rem;
+  margin-bottom: 0.625rem;
+  scroll-margin-top: 5rem;
+  color: var(--c-fg);
+}
+.prose-doc :where(p):not(:where(.not-prose, .not-prose *)) {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: var(--c-fg-muted);
+  margin: 0.875rem 0;
+}
+.prose-doc :where(strong):not(:where(.not-prose, .not-prose *)) {
+  color: var(--c-fg);
+  font-weight: 600;
+}
+.prose-doc :where(a):not(:where(.not-prose, .not-prose *)) {
+  color: var(--c-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.prose-doc :where(a):not(:where(.not-prose, .not-prose *)):hover {
+  color: var(--c-accent-dark);
+  text-decoration-thickness: 2px;
+}
+.prose-doc :where(ul):not(:where(.not-prose, .not-prose *)) {
+  margin: 0.875rem 0;
+  padding-left: 1.25rem;
+  list-style: disc;
+  color: var(--c-fg-muted);
+}
+.prose-doc :where(ol):not(:where(.not-prose, .not-prose *)) {
+  margin: 0.875rem 0;
+  padding-left: 1.25rem;
+  list-style: decimal;
+  color: var(--c-fg-muted);
+}
+.prose-doc :where(li):not(:where(.not-prose, .not-prose *)) {
+  margin: 0.3rem 0;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+.prose-doc :where(ol > li):not(:where(.not-prose, .not-prose *))::marker {
+  color: var(--c-accent);
+  font-weight: 600;
+}
+
+/* Section divider between H2 groups in prose */
+.prose-doc :where(h2):not(:where(.not-prose, .not-prose *))::before {
+  content: "";
+  display: block;
+  width: 2.5rem;
+  height: 1px;
+  background: var(--c-accent);
+  opacity: 0.5;
+  margin-bottom: 1rem;
+}
+
+.heading-anchor {
+  opacity: 0;
+  margin-left: 0.5rem;
+  color: var(--c-fg-subtle);
+  transition: opacity var(--dur-fast) var(--ease-out);
+  text-decoration: none !important;
+}
+.prose-doc h2:hover .heading-anchor,
+.prose-doc h3:hover .heading-anchor,
+/* Keyboard users: reveal the anchor on focus-within (when the <a> inside
+   the heading is the tab target) and when the anchor itself has
+   focus-visible. Without these rules the deep-link affordance is
+   mouse-only. */
+.prose-doc h2:focus-within .heading-anchor,
+.prose-doc h3:focus-within .heading-anchor,
+.heading-anchor:focus-visible {
+  opacity: 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Surfaces & raised cards (glossy bento tiles)
+   ───────────────────────────────────────────────────────────────────────── */
+
+.surface-card {
+  position: relative;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    background var(--dur-base) var(--ease-out);
+}
+
+.surface-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--c-gloss);
+  opacity: 0.8;
+}
+
+.surface-card > * {
+  position: relative;
+}
+
+.surface-card:hover {
+  border-color: var(--c-border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-raised);
+}
+
+[data-theme="light"] .surface-card {
+  background: var(--c-surface-raised);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Entrance animations
+   ───────────────────────────────────────────────────────────────────────── */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.55s var(--ease-out) both;
+}
+.animate-fade-in {
+  animation: fade-in 0.5s var(--ease-out) both;
+}
+.animate-scale-in {
+  animation: scale-in 0.5s var(--ease-out) both;
+}
+
+.stagger-1 { animation-delay: 0ms; }
+.stagger-2 { animation-delay: 70ms; }
+.stagger-3 { animation-delay: 140ms; }
+.stagger-4 { animation-delay: 210ms; }
+.stagger-5 { animation-delay: 280ms; }
+.stagger-6 { animation-delay: 350ms; }
+.stagger-7 { animation-delay: 420ms; }
+.stagger-8 { animation-delay: 490ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-scale-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Gradient line separator
+   ───────────────────────────────────────────────────────────────────────── */
+
+.gradient-line {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--c-accent-dark) 30%,
+    var(--c-accent-light) 50%,
+    var(--c-accent-dark) 70%,
+    transparent 100%
+  );
+  opacity: 0.35;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Scroll-reveal (view-timeline with fallback)
+   ───────────────────────────────────────────────────────────────────────── */
+
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: reveal-up 0.7s var(--ease-out) both;
+  animation-delay: 0ms;
+}
+
+@supports (animation-timeline: view()) {
+  .reveal {
+    animation: reveal-up linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 30%;
+  }
+}
+
+.reveal-1 { animation-delay: 50ms; }
+.reveal-2 { animation-delay: 120ms; }
+.reveal-3 { animation-delay: 190ms; }
+.reveal-4 { animation-delay: 260ms; }
+.reveal-5 { animation-delay: 330ms; }
+.reveal-6 { animation-delay: 400ms; }
+
+/* Row entrance (used inside the anatomy terminal) */
+@keyframes slide-in-x {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.anatomy-row {
+  animation: slide-in-x 0.45s var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .anatomy-row {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Surface card — accent border glow on hover + inner icon micro-motion
+   ───────────────────────────────────────────────────────────────────────── */
+
+.surface-card:hover {
+  box-shadow:
+    var(--shadow-raised),
+    0 0 0 1px var(--c-accent-muted),
+    0 12px 32px -10px color-mix(in oklab, var(--c-accent) 25%, transparent);
+}
+
+/* Nudge the icon-chip on hover for life */
+.surface-card:hover .icon-chip {
+  transform: translateY(-1px) rotate(-3deg);
+  background: color-mix(in oklab, var(--c-accent) 18%, transparent);
+}
+
+.icon-chip {
+  transition:
+    transform var(--dur-base) var(--ease-spring),
+    background var(--dur-base) var(--ease-out);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Button press feedback + primary sheen on hover
+   ───────────────────────────────────────────────────────────────────────── */
+
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+  will-change: transform;
+  transition:
+    transform var(--dur-fast) var(--ease-spring),
+    opacity var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.btn-primary:active {
+  transform: scale(0.97);
+}
+
+.btn-primary::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.28),
+    transparent
+  );
+  transform: skewX(-20deg);
+  transition: left 0.6s var(--ease-out);
+  pointer-events: none;
+}
+
+.btn-primary:hover::before {
+  left: 150%;
+}
+
+.btn-secondary:active {
+  transform: scale(0.98);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Link underline sweep
+   ───────────────────────────────────────────────────────────────────────── */
+
+.prose-doc :where(a):not(:where(.not-prose, .not-prose *)) {
+  background-image: linear-gradient(var(--c-accent-dark), var(--c-accent-dark));
+  background-size: 0 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-size var(--dur-base) var(--ease-out);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Pill / chip
+   ───────────────────────────────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-fg-muted);
+}
+
+.pill--accent {
+  border-color: var(--c-accent-muted);
+  background: var(--c-accent-soft);
+  color: var(--c-accent);
+}
+
+/* Small live-dot */
+.pulse-dot {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--c-accent);
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  background: var(--c-accent);
+  opacity: 0.35;
+  animation: pulse 2s var(--ease-out) infinite;
+}
+@keyframes pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  80%, 100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
