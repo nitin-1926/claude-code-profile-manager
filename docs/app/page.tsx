@@ -1,8 +1,10 @@
 import {
   ArrowUpRight,
   BookOpenCheck,
+  Braces,
   Code2,
   EyeOff,
+  Folder,
   GitFork,
   HardDrive,
   KeyRound,
@@ -11,6 +13,7 @@ import {
   MessageSquare,
   Plug,
   ShieldCheck,
+  Sparkles,
   Star,
   UserCheck,
   Zap,
@@ -19,84 +22,140 @@ import { Nav } from "./components/nav";
 import { Footer } from "./components/footer";
 import { Eyebrow } from "./components/eyebrow";
 import { Button } from "./components/button";
-import { Tabs } from "./components/tabs";
 import { CodeBlock } from "./components/code-block";
 import { BentoTile } from "./components/bento-tile";
 import { DotGrid, AccentOrb } from "./components/dot-grid";
+import { InstallTabs } from "./components/install-tabs";
+import {
+  TerminalReel,
+  type ReelStep,
+} from "./components/terminal-reel";
 import { VERSION_TAG } from "@/lib/version";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Mini terminal for hero showcase
+   Hero terminal windows — animated scripts inside a fixed-height frame
    ───────────────────────────────────────────────────────────────────────── */
-function MiniTerminal({
+
+function HeroTerminal({
   title,
-  children,
+  script,
+  startDelay = 0,
+  minLines = 8,
   className = "",
-  delay = 0,
+  dim = false,
+  ariaLabel,
 }: {
   title: string;
-  children: React.ReactNode;
+  script: ReelStep[];
+  startDelay?: number;
+  minLines?: number;
   className?: string;
-  delay?: number;
+  dim?: boolean;
+  /** Accessible summary of what the animation demonstrates. The terminal is
+   *  decorative; without this a screen reader hears disjointed fragments
+   *  ("ccpm add personal", "→ OAuth · browser opened", …) with no context. */
+  ariaLabel?: string;
 }) {
   return (
     <div
-      className={`rounded-xl overflow-hidden border border-[color:var(--c-code-border)] bg-[color:var(--c-code-bg)] shadow-2xl shadow-black/40 animate-fade-up accent-border-glow ${className}`}
-      style={{ animationDelay: `${delay}ms` }}
+      role="img"
+      aria-label={ariaLabel ?? `Demo terminal: ${title}`}
+      className={`term-window term-boot ${className} ${dim ? "opacity-70" : ""}`}
     >
-      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[color:var(--c-code-border)] bg-black/40">
-        <span className="w-2.5 h-2.5 rounded-full bg-[#FF5F56]" />
-        <span className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E]" />
-        <span className="w-2.5 h-2.5 rounded-full bg-[#27C93F]" />
-        <span className="ml-2 text-[10px] text-zinc-500 font-mono truncate">
+      <div className="term-window__chrome" aria-hidden="true">
+        <span className="term-window__dot bg-[#ff5f56]" />
+        <span className="term-window__dot bg-[#ffbd2e]" />
+        <span className="term-window__dot bg-[#27c93f]" />
+        <span className="ml-2 text-[10px] term-text-muted font-mono truncate">
           {title}
         </span>
       </div>
-      <div className="px-4 py-3 font-mono text-[11px] leading-[1.7] min-h-0">
-        {children}
+      <div
+        className="px-4 py-3 font-mono text-[11px] leading-[1.8]"
+        aria-hidden="true"
+      >
+        <TerminalReel
+          script={script}
+          startDelay={startDelay}
+          minLines={minLines}
+          loop
+        />
       </div>
     </div>
   );
 }
 
-function T({
-  prompt,
-  color = "fg",
-  children,
-}: {
-  prompt?: boolean;
-  color?: "fg" | "muted" | "accent" | "success";
-  children: React.ReactNode;
-}) {
-  const c = {
-    fg: "text-zinc-100",
-    muted: "text-zinc-400",
-    accent: "text-[#d77757]",
-    success: "text-green-400",
-  };
-  return (
-    <div className={c[color]}>
-      {prompt && <span className="text-[#d77757] select-none">$ </span>}
-      {children}
-    </div>
-  );
-}
+/* ─── Scripts: each terminal runs a different real-world scenario ───── */
+
+const personalScript: ReelStep[] = [
+  { text: "ccpm add personal", kind: "typed", prompt: "$", afterMs: 550 },
+  {
+    text: "→ OAuth · browser opened",
+    kind: "instant",
+    afterMs: 700,
+    color: "muted",
+  },
+  {
+    text: "✓ personal authenticated",
+    kind: "instant",
+    afterMs: 1200,
+    color: "success",
+  },
+];
+
+const workScript: ReelStep[] = [
+  { text: "ccpm add work", kind: "typed", prompt: "$", afterMs: 500 },
+  {
+    text: "Anthropic API key: ************",
+    kind: "instant",
+    afterMs: 700,
+    color: "muted",
+  },
+  {
+    text: "✓ work authenticated (api key)",
+    kind: "instant",
+    afterMs: 1200,
+    color: "success",
+  },
+];
+
+const stagingScript: ReelStep[] = [
+  { text: "ccpm list", kind: "typed", prompt: "$", afterMs: 450 },
+  {
+    text: "personal · work · staging ★",
+    kind: "instant",
+    afterMs: 700,
+    color: "muted",
+  },
+  { text: "ccpm run staging", kind: "typed", prompt: "$", afterMs: 500 },
+  {
+    text: "→ activated (mcp: aws, sentry)",
+    kind: "instant",
+    afterMs: 1200,
+    color: "success",
+  },
+];
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Hero: left-aligned text + 3 diagonal terminals on right
+   Hero
    ───────────────────────────────────────────────────────────────────────── */
 function Hero() {
   return (
-    <section className="relative pt-20 pb-16 px-6 overflow-hidden">
-      <DotGrid className="opacity-60" />
-      <AccentOrb className="top-0 right-[-15%] w-[700px] h-[700px]" />
+    <section className="relative pt-16 pb-14 px-6 overflow-hidden">
+      <DotGrid />
+      <AccentOrb className="top-[-80px] right-[-15%] w-[640px] h-[640px]" />
 
-      <div className="relative max-w-6xl mx-auto grid lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      <div className="relative max-w-6xl mx-auto grid lg:grid-cols-12 gap-10 lg:gap-8 items-center">
         {/* Left: text content */}
         <div className="lg:col-span-6">
-          <div className="mb-5">
-            <Eyebrow>{`// ${VERSION_TAG} . open source . cross-platform`}</Eyebrow>
+          <div className="mb-4 flex items-center gap-2">
+            <span className="pill pill--accent">
+              <span className="pulse-dot" />
+              <span>{VERSION_TAG}</span>
+            </span>
+            <span className="pill">open source · MIT</span>
           </div>
+
           <h1
             className="font-semibold tracking-[-0.025em] leading-[1.05] text-fg"
             style={{ fontSize: "var(--t-display)" }}
@@ -105,53 +164,24 @@ function Hero() {
             <br />
             <span className="accent-gradient-text">In parallel.</span>
           </h1>
+
           <p
-            className="mt-6 text-fg-muted leading-relaxed max-w-lg"
+            className="mt-5 text-fg-muted leading-relaxed max-w-lg"
             style={{ fontSize: "var(--t-body-lg)" }}
           >
-            Personal account in one terminal, work account in another. Each with
-            its own credentials, MCP servers, settings, and memory. Fully
-            isolated. One command to switch.
+            Personal in one terminal, work in another. Each with its own
+            credentials, MCP servers, settings, and memory. Fully isolated.
+            One command to switch.
           </p>
 
-          <div className="mt-8 max-w-md">
-            <Tabs
-              tabs={[
-                {
-                  id: "npm",
-                  label: "npm",
-                  content: (
-                    <CodeBlock code="npm i -g @ngcodes/ccpm" lang="bash" />
-                  ),
-                },
-                {
-                  id: "curl",
-                  label: "curl",
-                  content: (
-                    <CodeBlock
-                      code="curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh"
-                      lang="bash"
-                    />
-                  ),
-                },
-                {
-                  id: "go",
-                  label: "go",
-                  content: (
-                    <CodeBlock
-                      code="go install github.com/nitin-1926/ccpm@latest"
-                      lang="bash"
-                    />
-                  ),
-                },
-              ]}
-            />
+          <div className="mt-7 max-w-md">
+            <InstallTabs />
           </div>
 
-          <div className="mt-8 flex flex-wrap items-center gap-3">
+          <div className="mt-7 flex flex-wrap items-center gap-2.5">
             <Button href="/docs" variant="primary" size="md">
               Get started
-              <ArrowUpRight size={15} strokeWidth={2} />
+              <ArrowUpRight size={14} strokeWidth={2.25} />
             </Button>
             <Button
               href="https://github.com/nitin-1926/claude-code-profile-manager"
@@ -166,51 +196,54 @@ function Hero() {
 
         {/* Right: 3 terminals in a diagonal cascade */}
         <div className="lg:col-span-6 relative min-h-[420px] hidden lg:block">
-          {/* Terminal 1: top-left of the group */}
           <div className="absolute top-0 left-0 w-[85%] z-30">
-            <MiniTerminal title="terminal 1 : personal" delay={200}>
-              <T prompt>ccpm run personal</T>
-              <T color="accent">→ activated personal (oauth)</T>
-              <T color="fg">Claude Code v1.0</T>
-              <T color="muted">nitin@gmail.com | mcp: github, slack</T>
-              <T color="fg">&gt; Review my PR #42...</T>
-            </MiniTerminal>
+            <HeroTerminal
+              title="terminal · personal"
+              script={personalScript}
+              startDelay={400}
+              minLines={4}
+              ariaLabel="Demo: ccpm add personal — authenticate via OAuth"
+            />
           </div>
 
-          {/* Terminal 2: center-right, offset down */}
           <div className="absolute top-[140px] left-[15%] w-[85%] z-20">
-            <MiniTerminal title="terminal 2 : work" delay={450}>
-              <T prompt>ccpm run work</T>
-              <T color="accent">→ activated work (api key)</T>
-              <T color="fg">Claude Code v1.0</T>
-              <T color="muted">sk-ant-...7f2k | mcp: jira, datadog</T>
-              <T color="fg">&gt; Debug the auth service...</T>
-            </MiniTerminal>
+            <HeroTerminal
+              title="terminal · work"
+              script={workScript}
+              startDelay={1600}
+              minLines={4}
+              ariaLabel="Demo: ccpm add work — authenticate via API key"
+            />
           </div>
 
-          {/* Terminal 3: bottom-right, peeking below */}
-          <div className="absolute top-[280px] left-[8%] w-[80%] z-10 opacity-60">
-            <MiniTerminal title="terminal 3 : staging" delay={650}>
-              <T prompt>ccpm run staging</T>
-              <T color="accent">→ activated staging (api key)</T>
-              <T color="fg">Claude Code v1.0</T>
-              <T color="muted">sk-ant-...9x1m | mcp: aws, sentry</T>
-            </MiniTerminal>
+          <div className="absolute top-[280px] left-[8%] w-[80%] z-10">
+            <HeroTerminal
+              title="terminal · staging"
+              script={stagingScript}
+              startDelay={2800}
+              minLines={4}
+              dim
+              ariaLabel="Demo: ccpm list, then ccpm run staging"
+            />
           </div>
         </div>
 
         {/* Mobile: show terminals stacked */}
         <div className="lg:hidden space-y-3">
-          <MiniTerminal title="terminal 1 : personal" delay={200}>
-            <T prompt>ccpm run personal</T>
-            <T color="accent">→ activated personal (oauth)</T>
-            <T color="muted">nitin@gmail.com | mcp: github, slack</T>
-          </MiniTerminal>
-          <MiniTerminal title="terminal 2 : work" delay={400}>
-            <T prompt>ccpm run work</T>
-            <T color="accent">→ activated work (api key)</T>
-            <T color="muted">sk-ant-...7f2k | mcp: jira, datadog</T>
-          </MiniTerminal>
+          <HeroTerminal
+            title="terminal · personal"
+            script={personalScript}
+            startDelay={400}
+            minLines={4}
+            ariaLabel="Demo: ccpm add personal — authenticate via OAuth"
+          />
+          <HeroTerminal
+            title="terminal · work"
+            script={workScript}
+            startDelay={1600}
+            minLines={4}
+            ariaLabel="Demo: ccpm add work — authenticate via API key"
+          />
         </div>
       </div>
     </section>
@@ -218,388 +251,159 @@ function Hero() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Features: bento grid with stagger + gradient accent border
+   Tiny visual payloads used inside bento tiles
+   ───────────────────────────────────────────────────────────────────────── */
+
+function ParallelCodeSnippet() {
+  return (
+    <pre className="font-mono text-[11px] leading-6 text-fg-muted p-3.5 rounded-md bg-bg-subtle border border-border-subtle">
+      <span className="text-accent">$</span> ccpm run personal{"  "}
+      <span className="opacity-50"># terminal 1</span>
+      {"\n"}
+      <span className="text-accent">$</span> ccpm run work{"      "}
+      <span className="opacity-50"># terminal 2</span>
+      {"\n"}
+      <span className="text-accent">$</span> ccpm run staging{"   "}
+      <span className="opacity-50"># terminal 3</span>
+    </pre>
+  );
+}
+
+function AuthSplit() {
+  return (
+    <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+      <div className="rounded-md border border-border-subtle bg-bg-subtle p-3">
+        <div className="text-accent text-[10px] uppercase tracking-[0.1em] font-semibold">
+          oauth
+        </div>
+        <div className="mt-2 text-fg-muted">browser login</div>
+        <div className="text-fg-muted">token in keychain</div>
+      </div>
+      <div className="rounded-md border border-border-subtle bg-bg-subtle p-3">
+        <div className="text-accent text-[10px] uppercase tracking-[0.1em] font-semibold">
+          api key
+        </div>
+        <div className="mt-2 text-fg-muted">sk-ant-…7f2k</div>
+        <div className="text-fg-muted">per-profile secret</div>
+      </div>
+    </div>
+  );
+}
+
+function McpStack() {
+  const items = [
+    { name: "github", scope: "personal" },
+    { name: "jira", scope: "work" },
+    { name: "datadog", scope: "work" },
+    { name: "aws", scope: "staging" },
+  ];
+  return (
+    <div className="space-y-1.5 font-mono text-[11px]">
+      {items.map((i) => (
+        <div
+          key={i.name}
+          className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-subtle px-2.5 py-1.5"
+        >
+          <span className="flex items-center gap-2 text-fg">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+            {i.name}
+          </span>
+          <span className="text-fg-subtle">{i.scope}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function VaultBadge() {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-subtle p-3">
+      <div className="flex items-center justify-between font-mono text-[11px]">
+        <span className="text-fg-muted">~/.ccpm/vault/</span>
+        <span className="pill pill--accent">AES-256-GCM</span>
+      </div>
+      <div className="mt-2.5 grid grid-cols-6 gap-1">
+        {Array.from({ length: 18 }).map((_, i) => (
+          <span
+            key={i}
+            className="h-1.5 rounded-sm bg-accent/80"
+            style={{ opacity: 0.25 + (i % 6) * 0.12 }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IdeCard() {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-subtle p-3 font-mono text-[11px]">
+      <div className="flex items-center gap-2 text-fg">
+        <Code2 size={12} strokeWidth={1.75} className="text-accent" />
+        VS Code
+        <span className="ml-auto text-fg-subtle">default: work</span>
+      </div>
+      <div className="mt-2.5 text-fg-muted">ccpm set-default work</div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Features: bento grid
    ───────────────────────────────────────────────────────────────────────── */
 function Features() {
   return (
-    <section id="features" className="relative py-24 px-6">
-      <div className="gradient-line max-w-6xl mx-auto mb-24" />
+    <section id="features" className="relative py-20 px-6">
+      <div className="gradient-line max-w-6xl mx-auto mb-20" />
       <div className="max-w-6xl mx-auto">
-        <div className="mb-12 max-w-2xl">
+        <div className="mb-10 max-w-2xl reveal">
           <Eyebrow>{"// features"}</Eyebrow>
           <h2
-            className="mt-3 font-semibold tracking-tight text-fg"
+            className="mt-2.5 font-semibold tracking-tight text-fg"
             style={{ fontSize: "var(--t-h2)" }}
           >
             Built for developers who juggle accounts.
           </h2>
-          <p className="mt-3 text-fg-muted leading-relaxed">
-            One binary. Zero dependencies. Profile isolation as a first-class
-            primitive, not a workaround.
+          <p className="mt-2 text-fg-muted leading-relaxed text-[0.9375rem]">
+            Every profile is a real filesystem sandbox — its own credentials,
+            its own MCPs, its own memory. Switch with a single command.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 lg:grid-rows-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3.5 auto-rows-[minmax(200px,auto)]">
           <BentoTile
-            className="lg:col-span-3 lg:row-span-1 animate-fade-up stagger-1"
+            className="md:col-span-4 reveal reveal-1"
+            eyebrow="core"
             title="True parallel sessions"
             description="Run personal and work Claude Code instances in separate terminals simultaneously. Each session has its own config, memory, and MCP servers. No leaking, no conflicts."
             icon={Layers}
           >
-            <pre className="font-mono text-[11px] leading-6 text-fg-muted mt-2 p-3 rounded-lg bg-bg/50 border border-border">
-              <span className="text-[#d77757]">$</span> ccpm run personal{"  "}
-              <span className="opacity-50"># terminal 1</span>
-              {"\n"}
-              <span className="text-[#d77757]">$</span> ccpm run work{"      "}
-              <span className="opacity-50"># terminal 2</span>
-            </pre>
+            <ParallelCodeSnippet />
           </BentoTile>
 
           <BentoTile
-            className="lg:col-span-2 lg:row-span-1 animate-fade-up stagger-2"
-            title="Encrypted vault"
-            description="AES-256-GCM encrypted credential backups. Master key stored in your OS keychain. Migrate machines without exposing secrets."
-            icon={KeyRound}
-          />
-
-          <BentoTile
-            className="lg:col-span-1 lg:row-span-2 animate-fade-up stagger-3"
+            className="md:col-span-2 reveal reveal-2"
+            eyebrow="auth"
             title="Both auth modes"
-            description="OAuth login or API key per profile. Mix and match."
+            description="OAuth login or API key per profile. Mix and match across profiles."
             icon={Zap}
           >
-            <div className="mt-3 space-y-2.5 font-mono text-[11px]">
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#d77757]" />
-                <span className="text-fg-muted">oauth login</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#d77757]" />
-                <span className="text-fg-muted">api key</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#d77757]" />
-                <span className="text-fg-muted">per-profile</span>
-              </div>
-            </div>
+            <AuthSplit />
           </BentoTile>
 
           <BentoTile
-            className="lg:col-span-2 lg:row-span-1 animate-fade-up stagger-4"
+            className="md:col-span-2 reveal reveal-3"
+            eyebrow="mcp"
             title="Isolated MCP servers"
-            description="Different MCP configurations per profile. Work Jira stays in work, personal GitHub stays in personal."
+            description="Different MCP configurations per profile. Work Jira stays in work."
             icon={Plug}
-          />
+          >
+            <McpStack />
+          </BentoTile>
 
           <BentoTile
-            className="lg:col-span-2 lg:row-span-1 animate-fade-up stagger-5"
-            title="IDE-aware defaults"
-            description="Set the active profile for VS Code with one command. The Claude extension picks up the right credentials."
-            icon={Code2}
-          />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   How it works
-   ───────────────────────────────────────────────────────────────────────── */
-const steps = [
-  {
-    n: "01",
-    title: "Create your profiles",
-    desc: "ccpm add creates an isolated directory for each account under ~/.ccpm/profiles/. Every profile has its own credentials, settings, memory, and MCP config.",
-    code: `$ ccpm add personal
-Choose authentication method:
-  1) OAuth (browser login)
-  2) API key
-> 1
-✓ profile "personal" authenticated
-
-$ ccpm add work
-> 2
-Enter your Anthropic API key: sk-ant-...
-✓ profile "work" authenticated`,
-  },
-  {
-    n: "02",
-    title: "Run them side by side",
-    desc: "ccpm run sets CLAUDE_CONFIG_DIR to the right profile directory and launches Claude Code. Open two terminals, run two profiles. They never interfere.",
-    code: `# Terminal 1
-$ ccpm run personal
-→ activated personal (oauth, mcp: github)
-Welcome to Claude Code
-
-# Terminal 2
-$ ccpm run work
-→ activated work (api key, mcp: jira)
-Welcome to Claude Code`,
-  },
-  {
-    n: "03",
-    title: "Manage from one place",
-    desc: "See all profiles, their auth status, and the IDE default. One CLI to manage credentials, switch contexts, and keep everything organized.",
-    code: `$ ccpm list
-NAME       AUTH      STATUS
-personal   oauth     ✓ nitin@gmail.com
-work       api_key   ✓ sk-ant-...7f2k   ★
-
-$ ccpm set-default work
-✓ profile "work" is now the VS Code default`,
-  },
-];
-
-async function HowItWorks() {
-  return (
-    <section className="relative py-24 px-6 bg-bg-subtle">
-      <div className="gradient-line max-w-6xl mx-auto mb-24" />
-      <div className="max-w-6xl mx-auto">
-        <div className="mb-16 max-w-2xl">
-          <Eyebrow>{"// how it works"}</Eyebrow>
-          <h2
-            className="mt-3 font-semibold tracking-tight text-fg"
-            style={{ fontSize: "var(--t-h2)" }}
-          >
-            Three steps. No daemons, no patches.
-          </h2>
-          <p className="mt-3 text-fg-muted leading-relaxed">
-            Built on a single official primitive: <code>CLAUDE_CONFIG_DIR</code>
-            . That is it.
-          </p>
-        </div>
-
-        <div className="space-y-20">
-          {steps.map((step, i) => {
-            const reverse = i % 2 === 1;
-            return (
-              <div
-                key={step.n}
-                className={`grid lg:grid-cols-12 gap-8 lg:gap-12 items-center ${
-                  reverse ? "lg:[&>*:first-child]:col-start-7" : ""
-                }`}
-              >
-                <div className={`lg:col-span-6 ${reverse ? "lg:order-2" : ""}`}>
-                  <div className="font-mono text-[2.5rem] font-semibold leading-none mb-4 accent-gradient-text inline-block opacity-40">
-                    {step.n}
-                  </div>
-                  <h3 className="text-2xl font-semibold tracking-tight text-fg mb-3">
-                    {step.title}
-                  </h3>
-                  <p className="text-fg-muted leading-relaxed">{step.desc}</p>
-                </div>
-                <div className={`lg:col-span-6 ${reverse ? "lg:order-1" : ""}`}>
-                  <CodeBlock code={step.code} lang="bash" />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Privacy: visually distinct centered layout with gradient border card
-   ───────────────────────────────────────────────────────────────────────── */
-const privacyPoints = [
-  { icon: EyeOff, text: "Zero telemetry, analytics, or tracking" },
-  { icon: UserCheck, text: "No data collection. We do not know you exist" },
-  {
-    icon: KeyRound,
-    text: "API keys stored in your OS keychain, never plaintext",
-  },
-  { icon: ShieldCheck, text: "Vault backups encrypted with AES-256-GCM" },
-  { icon: HardDrive, text: "Everything lives in ~/.ccpm/ on your machine" },
-  {
-    icon: BookOpenCheck,
-    text: "Fully open source. MIT licensed. Audit the code",
-  },
-];
-
-function Privacy() {
-  return (
-    <section id="privacy" className="relative py-24 px-6">
-      <div className="gradient-line max-w-6xl mx-auto mb-24" />
-      <div className="max-w-3xl mx-auto text-center">
-        <Eyebrow>{"// privacy"}</Eyebrow>
-        <h2
-          className="mt-3 font-semibold tracking-tight text-fg"
-          style={{ fontSize: "var(--t-h2)" }}
-        >
-          100% local. 100% private.
-        </h2>
-        <p className="mt-3 text-fg-muted leading-relaxed mb-12">
-          ccpm never makes network requests. Your credentials, config, and data
-          stay on your machine. Always.
-        </p>
-
-        <div className="relative p-[1px] rounded-2xl bg-gradient-to-br from-[var(--c-accent-light)] via-[var(--c-accent)] to-[var(--c-accent-dark)] opacity-90">
-          <div className="rounded-2xl bg-surface p-8 sm:p-10">
-            <Lock
-              size={36}
-              strokeWidth={1.25}
-              className="text-accent mx-auto mb-8 opacity-70"
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-6 text-left max-w-2xl mx-auto">
-              {privacyPoints.map((p, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-3 animate-fade-up"
-                  style={{ animationDelay: `${i * 60}ms` }}
-                >
-                  <div className="mt-0.5 shrink-0 w-7 h-7 rounded-md bg-accent-muted flex items-center justify-center">
-                    <p.icon
-                      size={14}
-                      strokeWidth={1.75}
-                      className="text-accent"
-                    />
-                  </div>
-                  <p className="text-sm text-fg-muted leading-relaxed">
-                    {p.text}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Community
-   ───────────────────────────────────────────────────────────────────────── */
-function Community() {
-  return (
-    <section className="relative py-24 px-6 bg-bg-subtle">
-      <div className="gradient-line max-w-6xl mx-auto mb-24" />
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-14">
-          <Eyebrow>{"// community"}</Eyebrow>
-          <h2
-            className="mt-3 font-semibold tracking-tight text-fg"
-            style={{ fontSize: "var(--t-h2)" }}
-          >
-            Built in the open. Actively maintained.
-          </h2>
-          <p className="mt-3 text-fg-muted leading-relaxed max-w-xl mx-auto">
-            ccpm is a solo project I use every day. If it saves you time too, I
-            would love your support.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <a
-            href="https://github.com/nitin-1926/claude-code-profile-manager"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex flex-col items-center gap-3 p-8 rounded-xl border border-border bg-surface hover:border-accent/50 hover:bg-surface-hover transition-all duration-200"
-          >
-            <Star
-              size={28}
-              strokeWidth={1.5}
-              className="text-accent group-hover:scale-110 transition-transform"
-            />
-            <span className="font-semibold text-fg">Star on GitHub</span>
-            <span className="text-xs text-fg-muted text-center">
-              Stars help others discover ccpm.
-            </span>
-          </a>
-
-          <a
-            href="https://github.com/nitin-1926/claude-code-profile-manager/issues"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex flex-col items-center gap-3 p-8 rounded-xl border border-border bg-surface hover:border-accent/50 hover:bg-surface-hover transition-all duration-200"
-          >
-            <MessageSquare
-              size={28}
-              strokeWidth={1.5}
-              className="text-accent group-hover:scale-110 transition-transform"
-            />
-            <span className="font-semibold text-fg">Report issues</span>
-            <span className="text-xs text-fg-muted text-center">
-              Bug? Feature request? Open an issue.
-            </span>
-          </a>
-
-          <a
-            href="https://github.com/nitin-1926/claude-code-profile-manager/blob/main/CONTRIBUTING.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex flex-col items-center gap-3 p-8 rounded-xl border border-border bg-surface hover:border-accent/50 hover:bg-surface-hover transition-all duration-200"
-          >
-            <GitFork
-              size={28}
-              strokeWidth={1.5}
-              className="text-accent group-hover:scale-110 transition-transform"
-            />
-            <span className="font-semibold text-fg">Contribute</span>
-            <span className="text-xs text-fg-muted text-center">
-              PRs welcome. Check the contributing guide.
-            </span>
-          </a>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   CTA
-   ───────────────────────────────────────────────────────────────────────── */
-function CTA() {
-  return (
-    <section className="relative py-24 px-6 overflow-hidden">
-      <div className="gradient-line max-w-6xl mx-auto mb-24" />
-      <AccentOrb className="bottom-[-200px] left-1/2 -translate-x-1/2 w-[800px] h-[400px]" />
-      <div className="relative max-w-3xl mx-auto text-center">
-        <h2
-          className="font-semibold tracking-tight text-fg"
-          style={{ fontSize: "var(--t-h2)" }}
-        >
-          One install. Every account.
-        </h2>
-        <p className="mt-3 text-fg-muted leading-relaxed">
-          Free, open source, MIT licensed. No account required. No credit card.
-          No tracking.
-        </p>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Button href="/docs" variant="primary" size="md">
-            Read the docs
-            <ArrowUpRight size={15} strokeWidth={2} />
-          </Button>
-          <Button
-            href="https://github.com/nitin-1926/claude-code-profile-manager"
-            external
-            variant="secondary"
-            size="md"
-          >
-            Browse source
-          </Button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-export default async function Home() {
-  return (
-    <>
-      <Nav />
-      <main className="flex-1">
-        <Hero />
-        <Features />
-        <HowItWorks />
-        <Privacy />
-        <Community />
-        <CTA />
-      </main>
-      <Footer />
-    </>
-  );
-}
+            className="md:col-span-2 reveal reveal-4"
+            eyebrow="vault"
+            title="Encrypted vault"
+            description="AES-256-GCM backups with master key in your OS keychain. Safe machine migrations."
+            icon={KeyRound}
