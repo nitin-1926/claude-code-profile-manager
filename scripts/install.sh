@@ -36,6 +36,29 @@ get_latest_version() {
         sed -E 's/.*"v([^"]+)".*/\1/'
 }
 
+# Pick a SHA-256 verifier available on the host. Errors out if none found —
+# we refuse to install without verifying the archive hash, because a
+# tampered download would ship a trojaned binary that runs with the user's
+# privileges on first invocation.
+sha256_of() {
+    _file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$_file" | awk '{print $1}'
+        return
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$_file" | awk '{print $1}'
+        return
+    fi
+    if command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$_file" | awk '{print $NF}'
+        return
+    fi
+    echo "Error: no SHA-256 utility found (sha256sum / shasum / openssl)." >&2
+    echo "  Install one and re-run; ccpm refuses to install without verifying the archive hash." >&2
+    exit 1
+}
+
 main() {
     echo "Installing ccpm..."
 
@@ -50,50 +73,3 @@ main() {
 
     echo "  Version:  v${VERSION}"
     echo "  Platform: ${PLATFORM}"
-    echo "  Install:  ${INSTALL_DIR}/${BINARY}"
-
-    # Determine archive format
-    EXT="tar.gz"
-    if [ "$(echo "$PLATFORM" | cut -d_ -f1)" = "windows" ]; then
-        EXT="zip"
-    fi
-
-    URL="https://github.com/${REPO}/releases/download/v${VERSION}/${BINARY}_${PLATFORM}.${EXT}"
-    echo "  URL:      ${URL}"
-
-    # Download and extract
-    TMP_DIR=$(mktemp -d)
-    trap 'rm -rf "$TMP_DIR"' EXIT
-
-    echo ""
-    echo "Downloading..."
-    curl -fsSL "$URL" -o "${TMP_DIR}/archive.${EXT}"
-
-    echo "Extracting..."
-    if [ "$EXT" = "zip" ]; then
-        unzip -q "${TMP_DIR}/archive.${EXT}" -d "$TMP_DIR"
-    else
-        tar -xzf "${TMP_DIR}/archive.${EXT}" -C "$TMP_DIR"
-    fi
-
-    # Install binary
-    echo "Installing to ${INSTALL_DIR}..."
-    if [ -w "$INSTALL_DIR" ]; then
-        cp "${TMP_DIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
-        chmod +x "${INSTALL_DIR}/${BINARY}"
-    else
-        sudo cp "${TMP_DIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
-        sudo chmod +x "${INSTALL_DIR}/${BINARY}"
-    fi
-
-    echo ""
-    echo "Done! ccpm v${VERSION} installed to ${INSTALL_DIR}/${BINARY}"
-    echo ""
-    echo "Next steps:"
-    echo "  1. Add shell integration:  echo 'eval \"\$(ccpm shell-init)\"' >> ~/.zshrc"
-    echo "  2. Reload shell:           source ~/.zshrc"
-    echo "  3. Create your first profile: ccpm add personal"
-    echo ""
-}
-
-main
