@@ -54,6 +54,24 @@ func manifestPath() (string, error) {
 	return filepath.Join(base, "installs.json"), nil
 }
 
+// Path returns the on-disk location of the manifest file. Exported so callers
+// that batch the manifest update with other writes (via atomicwrite) can
+// target the same file.
+func Path() (string, error) {
+	return manifestPath()
+}
+
+// MarshalBytes returns the on-disk byte representation of m without touching
+// the filesystem. Used by callers that want to bundle the manifest write into
+// a larger atomicwrite transaction.
+func MarshalBytes(m *Manifest) ([]byte, error) {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshaling manifest: %w", err)
+	}
+	return data, nil
+}
+
 func Load() (*Manifest, error) {
 	path, err := manifestPath()
 	if err != nil {
