@@ -104,16 +104,25 @@ Source may be a directory (skills require a `SKILL.md` marker) or a single file 
 
 ### Plugins
 
-Plugin files are installed by Claude Code itself via `/plugin install <name>` inside a session. ccpm manages the `enabledPlugins` key per profile so you can override which plugins are active where.
+ccpm installs plugins itself, end-to-end, without a Claude Code session. Marketplaces are cloned into a shared store, plugin files are cached once and symlinked into each profile, and per-profile activation is recorded in the same settings fragment ccpm uses for everything else. You can still use `/plugin install` inside a Claude Code session — ccpm reads the resulting state — but using `ccpm plugin install` directly is faster, gives you cross-profile dedup, and works headless.
 
 | Command                                                           | Description                                             |
 | ----------------------------------------------------------------- | ------------------------------------------------------- |
+| `ccpm plugin marketplace add <org>/<repo>`                        | Clone a plugin marketplace into the shared store (HTTPS by default; use `--ssh` to opt into git@) |
+| `ccpm plugin marketplace list`                                    | Show registered marketplaces                            |
+| `ccpm plugin marketplace remove <name>`                           | Drop a marketplace (refuses if any profile still uses it) |
+| `ccpm plugin install <name>@<marketplace> --global`               | Install into every profile and enable it                |
+| `ccpm plugin install <name>@<marketplace> --profile work`         | Install into one profile only                           |
+| `ccpm plugin install <name>@<marketplace> --global --install-only`| Install but do not enable; turn on later with `ccpm plugin enable` |
+| `ccpm plugin remove <name>@<marketplace> --global`                | Remove from every profile                               |
+| `ccpm plugin remove <name>@<marketplace> --profile work`          | Remove from one profile                                 |
 | `ccpm plugin list`                                                | Show installed plugins + enabled state per profile      |
 | `ccpm plugin list --profile work`                                 | Limit output to one profile                             |
-| `ccpm plugin enable <name@marketplace> --profile work`            | Turn on a plugin for one profile                        |
-| `ccpm plugin disable <name@marketplace> --profile work`           | Turn off a globally-enabled plugin in one profile       |
+| `ccpm plugin enable <name>@<marketplace> --profile work`          | Turn on a plugin for one profile                        |
+| `ccpm plugin disable <name>@<marketplace> --profile work`         | Turn off a globally-enabled plugin in one profile       |
+| `ccpm plugin gc`                                                  | Delete shared-cache entries no profile references (also runs as part of `ccpm sync`) |
 
-Global activation (affecting all profiles) lives in `~/.claude/settings.json` under `enabledPlugins` — Claude Code writes there automatically when you install a plugin with user scope.
+Plugin clones default to HTTPS so an `https://github.com/<org>/<repo>.git` URL works without an SSH key. If you prefer SSH (and have keys configured), pass `--ssh` to `marketplace add` or `install`.
 
 ### Hooks
 
@@ -224,9 +233,9 @@ ccpm uses one official mechanism: the `CLAUDE_CONFIG_DIR` environment variable.
 
 ### Global vs per-profile installs
 
-For **skills**, **agents**, **commands**, **rules**, **hooks**, and **MCP servers**, `--global` installs into the shared store (`~/.ccpm/share/`) and is linked/merged into every profile; new profiles inherit global installs automatically. `--profile <name>` applies only to one.
+For **skills**, **agents**, **commands**, **rules**, **hooks**, **MCP servers**, and **plugins**, `--global` installs into the shared store (`~/.ccpm/share/`) and is linked/merged into every profile; new profiles inherit global installs automatically. `--profile <name>` applies only to one.
 
-**Plugins** are different: Claude Code owns the install pipeline (`/plugin install` inside a session), so ccpm does not manage plugin files. ccpm only manages the `enabledPlugins` activation key per profile, so the same installed plugin can be on in one profile and off in another.
+Plugins additionally have **marketplaces**: a marketplace is a git repo that lists plugins and where to fetch them from. `ccpm plugin marketplace add <org>/<repo>` clones the marketplace once into `~/.ccpm/share/plugins/marketplaces/`, then `ccpm plugin install <name>@<marketplace>` fetches the plugin into a shared cache and symlinks it into each target profile. `ccpm plugin gc` (also run as part of `ccpm sync`) removes shared-cache entries no profile references anymore.
 
 For **settings**, ccpm does **not** maintain a separate global layer. The shared baseline is `~/.claude/settings.json` — the same file native Claude Code reads when you run it without ccpm. Edit it directly (or run `claude /config …` natively) and every ccpm profile picks up the change on the next launch. Use `ccpm settings set --profile <name>` only for per-profile overrides.
 
@@ -303,6 +312,18 @@ MCP servers authenticate in one of three ways, and ccpm isolates each differentl
 - **VS Code extension**: The Claude VS Code extension always reads from `~/.claude`. Use `ccpm set-default` to point it at a specific ccpm profile. On macOS, `set-default` copies the profile's namespaced keychain OAuth entry into the default slot; on Linux/Windows it copies `.credentials.json`.
 - **Linux headless**: `go-keyring` requires D-Bus and a secret service (gnome-keyring or kwallet). On headless servers, API-key profiles need a running secret service.
 - **Globally-cached MCP servers**: see the MCP auth section above — these cannot be isolated across profiles.
+
+## Troubleshooting
+
+### `/plugin install` fails with `git@github.com: Permission denied (publickey)`
+
+Claude Code clones plugin marketplaces over SSH by default, which requires a GitHub SSH key. If you authenticate over HTTPS only, the clone fails inside `ccpm run` with a `Permission denied (publickey)` error. Force git to rewrite SSH URLs to HTTPS for github.com:
+
+```sh
+git config --global url."https://github.com/".insteadOf "git@github.com:"
+```
+
+This applies to every tool that uses git, not just Claude Code.
 
 ## Build from source
 
