@@ -10,12 +10,32 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/filetree"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
+
+// saveManifestAtomic writes the manifest through the atomicwrite transaction
+// API. Functionally equivalent to manifest.Save (which already uses
+// temp-rename), but a single entry point makes it easy to bundle the manifest
+// write with other file changes in callers that grow into multi-file
+// transactions.
+func saveManifestAtomic(m *manifest.Manifest) error {
+	path, err := manifest.Path()
+	if err != nil {
+		return err
+	}
+	data, err := manifest.MarshalBytes(m)
+	if err != nil {
+		return err
+	}
+	return atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(path, append(data, '\n'), config.FilePerm),
+	})
+}
 
 // AssetSpec describes a dedupable ccpm-managed asset kind (agents, commands,
 // rules, and — by construction — skills). One spec drives an entire `ccpm
@@ -209,10 +229,17 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 
 	if state.global {
 		profiles := config.ProfileNames(cfg)
+		var createdLinks []string
 		for _, name := range profiles {
 			p := cfg.Profiles[name]
+			dst := profileAssetPath(spec, p.Dir, storeEntry)
+			alreadyLinked := share.IsLinked(sharedDst, dst)
 			if err := linkAssetToProfile(spec, sharedDst, p.Dir, storeEntry); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not link %s to profile %q: %v\n", spec.Name, name, err)
+				continue
+			}
+			if !alreadyLinked {
+				createdLinks = append(createdLinks, dst)
 			}
 		}
 
@@ -227,7 +254,10 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 			Profiles: profiles,
 		})
 
-		if err := manifest.Save(m); err != nil {
+		if err := saveManifestAtomic(m); err != nil {
+			for _, l := range createdLinks {
+				share.Unlink(l)
+			}
 			return fmt.Errorf("saving manifest: %w", err)
 		}
 
@@ -243,6 +273,8 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 		return fmt.Errorf("profile %q not found", state.profile)
 	}
 
+	dst := profileAssetPath(spec, p.Dir, storeEntry)
+	alreadyLinked := share.IsLinked(sharedDst, dst)
 	if err := linkAssetToProfile(spec, sharedDst, p.Dir, storeEntry); err != nil {
 		return fmt.Errorf("linking %s to profile: %w", spec.Name, err)
 	}
@@ -258,7 +290,10 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 		Profiles: []string{state.profile},
 	})
 
-	if err := manifest.Save(m); err != nil {
+	if err := saveManifestAtomic(m); err != nil {
+		if !alreadyLinked {
+			share.Unlink(dst)
+		}
 		return fmt.Errorf("saving manifest: %w", err)
 	}
 
@@ -267,6 +302,10 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 		color.New(color.Faint).Println("  stored as a symlink — edits in the source will be picked up automatically")
 	}
 	return nil
+}
+
+func profileAssetPath(spec AssetSpec, profileDir, storeEntry string) string {
+	return filepath.Join(profileDir, spec.profileSubdir(), storeEntry)
 }
 
 func runAssetRemove(spec AssetSpec, state *assetState, assetID string) error {
@@ -306,7 +345,7 @@ func runAssetRemove(spec AssetSpec, state *assetState, assetID string) error {
 	}
 
 	m.Remove(assetID, spec.Kind)
-	if err := manifest.Save(m); err != nil {
+	if err := saveManifestAtomic(m); err != nil {
 		return fmt.Errorf("saving manifest: %w", err)
 	}
 
