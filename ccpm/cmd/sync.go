@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -81,14 +82,18 @@ func runSync(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Warning: skills sync failed for %q: %v\n", name, err)
 		}
 
-		if err := settingsmerge.Materialize(p.Dir, name, ""); err != nil {
-			fmt.Printf("  Warning: settings materialization failed for %q: %v\n", name, err)
-		}
-		if err := settingsmerge.MaterializeMCP(p.Dir, name, ""); err != nil {
-			fmt.Printf("  Warning: MCP materialization failed for %q: %v\n", name, err)
+		if err := settingsmerge.MaterializeAll(p.Dir, name, ""); err != nil {
+			fmt.Printf("  Warning: profile materialization failed for %q: %v\n", name, err)
 		}
 
 		green.Printf("✓ Synced profile %q\n", name)
+	}
+
+	// Garbage-collect plugin cache entries no profile references. Hooked into
+	// sync so users don't accumulate disk usage from removed plugins; failure
+	// is non-fatal because GC is opportunistic.
+	if err := runPluginGC(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: plugin gc failed: %v\n", err)
 	}
 
 	return nil

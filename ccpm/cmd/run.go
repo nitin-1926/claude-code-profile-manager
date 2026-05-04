@@ -85,12 +85,13 @@ func runRun(cmd *cobra.Command, args []string) error {
 		projectRoot = settingsmerge.FindProjectRoot(cwd)
 	}
 
-	// Materialize shared settings/MCP into the profile dir before launch
-	if err := settingsmerge.Materialize(p.Dir, name, projectRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize settings: %v\n", err)
-	}
-	if err := settingsmerge.MaterializeMCP(p.Dir, name, projectRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
+	// Materialize shared settings + MCP into the profile dir before launch.
+	// MaterializeAll wraps both writes in a single atomicwrite transaction so
+	// a crash, disk-full, or permissions error in the middle of the merge
+	// can't leave the profile half-written (settings updated, .claude.json
+	// stale, or vice versa).
+	if err := settingsmerge.MaterializeAll(p.Dir, name, projectRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize profile settings: %v\n", err)
 	}
 
 	// Get API key if needed

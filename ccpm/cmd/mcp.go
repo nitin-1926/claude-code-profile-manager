@@ -652,11 +652,8 @@ func runMCPAuth(state *mcpState, args []string) error {
 	if cwd, werr := os.Getwd(); werr == nil {
 		projectRoot = settingsmerge.FindProjectRoot(cwd)
 	}
-	if err := settingsmerge.Materialize(p.Dir, state.profile, projectRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize settings before auth: %v\n", err)
-	}
-	if err := settingsmerge.MaterializeMCP(p.Dir, state.profile, projectRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config before auth: %v\n", err)
+	if err := settingsmerge.MaterializeAll(p.Dir, state.profile, projectRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize profile before auth: %v\n", err)
 	}
 
 	fmt.Printf("Starting native claude in profile %q to authenticate MCP server %q...\n", state.profile, serverName)

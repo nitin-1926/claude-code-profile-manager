@@ -77,11 +77,8 @@ func runUse(cmd *cobra.Command, args []string) error {
 	// `ccpm use` persists a default; baking in CWD here would leak project-
 	// specific state into the profile. The layer is applied at `ccpm run`
 	// time instead.
-	if err := settingsmerge.Materialize(p.Dir, name, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize settings: %v\n", err)
-	}
-	if err := settingsmerge.MaterializeMCP(p.Dir, name, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize MCP config: %v\n", err)
+	if err := settingsmerge.MaterializeAll(p.Dir, name, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize profile settings: %v\n", err)
 	}
 
 	// Update last used

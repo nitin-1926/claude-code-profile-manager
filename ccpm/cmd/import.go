@@ -332,11 +332,8 @@ func runImportDefault(state *importDefaultState) error {
 				fmt.Fprintf(os.Stderr, "  Warning: settings merge failed: %v\n", err)
 			}
 
-			if err := settingsmerge.Materialize(p.Dir, name, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: re-materializing settings: %v\n", err)
-			}
-			if err := settingsmerge.MaterializeMCP(p.Dir, name, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: re-materializing MCP: %v\n", err)
+			if err := settingsmerge.MaterializeAll(p.Dir, name, ""); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: re-materializing profile: %v\n", err)
 			}
 		}
 	}
@@ -458,11 +455,8 @@ func runImportFromProfile(state *importFromProfileState) error {
 		return err
 	}
 
-	if err := settingsmerge.Materialize(dst.Dir, state.target, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: re-materializing settings: %v\n", err)
-	}
-	if err := settingsmerge.MaterializeMCP(dst.Dir, state.target, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: re-materializing MCP: %v\n", err)
+	if err := settingsmerge.MaterializeAll(dst.Dir, state.target, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: re-materializing profile: %v\n", err)
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Imported assets from %q into %q\n", state.src, state.target)
