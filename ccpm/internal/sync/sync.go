@@ -55,11 +55,8 @@ func ApplyGlobals(profileDir, profileName string) error {
 		}
 	}
 
-	if err := settingsmerge.Materialize(profileDir, profileName, ""); err != nil {
-		return fmt.Errorf("materializing settings: %w", err)
-	}
-	if err := settingsmerge.MaterializeMCP(profileDir, profileName, ""); err != nil {
-		return fmt.Errorf("materializing MCP: %w", err)
+	if err := settingsmerge.MaterializeAll(profileDir, profileName, ""); err != nil {
+		return fmt.Errorf("materializing profile settings: %w", err)
 	}
 	return nil
 }
