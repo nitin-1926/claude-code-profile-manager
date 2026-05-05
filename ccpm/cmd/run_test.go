@@ -10,13 +10,14 @@ import (
 // --help, --version, and the -- separator) are intercepted here.
 func TestExtractCCPMRunFlags(t *testing.T) {
 	cases := []struct {
-		name        string
-		input       []string
-		wantForward []string
-		wantEnv     []string
-		wantHelp    bool
-		wantVersion bool
-		wantErr     bool
+		name         string
+		input        []string
+		wantForward  []string
+		wantEnv      []string
+		wantSkip     bool
+		wantHelp     bool
+		wantVersion  bool
+		wantErr      bool
 	}{
 		{
 			name:        "single unknown flag forwards",
@@ -60,11 +61,29 @@ func TestExtractCCPMRunFlags(t *testing.T) {
 			input:   []string{"--ccpm-env"},
 			wantErr: true,
 		},
+		{
+			name:        "--no-auto-adopt is intercepted",
+			input:       []string{"--no-auto-adopt", "work"},
+			wantForward: []string{"work"},
+			wantSkip:    true,
+		},
+		{
+			name:        "--no-auto-adopt after profile is still intercepted",
+			input:       []string{"work", "--no-auto-adopt", "--model", "x"},
+			wantForward: []string{"work", "--model", "x"},
+			wantSkip:    true,
+		},
+		{
+			name:        "--no-auto-adopt after -- is forwarded verbatim",
+			input:       []string{"work", "--", "--no-auto-adopt"},
+			wantForward: []string{"work", "--no-auto-adopt"},
+			wantSkip:    false,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			forward, env, help, ver, err := extractCCPMRunFlags(tc.input)
+			forward, env, skipAdopt, help, ver, err := extractCCPMRunFlags(tc.input)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -79,6 +98,9 @@ func TestExtractCCPMRunFlags(t *testing.T) {
 			}
 			if !reflect.DeepEqual(env, tc.wantEnv) && (len(env) != 0 || len(tc.wantEnv) != 0) {
 				t.Fatalf("env: got %v, want %v", env, tc.wantEnv)
+			}
+			if skipAdopt != tc.wantSkip {
+				t.Fatalf("skipAdopt: got %v, want %v", skipAdopt, tc.wantSkip)
 			}
 			if help != tc.wantHelp {
 				t.Fatalf("help: got %v, want %v", help, tc.wantHelp)
