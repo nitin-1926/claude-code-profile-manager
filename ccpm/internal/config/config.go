@@ -36,6 +36,22 @@ type ProfileConfig struct {
 
 type Settings struct {
 	CheckDefaultDrift bool `json:"check_default_drift,omitempty"`
+	// CascadeAutoAdopt controls whether `ccpm run` / `ccpm sync` automatically
+	// scan ~/.claude/<asset>/ for entries not registered in the manifest and
+	// link them into every profile. Pointer to distinguish "explicitly
+	// disabled" (false) from "not set" (nil), since the default is on.
+	// Use Settings.CascadeAutoAdoptEnabled() to read the resolved value.
+	CascadeAutoAdopt *bool `json:"cascade_auto_adopt,omitempty"`
+}
+
+// CascadeAutoAdoptEnabled returns the resolved value of the cascade auto-adopt
+// setting. Defaults to true when the field is unset so users get the cascade
+// behavior out of the box; an explicit false in config.json turns it off.
+func (s Settings) CascadeAutoAdoptEnabled() bool {
+	if s.CascadeAutoAdopt == nil {
+		return true
+	}
+	return *s.CascadeAutoAdopt
 }
 
 type Config struct {
