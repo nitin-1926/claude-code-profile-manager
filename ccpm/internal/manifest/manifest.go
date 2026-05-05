@@ -13,8 +13,18 @@ import (
 type InstallScope string
 
 const (
-	ScopeGlobal  InstallScope = "global"
+	// ScopeGlobal: explicitly registered through `ccpm <asset> add --global`.
+	// Auto-propagates to every profile.
+	ScopeGlobal InstallScope = "global"
+	// ScopeProfile: registered for a specific profile via `ccpm <asset> add`
+	// or imported with `ccpm import default --profile <name>`.
 	ScopeProfile InstallScope = "profile"
+	// ScopeHost: discovered in ~/.claude/<asset>/ at launch and auto-adopted
+	// into every profile. Source is always "host:<absolute path>". Distinct
+	// from ScopeGlobal so doctor and listings can show provenance, and so
+	// users who turn off cascade-auto-adopt can purge them as a group
+	// without touching genuinely-global installs.
+	ScopeHost InstallScope = "host"
 )
 
 type AssetKind string
@@ -157,6 +167,32 @@ func (m *Manifest) GlobalInstalls() []Install {
 	var result []Install
 	for _, inst := range m.Installs {
 		if inst.Scope == ScopeGlobal {
+			result = append(result, inst)
+		}
+	}
+	return result
+}
+
+// HostInstalls returns every entry auto-adopted from the host ~/.claude tree.
+// These are managed by the cascade scanner — users do not add them via the
+// CLI. Useful for doctor / listings to render provenance.
+func (m *Manifest) HostInstalls() []Install {
+	var result []Install
+	for _, inst := range m.Installs {
+		if inst.Scope == ScopeHost {
+			result = append(result, inst)
+		}
+	}
+	return result
+}
+
+// CascadeInstalls returns the union of Global and Host installs — the set
+// that should be linked into every profile at launch. Profile-scoped entries
+// are not included; those are owned by their specific profile.
+func (m *Manifest) CascadeInstalls() []Install {
+	var result []Install
+	for _, inst := range m.Installs {
+		if inst.Scope == ScopeGlobal || inst.Scope == ScopeHost {
 			result = append(result, inst)
 		}
 	}
