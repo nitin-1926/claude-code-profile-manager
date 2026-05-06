@@ -41,3 +41,20 @@ This project is indexed by GitNexus as **claude-code-profile-manager** (2706 sym
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+# Devlog (`SUMMARY.md`) — non-negotiable
+
+`SUMMARY.md` is the maintainer's **local-only devlog**. It is listed in `.gitignore` and is **never committed, staged, or pushed** — `git status` will not show it, and that is correct. Treat it as a personal append-only log that lives only on this machine.
+
+Every substantive change to this repo (bug fix, feature, build/CI change, refactor with observable behavior, docs that change facts) MUST land with a new entry at the top of the `## Log` section in `SUMMARY.md`. The canonical rule and full template live in `AGENTS.md` (search "SUMMARY.md") and at the top of `SUMMARY.md` itself; this section exists so the rule is reliably loaded into every Claude Code session, since `CLAUDE.md` is the file Claude Code is guaranteed to read.
+
+Hard rules:
+
+- Write the entry **in the same session as the change**, before you declare the task done — not as a separate follow-up turn or "I'll log it next time."
+- Do **not** `git add SUMMARY.md`, do not include it in any commit, do not mention it in PR descriptions. It is intentionally untracked.
+- One entry per logically independent change. Do not batch unrelated work into one entry.
+- Entries go at the **top** of `## Log` (reverse chronological).
+- Use the entry template defined in `SUMMARY.md` (Type / Scope / Reasoning / Implementation summary, plus `Follow-ups deferred` when applicable). Don't invent a new shape.
+- Only skip the log for purely cosmetic edits (whitespace, typo, doc link rename). When in doubt, write the entry.
+
+Before you say a task is done, do this self-check: if any tracked file under `ccpm/**`, `scripts/**`, `docs/**`, or top-level docs has been modified in this session and you have not appended a `SUMMARY.md` entry covering it, you are not done. Append the entry first.
