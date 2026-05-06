@@ -10,13 +10,13 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	profilesync "github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/sync"
 )
 
 var (
-	syncProfile string
-	syncAll     bool
+	syncProfile      string
+	syncAll          bool
+	syncNoAutoAdopt  bool
 )
 
 var syncCmd = &cobra.Command{
@@ -31,6 +31,7 @@ but you can run it manually to force a sync.`,
 func init() {
 	syncCmd.Flags().StringVar(&syncProfile, "profile", "", "profile to sync (prompts when omitted in a TTY)")
 	syncCmd.Flags().BoolVar(&syncAll, "all", false, "sync all profiles without prompting")
+	syncCmd.Flags().BoolVar(&syncNoAutoAdopt, "no-auto-adopt", false, "skip the host-asset cascade scan for this run (does not change cascade_auto_adopt)")
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -78,13 +79,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 	for _, name := range targets {
 		p := cfg.Profiles[name]
 
-		if err := profilesync.ApplyGlobals(p.Dir, name); err != nil {
-			fmt.Printf("  Warning: skills sync failed for %q: %v\n", name, err)
+		if err := profilesync.ApplyGlobalsWithOptions(p.Dir, name, profilesync.Options{
+			SkipHostAdoption: syncNoAutoAdopt,
+		}); err != nil {
+			fmt.Printf("  Warning: sync failed for %q: %v\n", name, err)
 		}
 
-		if err := settingsmerge.MaterializeAll(p.Dir, name, ""); err != nil {
-			fmt.Printf("  Warning: profile materialization failed for %q: %v\n", name, err)
-		}
+		// MaterializeAll already runs inside ApplyGlobalsWithOptions; the
+		// extra call here was double work and is intentionally removed.
 
 		green.Printf("✓ Synced profile %q\n", name)
 	}
