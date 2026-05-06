@@ -374,10 +374,19 @@ func runAssetList(spec AssetSpec) error {
 
 	for _, it := range items {
 		profiles := strings.Join(it.Profiles, ", ")
-		if it.Scope == manifest.ScopeGlobal {
+		source := "ccpm"
+		switch it.Scope {
+		case manifest.ScopeGlobal:
+			profiles = "all"
+		case manifest.ScopeHost:
+			// Host-scoped entries originate from ~/.claude/<asset>/. Show
+			// "host" as the source so users can tell adopted entries apart
+			// from explicitly-installed ones, and surface "all" since they
+			// cascade into every profile.
+			source = "host"
 			profiles = "all"
 		}
-		fmt.Printf("  %-20s %-10s %-10s %s\n", it.ID, "ccpm", it.Scope, profiles)
+		fmt.Printf("  %-20s %-10s %-10s %s\n", it.ID, source, it.Scope, profiles)
 	}
 	for _, e := range projectEntries {
 		fmt.Printf("  %-20s %-10s %-10s %s\n", e.ID, "project", "—", "—")
