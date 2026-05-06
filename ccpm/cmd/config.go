@@ -19,7 +19,11 @@ var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a ccpm config value",
 	Long: `Supported keys:
-  check_default_drift   true|false — enable drift warnings on 'ccpm run' and 'ccpm use'`,
+  check_default_drift   true|false — enable drift warnings on 'ccpm run' and 'ccpm use'
+  cascade_auto_adopt    true|false — auto-link ~/.claude/<asset>/ entries into every
+                                     profile at launch (default: true). Disable for
+                                     strict reproducibility — only manifest-tracked
+                                     assets will appear in profiles.`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -53,6 +57,12 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("expected true/false, got %q", value)
 		}
 		cfg.Settings.CheckDefaultDrift = b
+	case "cascade_auto_adopt":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("expected true/false, got %q", value)
+		}
+		cfg.Settings.CascadeAutoAdopt = &b
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}
@@ -73,6 +83,8 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 	switch key {
 	case "check_default_drift":
 		fmt.Println(cfg.Settings.CheckDefaultDrift)
+	case "cascade_auto_adopt":
+		fmt.Println(cfg.Settings.CascadeAutoAdoptEnabled())
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}
