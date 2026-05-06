@@ -24,7 +24,7 @@ It is an orchestration layer that composes the official `CLAUDE_CONFIG_DIR` env 
 - **Fragments**:
   - `share/mcp/` — `global.json` (applies to every profile) and `<profile>.json` (one profile).
   - `share/settings/` — **only** `<profile>.json` (per-profile). There is no ccpm-managed global settings fragment; the cross-profile baseline is the host `~/.claude/settings.json` file, merged in at `Materialize` time.
-- **Manifest (`~/.ccpm/installs.json`)** — tracks every installed skill / MCP / setting, its scope (`global` or `profile`), and which profiles use it. Used by `ccpm sync`, `ccpm doctor`, and `ccpm skill/mcp list`.
+- **Manifest (`~/.ccpm/installs.json`)** — tracks every installed skill / MCP / setting, its scope (`global`, `profile`, or `host`), and which profiles use it. Used by `ccpm sync`, `ccpm doctor`, and `ccpm skill/mcp list`. The `host` scope is reserved for entries auto-adopted from `~/.claude/<asset>/` by the cascade scanner — see §6 below.
 - **Fingerprint (`~/.ccpm/default-claude-fingerprint.json`)** — SHA-256 hashes of files under `~/.claude` at the time of the last `ccpm import default`. Used for drift detection.
 
 ## 3. Profile lifecycle
@@ -40,13 +40,39 @@ It is an orchestration layer that composes the official `CLAUDE_CONFIG_DIR` env 
 
 | Asset    | Cross-profile source                                | Profile path                         | Merge mechanism                               |
 | -------- | --------------------------------------------------- | ------------------------------------ | --------------------------------------------- |
-| Skills   | `~/.ccpm/share/skills/<name>`                       | `<profile>/skills/<name>` (link)     | Symlink                                       |
+| Skills   | `~/.ccpm/share/skills/<name>` (global) or `~/.claude/skills/<name>` (host) | `<profile>/skills/<name>` (link)     | Symlink                                       |
 | MCP      | `~/.ccpm/share/mcp/global.json` + `<profile>.json`  | `<profile>/.claude.json#mcpServers`  | `settingsmerge.MaterializeMCP`                |
 | Settings | `~/.claude/settings.json` + `share/settings/<profile>.json` | `<profile>/settings.json`    | `settingsmerge.Materialize` (with owned-keys) |
-| Hooks    | (not shared) imported as copies                     | `<profile>/hooks/`                   | copy                                          |
-| Agents   | `~/.ccpm/share/agents/<name>`                       | `<profile>/agents/<name>` (link)     | Symlink (dedup import)                        |
-| Commands | `~/.ccpm/share/commands/<name>`                     | `<profile>/commands/<name>` (link)   | Symlink (dedup import)                        |
-| Rules    | (not shared) imported as copies                     | `<profile>/rules/`                   | copy                                          |
+| Hooks    | `~/.ccpm/share/hooks/<name>` (global) or `~/.claude/hooks/<name>` (host) | `<profile>/hooks/<name>` (link)     | Symlink                                       |
+| Agents   | `~/.ccpm/share/agents/<name>` (global) or `~/.claude/agents/<name>` (host) | `<profile>/agents/<name>` (link)     | Symlink (dedup import)                        |
+| Commands | `~/.ccpm/share/commands/<name>` (global) or `~/.claude/commands/<name>` (host) | `<profile>/commands/<name>` (link)   | Symlink (dedup import)                        |
+| Rules    | `~/.ccpm/share/rules/<name>` (global) or `~/.claude/rules/<name>` (host) | `<profile>/rules/<name>` (link)     | Symlink                                       |
+| Plugins  | `~/.ccpm/share/plugins/cache/...` (global) or `~/.claude/plugins/cache/...` (host) | `<profile>/plugins/cache/...` + `installed_plugins.json` entry | Symlink + atomicwrite JSON merge |
+
+### 4a. Host-asset cascade (Project → Profile → Global → Host)
+
+The `host` row in the table is automatic: on every `ccpm run` and `ccpm sync`, `internal/sync.EnsureHostAdoption` (and `ApplyGlobalsWithOptions` for sync) scans `~/.claude/<asset>/` for entries not yet in the manifest and links them into every profile, recording each as `scope=host` with `source="host:<absolute path>"`. This satisfies the user-facing model that **anything in `~/.claude/` is visible inside every profile**, without forcing users to import explicitly.
+
+Precedence order — higher wins:
+
+1. **Project**: `<repo>/.claude/<asset>/` — Claude Code's own loader handles this; ccpm doesn't merge it into the profile dir.
+2. **Profile**: manifest entries with `scope=profile` for the active profile name.
+3. **Global**: manifest entries with `scope=global`.
+4. **Host**: manifest entries with `scope=host`, auto-adopted from `~/.claude/<asset>/`.
+
+When two layers carry the same name, profile wins over host (the link target is checked before adoption — see `linkCascadeEntry` in `internal/sync/sync.go`). The doctor's "Host-asset cascade" section reports shadowed cases.
+
+The cascade is opt-out:
+
+- Persistent: `Settings.CascadeAutoAdopt *bool` in `~/.ccpm/config.json`. Default is `true`. Set via `ccpm config set cascade_auto_adopt false`.
+- Per-call: `Options.SkipHostAdoption` (Go) / `--no-auto-adopt` flag on `ccpm run` and `ccpm sync`.
+
+When extending the cascade to a new asset kind:
+
+- Add the kind to `hostKindSpec` in `internal/sync/host_adopt.go`.
+- Add a `case` in `linkCascadeEntry` if the link path differs from the directory pattern.
+- Add a row in the doctor's `computeHostCascadeSummary` plurals slice (`cmd/doctor.go`).
+- Add a row in this AGENTS.md table.
 
 ## 5. Merge and precedence rules
 
@@ -147,6 +173,8 @@ Three categories — any new MCP-related feature must document which it targets.
 7. **No network calls** — ccpm is local-only. Never add telemetry, update checks, or remote fetch.
 8. **Failure modes never delete credentials** — `ccpm remove` is the only command allowed to delete a keychain entry.
 9. **Multi-file writes go through `internal/atomicwrite`** — any command that updates two or more on-disk files as one logical operation must batch the writes into a single `atomicwrite.Apply` transaction so a crash or disk-full mid-merge cannot leave the system half-written. Examples already converted: `settingsmerge.MaterializeAll` (writes `<profile>/settings.json` + `<profile>/.claude.json`), and the asset add/remove flows (manifest write paired with explicit unwind of created symlinks). For pure single-file writes, `atomicwrite.Apply` with one change is fine and keeps the codebase consistent. The package refuses to overwrite symlinks via `Write` (security: prevents following an attacker-controlled link), supports `Symlink` change kind for transactional symlink lifecycle, and rolls back every committed change on any failure.
+10. **Host-asset cascade is opt-out, not opt-in** — `Settings.CascadeAutoAdoptEnabled()` defaults to `true`. The expectation that anything in `~/.claude/<asset>/` becomes visible inside every profile is now part of the user contract; do not change the default to `false`, do not silently skip kinds, and do not reintroduce manifest-only resolution. The persistent `cascade_auto_adopt` setting and the per-call `--no-auto-adopt` flag are the only authorized opt-outs. If you add a new dedupable asset kind, register it in `internal/sync/host_adopt.go#hostKindSpec` and the doctor's plurals slice — otherwise it silently won't cascade.
+11. **Profile-local always wins over host** — `linkCascadeEntry` (and `share.Link`'s same-target short-circuit) make sure a profile-scoped manifest entry's symlink isn't clobbered by a same-name host entry. Tests in `internal/sync/host_adopt_test.go` (`TestApplyGlobals_ProfileLocalWinsOverHost`) lock this in. If you change the cascade ordering, update both the test and the doctor's `computeHostCascadeSummary` shadowing logic in lockstep.
 
 ## 12. Known limitations tracked upstream
 
@@ -158,7 +186,8 @@ Three categories — any new MCP-related feature must document which it targets.
 
 When you make any substantive change to this repository (bug fix, feature, build/CI change, refactor with observable behavior, documentation that changes facts), you MUST append a new entry to `SUMMARY.md` in the format the file defines. Rules:
 
-- Add the entry **in the same commit / PR** as the code change — never as a separate "log-only" commit.
+- `SUMMARY.md` is a **local-only devlog** for the maintainer. It is listed in `.gitignore` and is never committed or pushed. Do not stage it, do not include it in PRs, and do not be alarmed when `git status` does not show it.
+- Add the entry **in the same session as the change**, before declaring the task done — not as a separate follow-up turn. The intent that "code change" and "log entry" land together is preserved at the session boundary instead of the commit boundary.
 - One entry per logically independent change. Do not batch unrelated fixes.
 - Entries go at the top of the `## Log` section (reverse chronological).
 - If a change is purely cosmetic (whitespace, typo, doc link rename), you may skip the log.
