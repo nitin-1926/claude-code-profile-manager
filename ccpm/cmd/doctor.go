@@ -215,7 +215,47 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		yellow.Printf("  ! could not load manifest: %v\n", err)
 		warnings++
 	} else {
-		fmt.Printf("  %d entries tracked in %s\n", len(m.Installs), manifestDisplayPath())
+		hostCount := 0
+		globalCount := 0
+		profileCount := 0
+		for _, inst := range m.Installs {
+			switch inst.Scope {
+			case manifest.ScopeHost:
+				hostCount++
+			case manifest.ScopeGlobal:
+				globalCount++
+			case manifest.ScopeProfile:
+				profileCount++
+			}
+		}
+		fmt.Printf("  %d entries tracked in %s (global: %d, host: %d, profile: %d)\n",
+			len(m.Installs), manifestDisplayPath(), globalCount, hostCount, profileCount)
+	}
+	fmt.Println()
+
+	// -----------------------------------------------------------------
+	// Section 6.5: host-asset cascade (Project > Profile > Global)
+	// -----------------------------------------------------------------
+	bold.Println("Host-asset cascade (~/.claude → profiles)")
+	if !cfg.Settings.CascadeAutoAdoptEnabled() {
+		yellow.Println("  ! cascade_auto_adopt is OFF — host assets will NOT be adopted at launch")
+		dim.Println("    Re-enable with: ccpm config set cascade_auto_adopt true")
+		warnings++
+	} else {
+		dim.Println("  cascade_auto_adopt is ON (default)")
+	}
+	if defaultclaude.Exists() && len(profileDirs) > 0 {
+		summary, shadows := computeHostCascadeSummary(profileDirs, m)
+		if summary == "" {
+			green.Println("  ✓ no host assets discovered yet")
+		} else {
+			fmt.Printf("  %s\n", summary)
+		}
+		for _, s := range shadows {
+			yellow.Printf("  ! shadowed: %q (%s) exists in both ~/.claude and profile %q — profile wins\n",
+				s.Name, s.Kind, s.Profile)
+			warnings++
+		}
 	}
 	fmt.Println()
 
@@ -410,4 +450,116 @@ func manifestDisplayPath() string {
 		return "~/.ccpm/installs.json"
 	}
 	return filepath.Join(base, "installs.json")
+}
+
+// shadowedAsset describes one (kind, name) that exists in both ~/.claude and
+// a profile-local override. The cascade always lets profile-local win, but
+// the doctor surfaces these so users aren't surprised when a host update
+// silently fails to take effect inside a profile.
+type shadowedAsset struct {
+	Kind    string
+	Name    string
+	Profile string
+}
+
+// computeHostCascadeSummary walks ~/.claude/<asset>/ and every profile's
+// matching subdir, returning (a) a one-line summary string of host vs. adopted
+// counts per kind, and (b) a list of shadow entries.
+func computeHostCascadeSummary(profileDirs map[string]string, m *manifest.Manifest) (string, []shadowedAsset) {
+	plurals := []struct {
+		kind   manifest.AssetKind
+		plural string
+	}{
+		{manifest.KindSkill, "skills"},
+		{manifest.KindAgent, "agents"},
+		{manifest.KindCommand, "commands"},
+		{manifest.KindRule, "rules"},
+		{manifest.KindHook, "hooks"},
+	}
+	hostRoot, err := defaultclaude.DefaultDir()
+	if err != nil {
+		return "", nil
+	}
+
+	// Index the manifest by (kind, id) so we can tell adopted from
+	// not-yet-adopted host entries.
+	adopted := map[string]bool{}
+	if m != nil {
+		for _, inst := range m.Installs {
+			if inst.Scope == manifest.ScopeHost {
+				adopted[string(inst.Kind)+"/"+inst.ID] = true
+			}
+		}
+	}
+
+	type counts struct {
+		host       int
+		adopted    int
+		profileOnly int
+	}
+	totals := map[manifest.AssetKind]counts{}
+	var shadows []shadowedAsset
+
+	for _, p := range plurals {
+		hostDir := filepath.Join(hostRoot, p.plural)
+		hostNames := listDirNames(hostDir)
+		hostSet := map[string]bool{}
+		for _, n := range hostNames {
+			if strings.HasPrefix(n, ".") {
+				continue
+			}
+			hostSet[n] = true
+			c := totals[p.kind]
+			c.host++
+			if adopted[string(p.kind)+"/"+n] {
+				c.adopted++
+			}
+			totals[p.kind] = c
+		}
+
+		// Per-profile shadowing: a profile entry with the same name as a
+		// host entry, but the profile entry was added directly (not via
+		// adoption) — we detect this by looking at the manifest scope.
+		for prof, profDir := range profileDirs {
+			profNames := listDirNames(filepath.Join(profDir, p.plural))
+			for _, n := range profNames {
+				if !hostSet[n] {
+					continue
+				}
+				// Same name in host and profile. If the manifest entry
+				// for (kind, name) is profile-scoped, it's a shadow.
+				if inst := m.Find(n, p.kind); inst != nil && inst.Scope == manifest.ScopeProfile {
+					shadows = append(shadows, shadowedAsset{
+						Kind: string(p.kind), Name: n, Profile: prof,
+					})
+				}
+			}
+		}
+	}
+
+	var summary []string
+	for _, p := range plurals {
+		c := totals[p.kind]
+		if c.host == 0 {
+			continue
+		}
+		summary = append(summary, fmt.Sprintf("%s %d/%d adopted", p.plural, c.adopted, c.host))
+	}
+	if len(summary) == 0 {
+		return "", shadows
+	}
+	return strings.Join(summary, ", "), shadows
+}
+
+func listDirNames(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	sort.Strings(out)
+	return out
 }
