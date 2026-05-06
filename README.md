@@ -231,6 +231,40 @@ ccpm uses one official mechanism: the `CLAUDE_CONFIG_DIR` environment variable.
 2. `ccpm run` merges shared settings/MCP fragments, sets `CLAUDE_CONFIG_DIR`, and execs `claude`
 3. Each terminal gets a completely isolated Claude Code instance
 
+### Asset resolution: Project → Profile → Global → Host
+
+Inside a `ccpm run` session, every asset (skills, agents, commands, rules, hooks, plugins, MCP servers, settings) resolves with this priority — higher wins:
+
+1. **Project**: `<repo>/.claude/<asset>/` and `<repo>/.claude/settings.json` — repo-local overrides.
+2. **Profile**: assets installed via `ccpm <asset> add --profile <name>` — only the named profile sees them.
+3. **Global**: assets installed via `ccpm <asset> add --global` — every profile sees them.
+4. **Host**: assets that landed in `~/.claude/<asset>/` through any other channel (`/plugin install` inside a session, third-party CLIs like `npx skills add`, manual edits). These auto-cascade into every profile at launch — see "Host-asset cascade" below.
+
+Project always wins because Claude Code's own loader gives `<repo>/.claude/` precedence over `$CLAUDE_CONFIG_DIR`. The other three layers are merged into the profile dir by ccpm before launch.
+
+### Host-asset cascade
+
+When you launch `ccpm run`, ccpm scans `~/.claude/<asset>/` for entries that aren't yet in any profile and auto-adopts them — symlinking each into every profile and recording it in the manifest with `scope = host`. This means:
+
+- Skills installed via `npx skills@latest add <author>/<set>` show up in every ccpm profile on the next launch, no `ccpm import` required.
+- Plugins installed via `/plugin install` inside any session become visible in every profile.
+- Profile-local entries (`ccpm <asset> add --profile <name>`) always win over host entries with the same name. `ccpm doctor` flags shadowed cases.
+
+The cascade is on by default. To turn it off (strict reproducibility — only manifest-tracked assets appear):
+
+```sh
+ccpm config set cascade_auto_adopt false
+```
+
+For one-shot opt-out without flipping the persistent setting:
+
+```sh
+ccpm run <profile> --no-auto-adopt
+ccpm sync --profile <profile> --no-auto-adopt
+```
+
+`ccpm doctor` has a "Host-asset cascade" section showing per-kind adopted/total counts and any shadowing warnings.
+
 ### Global vs per-profile installs
 
 For **skills**, **agents**, **commands**, **rules**, **hooks**, **MCP servers**, and **plugins**, `--global` installs into the shared store (`~/.ccpm/share/`) and is linked/merged into every profile; new profiles inherit global installs automatically. `--profile <name>` applies only to one.
@@ -241,8 +275,9 @@ For **settings**, ccpm does **not** maintain a separate global layer. The shared
 
 ```
 ~/.ccpm/
-├── config.json          # profile registry
-├── installs.json        # manifest of installed assets (skills/agents/commands/rules/hooks/mcp)
+├── config.json          # profile registry; cascade_auto_adopt lives here
+├── installs.json        # manifest of installed assets (skills/agents/commands/rules/hooks/mcp/plugins)
+│                          # entries carry scope: global | profile | host (auto-adopted from ~/.claude)
 ├── share/
 │   ├── skills/          # shared skill directories (symlinked into profiles)
 │   ├── agents/          # shared agent files
