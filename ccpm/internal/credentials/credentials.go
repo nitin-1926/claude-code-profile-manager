@@ -41,8 +41,9 @@ type claudeJSON struct {
 
 // credentialsJSON is the .credentials.json format used on Linux/Windows
 type credentialsJSON struct {
-	AccessToken string `json:"accessToken"`
-	ExpiresAt   string `json:"expiresAt"`
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresAt    string `json:"expiresAt"`
 }
 
 func (c *Checker) Check(profileDir, profileName, authMethod string) CredStatus {
@@ -79,7 +80,7 @@ func (c *Checker) checkOAuth(profileDir string) CredStatus {
 			if detail == "" {
 				detail = kc.Email
 			}
-			return buildOAuthStatus(detail, kc.ExpiresAt, "keychain")
+			return buildOAuthStatus(detail, kc.ExpiresAt, kc.RefreshToken != "", "keychain")
 		}
 	}
 
@@ -95,7 +96,7 @@ func (c *Checker) checkOAuth(profileDir string) CredStatus {
 					expiry = parsed
 				}
 			}
-			return buildOAuthStatus(accountDetailFromClaudeJSON(claudeFile), expiry, "file")
+			return buildOAuthStatus(accountDetailFromClaudeJSON(claudeFile), expiry, creds.RefreshToken != "", "file")
 		}
 	}
 
@@ -147,22 +148,47 @@ func accountDetailFromClaudeJSON(claudeFile string) string {
 	return name
 }
 
-// buildOAuthStatus assembles a CredStatus with a friendly detail line,
-// including expiry warnings when the expiry time is known.
-func buildOAuthStatus(account string, expiry time.Time, source string) CredStatus {
+// buildOAuthStatus assembles a CredStatus with a friendly detail line.
+//
+// Claude OAuth issues short-lived (~1h) access tokens paired with a
+// long-lived refresh token; `claude` itself silently refreshes on use. So a
+// freshly-logged-in profile still shows ~1h remaining on the access token,
+// and that's not a problem as long as the refresh token is around. Callers
+// pass hasRefresh=true when a refresh token is present in the keychain or
+// .credentials.json — in that case we don't surface the access-token expiry
+// at all, because it would constantly cry "expires in 1h" for healthy
+// profiles. Without a refresh token we fall back to access-token-based
+// reporting (warn when close, fail when expired).
+func buildOAuthStatus(account string, expiry time.Time, hasRefresh bool, source string) CredStatus {
 	detail := account
 	if detail == "" {
 		detail = "authenticated"
 	}
+	expireAt := ""
+	if !expiry.IsZero() {
+		expireAt = expiry.Format(time.RFC3339)
+	}
+
+	if hasRefresh {
+		// Deliberately omit ExpireAt: callers like `ccpm list` paint a yellow
+		// "expiring soon" warning whenever ExpireAt is within 7 days, and
+		// access tokens are nearly always within 7 days. The refresh token is
+		// what keeps the profile alive, and `claude` rotates it transparently.
+		if source == "keychain" {
+			detail = fmt.Sprintf("%s (keychain)", detail)
+		}
+		return CredStatus{Valid: true, Method: "oauth", Detail: detail}
+	}
+
 	if !expiry.IsZero() {
 		if time.Now().After(expiry) {
-			return CredStatus{Valid: false, Method: "oauth", Detail: fmt.Sprintf("%s — token expired", detail), ExpireAt: expiry.Format(time.RFC3339)}
+			return CredStatus{Valid: false, Method: "oauth", Detail: fmt.Sprintf("%s — token expired", detail), ExpireAt: expireAt}
 		}
 		remaining := time.Until(expiry)
 		if remaining < 7*24*time.Hour {
 			detail = fmt.Sprintf("%s — expires in %s", detail, remaining.Round(time.Hour))
 		}
-		return CredStatus{Valid: true, Method: "oauth", Detail: detail, ExpireAt: expiry.Format(time.RFC3339)}
+		return CredStatus{Valid: true, Method: "oauth", Detail: detail, ExpireAt: expireAt}
 	}
 	if source == "keychain" {
 		detail = fmt.Sprintf("%s (keychain)", detail)
