@@ -69,9 +69,11 @@ func (c *Checker) checkAPIKey(profileName string) CredStatus {
 func (c *Checker) checkOAuth(profileDir string) CredStatus {
 	claudeFile := filepath.Join(profileDir, ".claude.json")
 
-	// Strategy 1 (macOS): read the namespaced keychain entry Claude Code
-	// writes in v2.1.56+. Gives us the real access token and expiry.
-	if runtime.GOOS == "darwin" {
+	// Strategy 1 (macOS + Windows): read the namespaced OS-credential entry
+	// Claude Code writes in v2.1.56+. Gives us the real access token and
+	// expiry. Linux still falls through to .credentials.json until a
+	// libsecret-backed handler lands.
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		if kc, err := ReadMacKeychainOAuth(profileDir); err == nil && kc != nil && kc.AccessToken != "" {
 			detail := accountDetailFromClaudeJSON(claudeFile)
 			if detail == "" {
