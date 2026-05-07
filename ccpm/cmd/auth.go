@@ -254,16 +254,17 @@ func runAuthRestore(cmd *cobra.Command, args []string) error {
 }
 
 // readOAuthCredentialsForBackup returns the raw bytes to stuff in the vault
-// for an OAuth profile. On macOS we pull from the namespaced keychain entry
-// Claude Code writes; on Linux/Windows we read the legacy .credentials.json.
+// for an OAuth profile. On macOS + Windows we pull from the namespaced
+// OS-credential entry Claude Code writes; on Linux we still read the legacy
+// .credentials.json until a libsecret-backed handler ships.
 func readOAuthCredentialsForBackup(profileDir string) ([]byte, error) {
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		kc, err := credentials.ReadMacKeychainOAuth(profileDir)
 		if err != nil {
-			return nil, fmt.Errorf("reading macOS keychain OAuth entry: %w", err)
+			return nil, fmt.Errorf("reading OS-credential OAuth entry: %w", err)
 		}
 		if kc == nil || kc.Raw == "" {
-			return nil, fmt.Errorf("no OAuth entry found in macOS keychain for this profile; log in with `ccpm auth refresh` first")
+			return nil, fmt.Errorf("no OAuth entry found in the OS credential store for this profile; log in with `ccpm auth refresh` first")
 		}
 		return []byte(kc.Raw), nil
 	}
@@ -277,9 +278,9 @@ func readOAuthCredentialsForBackup(profileDir string) ([]byte, error) {
 
 // writeOAuthCredentialsForRestore is the inverse of readOAuthCredentialsForBackup.
 func writeOAuthCredentialsForRestore(profileDir string, data []byte) error {
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		if err := credentials.WriteMacKeychainOAuth(profileDir, string(data)); err != nil {
-			return fmt.Errorf("writing macOS keychain OAuth entry: %w", err)
+			return fmt.Errorf("writing OS-credential OAuth entry: %w", err)
 		}
 		return nil
 	}
