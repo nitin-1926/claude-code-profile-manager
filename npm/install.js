@@ -70,8 +70,21 @@ async function download(url, dest) {
   });
 }
 
+function warnIfUnverifiedPlatform(os) {
+  if (os === "darwin") return;
+  const yellow = "\x1b[33m";
+  const reset = "\x1b[0m";
+  process.stderr.write(
+    `${yellow}ccpm: ${os} support is experimental.${reset} ` +
+      `OAuth set-default / auth backup / status are verified only on macOS today. ` +
+      `API-key profiles work everywhere. Track Linux/Windows readiness at ` +
+      `https://github.com/${REPO}/issues\n`,
+  );
+}
+
 async function main() {
   const { os, arch } = getPlatform();
+  warnIfUnverifiedPlatform(os);
   const version = await getLatestVersion();
 
   const ext = os === "windows" ? "zip" : "tar.gz";
