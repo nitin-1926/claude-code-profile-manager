@@ -91,15 +91,15 @@ MCP merge (`MaterializeMCP(profileDir, profileName, projectRoot)`): existing pro
 
 ## 6. Authentication matrix
 
-| Method  | Platform | Storage                                                                                                            |
-| ------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| OAuth   | macOS    | Login Keychain under service `Claude Code-credentials-<sha256(abs(CLAUDE_CONFIG_DIR))[:8]>` (Claude Code v2.1.56+) |
-| OAuth   | Linux    | `<profileDir>/.credentials.json`                                                                                   |
-| OAuth   | Windows  | `<profileDir>/.credentials.json`                                                                                   |
-| API key | All      | `go-keyring` — service `ccpm`, account `<profile>`                                                                 |
-| Vault   | All      | AES-256-GCM under `~/.ccpm/vault/<profile>.enc`, master key in `go-keyring` (service `ccpm-vault`)                 |
+| Method  | Platform                | Storage                                                                                                                                                |
+| ------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OAuth   | macOS ✓                 | Login Keychain under service `Claude Code-credentials-<sha256(abs(CLAUDE_CONFIG_DIR))[:8]>`, account = OS user (Claude Code v2.1.56+)                  |
+| OAuth   | Windows ⚠ experimental  | Windows Credential Manager under the same namespaced service / OS-user account convention as macOS — **assumed identical, not yet verified on Windows** |
+| OAuth   | Linux ⚠ experimental    | `<profileDir>/.credentials.json` (legacy fallback; libsecret handler not yet written)                                                                  |
+| API key | All                     | `go-keyring` — service `ccpm`, account `<profile>`                                                                                                     |
+| Vault   | All                     | AES-256-GCM under `~/.ccpm/vault/<profile>.enc`, master key in `go-keyring` (service `ccpm-vault`)                                                     |
 
-Helpers live in `internal/credentials/`. `macos_keychain.go` (build-tagged `darwin`) computes the namespaced service name and reads/writes the Claude Code payload via `go-keyring`. A stub `macos_keychain_other.go` keeps non-darwin builds compiling.
+Helpers live in `internal/credentials/`. `macos_keychain.go` (build-tagged `darwin`) is the verified reference implementation. `wincred_keychain.go` (build-tagged `windows`) mirrors the macOS surface against `go-keyring`'s wincred backend — theoretical until a Windows user exercises `ccpm set-default <oauth>` and reports back. A stub `macos_keychain_other.go` (build-tagged `!darwin && !windows`) keeps Linux + other builds compiling with no-ops; replace it with a libsecret handler when adding real Linux OAuth-isolation support.
 
 ## 7. MCP authentication model
 
@@ -111,9 +111,9 @@ Three categories — any new MCP-related feature must document which it targets.
 
 ## 8. Platform differences
 
-- **Windows**: `syscall.Exec` is not available, so `claude.Exec` is split into `exec_unix.go` and `exec_windows.go`. The Windows path spawns a child and propagates the exit code. Symlinks require Developer Mode; `share.Link` falls back to a recursive copy and writes `~/.ccpm/.windows-copy-fallback` when it does. A one-time stderr warning is emitted.
-- **macOS**: OAuth isolation requires Claude Code `v2.1.56+`. `ccpm doctor` warns on older versions. `ccpm set-default` copies the namespaced keychain entry into the "default" slot so IDE extensions pick up the right account.
-- **Linux**: Requires D-Bus and a running secret service (gnome-keyring or kwallet) for API-key profiles.
+- **macOS** (verified): OAuth isolation requires Claude Code `v2.1.56+`. `ccpm doctor` warns on older versions. `ccpm set-default` copies the namespaced keychain entry into the `~/.claude` slot under the OS-user account so IDE extensions pick up the right account.
+- **Windows** (experimental): `syscall.Exec` is not available, so `claude.Exec` is split into `exec_unix.go` and `exec_windows.go`. The Windows path spawns a child and propagates the exit code. Symlinks require Developer Mode; `share.Link` falls back to a recursive copy and writes `~/.ccpm/.windows-copy-fallback`. OAuth isolation goes through `wincred_keychain.go` against Windows Credential Manager — assumed to use the same namespacing convention as macOS, awaiting Windows-host verification.
+- **Linux** (experimental): Requires D-Bus and a running secret service (gnome-keyring or kwallet) for API-key profiles. OAuth isolation still uses the legacy `.credentials.json` fallback; replace `macos_keychain_other.go` with a libsecret implementation to bring it to parity with macOS / Windows.
 
 ## 9. Directory layout
 
