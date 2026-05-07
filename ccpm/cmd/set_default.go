@@ -134,9 +134,9 @@ func applyOAuthDefault(profileDir string) error {
 		return fmt.Errorf("clearing stale API-key env: %w", err)
 	}
 
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		if err := copyKeychainToDefaultMac(profileDir); err != nil {
-			return fmt.Errorf("could not copy macOS keychain entry into the default slot: %w", err)
+			return fmt.Errorf("could not copy OS-credential entry into the default slot: %w", err)
 		}
 		return nil
 	}
@@ -164,13 +164,13 @@ func applyAPIKeyDefault(profileName string) error {
 	}
 	claudeDir := filepath.Join(home, ".claude")
 
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		if err := credentials.DeleteMacKeychainOAuthDefault(claudeDir); err != nil {
 			return fmt.Errorf("clearing default-slot OAuth: %w", err)
 		}
 	} else {
-		// Non-darwin: remove the plaintext default credentials file so the
-		// extension can't keep using it either.
+		// Linux fallback: remove the plaintext default credentials file so
+		// the extension can't keep using it either.
 		credsPath := filepath.Join(claudeDir, ".credentials.json")
 		if err := os.Remove(credsPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", credsPath, err)
@@ -271,10 +271,11 @@ func copyCredentialsToDefault(profileDir string) error {
 }
 
 // copyKeychainToDefaultMac copies a profile's namespaced keychain OAuth entry
-// into the "plain" Claude Code-credentials entry that IDE extensions read.
-// Both entries are written via go-keyring so ACLs stay permissive.
+// into the namespace IDE extensions read (the one derived from ~/.claude).
+// Used on macOS *and* Windows — both go through go-keyring (Security
+// framework / wincred respectively) so the call sites are identical.
 func copyKeychainToDefaultMac(profileDir string) error {
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		return nil
 	}
 	kc, err := credentials.ReadMacKeychainOAuth(profileDir)
