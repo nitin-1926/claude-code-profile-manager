@@ -37,12 +37,16 @@ func TestCheckAPIKey(t *testing.T) {
 	}
 }
 
-func TestCheckOAuthWithClaudeJSON(t *testing.T) {
+// TestCheckOAuthClaudeJSONOnlyIsInvalid asserts that a profile with only the
+// .claude.json metadata block — and no actual credential file or keychain
+// entry — is reported as INVALID. The metadata only proves "someone logged
+// in here at some point"; trusting it caused `ccpm status` to claim profiles
+// were authenticated even after their tokens expired.
+func TestCheckOAuthClaudeJSONOnlyIsInvalid(t *testing.T) {
 	tmp := t.TempDir()
 	store := keystore.NewMemoryStore()
 	checker := NewChecker(store)
 
-	// Write a .claude.json with oauthAccount
 	claudeJSON := `{
 		"oauthAccount": {
 			"accountUuid": "abc-123",
@@ -54,14 +58,14 @@ func TestCheckOAuthWithClaudeJSON(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, ".claude.json"), []byte(claudeJSON), 0600)
 
 	status := checker.Check(tmp, "test", "oauth")
-	if !status.Valid {
-		t.Errorf("Should be valid with .claude.json oauthAccount, got: %s", status.Detail)
+	if status.Valid {
+		t.Errorf("Should be invalid when only .claude.json exists, got valid: %s", status.Detail)
 	}
 	if !contains(status.Detail, "test@example.com") {
-		t.Errorf("Detail should contain email, got: %s", status.Detail)
+		t.Errorf("Detail should still surface the last-known email, got: %s", status.Detail)
 	}
-	if !contains(status.Detail, "Test User") {
-		t.Errorf("Detail should contain display name, got: %s", status.Detail)
+	if !contains(status.Detail, "auth refresh") {
+		t.Errorf("Detail should hint at re-auth, got: %s", status.Detail)
 	}
 }
 

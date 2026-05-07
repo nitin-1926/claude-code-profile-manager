@@ -97,23 +97,25 @@ func (c *Checker) checkOAuth(profileDir string) CredStatus {
 		}
 	}
 
-	// Strategy 3: fall back to .claude.json metadata. Lower fidelity — no
-	// expiry information — but at least confirms "someone logged in here".
+	// Strategy 3: .claude.json metadata is *only* a hint about who last
+	// logged in; it is NOT proof that current credentials are valid. If we
+	// reach this branch on macOS the keychain entry is missing — the profile
+	// needs a re-login, regardless of how nicely-formatted the metadata is.
+	// Older code marked the profile Valid here, which is why `ccpm status`
+	// could claim a profile was authenticated while `claude` itself prompted
+	// for re-auth.
 	if data, err := os.ReadFile(claudeFile); err == nil {
 		var cj claudeJSON
-		if err := json.Unmarshal(data, &cj); err == nil {
-			if cj.OAuthAccount != nil {
-				email := cj.OAuthAccount.EmailAddress
-				name := cj.OAuthAccount.DisplayName
-				detail := email
-				if name != "" {
-					detail = fmt.Sprintf("%s (%s)", email, name)
-				}
-				return CredStatus{Valid: true, Method: "oauth", Detail: detail}
+		if err := json.Unmarshal(data, &cj); err == nil && cj.OAuthAccount != nil {
+			email := cj.OAuthAccount.EmailAddress
+			name := cj.OAuthAccount.DisplayName
+			who := email
+			if name != "" && email != "" {
+				who = fmt.Sprintf("%s (%s)", email, name)
+			} else if name != "" {
+				who = name
 			}
-			if cj.UserID != "" && runtime.GOOS == "darwin" {
-				return CredStatus{Valid: true, Method: "oauth", Detail: "authenticated (keychain)"}
-			}
+			return CredStatus{Valid: false, Method: "oauth", Detail: fmt.Sprintf("%s — credentials missing, run `ccpm auth refresh`", who)}
 		}
 	}
 
