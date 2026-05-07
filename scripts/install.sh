@@ -26,6 +26,10 @@ detect_platform() {
         *) echo "Error: Unsupported architecture: $ARCH" >&2; exit 1 ;;
     esac
 
+    if [ "$OS" != "darwin" ]; then
+        printf '\033[33mccpm: %s support is experimental.\033[0m OAuth set-default / auth backup / status are verified only on macOS today. API-key profiles work everywhere.\n' "$OS" >&2
+    fi
+
     echo "${OS}_${ARCH}"
 }
 
