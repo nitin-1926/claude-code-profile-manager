@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/user"
 	"path/filepath"
 	"time"
 
@@ -62,13 +63,19 @@ type MacKeychainOAuth struct {
 	Raw          string // raw JSON as stored, for backup round-trips
 }
 
-// commonKeychainAccounts are the possible account values Claude Code uses on
-// macOS. Different versions have flipped between the active user name, the
-// literal "Claude Code", and the empty string, so we try each in order.
-var commonKeychainAccounts = []string{
-	"Claude Code",
-	"claude-code",
-	"default",
+// keychainAccounts returns the candidate account values Claude Code may use
+// on macOS, ordered by current likelihood. Claude Code v2.x writes the entry
+// under the OS user name (verified against `security dump-keychain`), so that
+// must be tried first; the others remain as fallbacks for legacy entries or
+// future drift. The list is built per-call because the OS user is only known
+// at runtime.
+func keychainAccounts() []string {
+	out := make([]string, 0, 4)
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		out = append(out, u.Username)
+	}
+	out = append(out, "Claude Code", "claude-code", "default")
+	return out
 }
 
 // ReadMacKeychainOAuth reads Claude Code's namespaced keychain entry for the
@@ -106,19 +113,25 @@ func ReadMacKeychainOAuth(profileDir string) (*MacKeychainOAuth, error) {
 }
 
 // WriteMacKeychainOAuth writes a raw JSON payload back into the namespaced
-// keychain entry for the given profile dir. Used for `ccpm auth restore`.
+// keychain entry for the given profile dir. Used for `ccpm auth restore` and
+// `ccpm set-default`.
+//
+// We always write under the current OS user (the account Claude Code reads
+// from). To avoid a stale entry under a different account name shadowing the
+// fresh write, every other known account name under the same service is
+// deleted first. Without this cleanup, a previous broken `set-default` that
+// wrote under "Claude Code" would silently keep being read by older clients.
 func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	service, err := KeychainService(profileDir)
 	if err != nil {
 		return err
 	}
-	// Prefer the first account we already stored under; if none exists, pick
-	// the first default so restores work even on a fresh machine.
-	account := commonKeychainAccounts[0]
-	if existing, which, err := readKeychainAnyAccountWithName(service); err == nil && existing != "" {
-		account = which
+	accounts := keychainAccounts()
+	primary := accounts[0]
+	for _, account := range accounts[1:] {
+		_ = keyring.Delete(service, account)
 	}
-	return keyring.Set(service, account, raw)
+	return keyring.Set(service, primary, raw)
 }
 
 // DeleteMacKeychainOAuth removes the namespaced keychain entry for a profile.
@@ -129,7 +142,7 @@ func DeleteMacKeychainOAuth(profileDir string) error {
 		return err
 	}
 	var firstErr error
-	for _, account := range commonKeychainAccounts {
+	for _, account := range keychainAccounts() {
 		if err := keyring.Delete(service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 			if firstErr == nil {
 				firstErr = err
@@ -150,7 +163,7 @@ func DeleteMacKeychainOAuthDefault(homeClaudeDir string) error {
 		return err
 	}
 	var firstErr error
-	for _, account := range commonKeychainAccounts {
+	for _, account := range keychainAccounts() {
 		if err := keyring.Delete(service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 			if firstErr == nil {
 				firstErr = err
@@ -167,7 +180,7 @@ func readKeychainAnyAccount(service string) (string, error) {
 
 func readKeychainAnyAccountWithName(service string) (string, string, error) {
 	var lastErr error
-	for _, account := range commonKeychainAccounts {
+	for _, account := range keychainAccounts() {
 		v, err := keyring.Get(service, account)
 		if err == nil {
 			return v, account, nil
