@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 )
@@ -81,6 +82,33 @@ func TestCheckOAuthWithCredentialsFile(t *testing.T) {
 	status := checker.Check(tmp, "test", "oauth")
 	if !status.Valid {
 		t.Errorf("Should be valid with .credentials.json, got: %s", status.Detail)
+	}
+}
+
+// TestCheckOAuthShortLivedAccessTokenWithRefreshIsHealthy guards the listing
+// behavior: Claude OAuth issues ~1h access tokens with a refresh token, and
+// `claude` refreshes silently on use. So a healthy profile should NOT show a
+// near-expiry warning when a refresh token is present, even if the access
+// token is minutes from expiring.
+func TestCheckOAuthShortLivedAccessTokenWithRefreshIsHealthy(t *testing.T) {
+	tmp := t.TempDir()
+	store := keystore.NewMemoryStore()
+	checker := NewChecker(store)
+
+	// Access token expires in 30 min, refresh token present.
+	soon := time.Now().Add(30 * time.Minute).UTC().Format(time.RFC3339)
+	credsJSON := `{"accessToken":"a","refreshToken":"r","expiresAt":"` + soon + `"}`
+	os.WriteFile(filepath.Join(tmp, ".credentials.json"), []byte(credsJSON), 0600)
+
+	status := checker.Check(tmp, "test", "oauth")
+	if !status.Valid {
+		t.Errorf("Should be valid when refresh token is present, got: %s", status.Detail)
+	}
+	if contains(status.Detail, "expires in") {
+		t.Errorf("Detail should not warn about access-token expiry when refresh is present, got: %s", status.Detail)
+	}
+	if status.ExpireAt != "" {
+		t.Errorf("ExpireAt should be empty so callers don't render an expiry warning, got: %q", status.ExpireAt)
 	}
 }
 
