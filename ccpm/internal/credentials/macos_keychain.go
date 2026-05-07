@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"time"
@@ -113,8 +114,18 @@ func ReadMacKeychainOAuth(profileDir string) (*MacKeychainOAuth, error) {
 }
 
 // WriteMacKeychainOAuth writes a raw JSON payload back into the namespaced
-// keychain entry for the given profile dir. Used for `ccpm auth restore` and
-// `ccpm set-default`.
+// keychain entry for the given profile dir. Used for `ccpm auth restore`,
+// `ccpm set-default`, and `ccpm rename` (to migrate the entry across the
+// dir-hash namespace change).
+//
+// We deliberately bypass zalando/go-keyring on the write path: that library
+// wraps every macOS keychain value with a `go-keyring-base64:<base64>` prefix
+// to defend against binary data and macOS truncation quirks. Claude Code
+// reads the keychain with the macOS Security framework directly and sees
+// only the literal stored bytes, so a go-keyring-wrapped payload fails to
+// parse as JSON and the user is prompted to re-login. Shelling out to the
+// `security` CLI gives us byte-identical, prefix-free storage that matches
+// what `claude` itself writes during initial login.
 //
 // We always write under the current OS user (the account Claude Code reads
 // from). To avoid a stale entry under a different account name shadowing the
@@ -131,7 +142,23 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	for _, account := range accounts[1:] {
 		_ = keyring.Delete(service, account)
 	}
-	return keyring.Set(service, primary, raw)
+	// `-U` updates if the entry already exists, otherwise creates it. The
+	// password is passed via argv which is briefly visible in `ps` to the same
+	// user; `claude` itself uses Security.framework directly, but that
+	// requires cgo. The argv exposure window is microseconds for a token only
+	// the local user could already extract from their own keychain.
+	cmd := exec.Command(
+		"/usr/bin/security",
+		"add-generic-password",
+		"-U",
+		"-s", service,
+		"-a", primary,
+		"-w", raw,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("writing keychain entry via security CLI: %w (output: %s)", err, out)
+	}
+	return nil
 }
 
 // DeleteMacKeychainOAuth removes the namespaced keychain entry for a profile.
