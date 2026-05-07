@@ -1033,6 +1033,15 @@ ccpm unset-default`}
           </p>
 
           <H2 id="platforms">Platform support</H2>
+          <Callout type="warn" title="macOS is the only verified platform today">
+            Linux and Windows builds compile, install, and run, but the
+            OAuth-isolation paths (<code>set-default</code>,{" "}
+            <code>auth backup/restore</code>, keychain-based{" "}
+            <code>status</code>) are <strong>experimental</strong> — they have
+            not been exercised against a real Linux Secret Service or Windows
+            Credential Manager install. <strong>macOS now; Linux + Windows
+            coming soon.</strong>
+          </Callout>
           <div className="not-prose my-6 overflow-x-auto rounded-lg border border-border bg-surface shadow-[var(--shadow-card)]">
             <table className="w-full text-[0.875rem]">
               <thead>
@@ -1041,13 +1050,13 @@ ccpm unset-default`}
                     Feature
                   </th>
                   <th scope="col" className="text-left py-2.5 px-4 font-mono text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-fg-subtle">
-                    macOS
+                    macOS ✓
                   </th>
                   <th scope="col" className="text-left py-2.5 px-4 font-mono text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-fg-subtle">
-                    Linux
+                    Windows ⚠
                   </th>
                   <th scope="col" className="text-left py-2.5 px-4 font-mono text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-fg-subtle">
-                    Windows
+                    Linux ⚠
                   </th>
                 </tr>
               </thead>
@@ -1057,14 +1066,16 @@ ccpm unset-default`}
                   <td className="py-2.5 px-4">
                     Keychain entry namespaced by profile dir
                   </td>
-                  <td className="py-2.5 px-4">.credentials.json</td>
-                  <td className="py-2.5 px-4">.credentials.json</td>
+                  <td className="py-2.5 px-4">
+                    wincred entry, same namespacing (theoretical)
+                  </td>
+                  <td className="py-2.5 px-4">.credentials.json (legacy)</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="py-2.5 px-4 text-fg">API key storage</td>
                   <td className="py-2.5 px-4">Keychain</td>
-                  <td className="py-2.5 px-4">Secret Service</td>
                   <td className="py-2.5 px-4">Credential Manager</td>
+                  <td className="py-2.5 px-4">Secret Service</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="py-2.5 px-4 text-fg">Parallel sessions</td>
@@ -1075,16 +1086,16 @@ ccpm unset-default`}
                 <tr className="border-b border-border">
                   <td className="py-2.5 px-4 text-fg">Shared skill dedup</td>
                   <td className="py-2.5 px-4">Symlinks</td>
-                  <td className="py-2.5 px-4">Symlinks</td>
                   <td className="py-2.5 px-4">
                     Symlinks (Developer Mode) or copy fallback
                   </td>
+                  <td className="py-2.5 px-4">Symlinks</td>
                 </tr>
                 <tr>
                   <td className="py-2.5 px-4 text-fg">Shell hook</td>
                   <td className="py-2.5 px-4">zsh, bash, fish</td>
-                  <td className="py-2.5 px-4">zsh, bash, fish</td>
                   <td className="py-2.5 px-4">PowerShell</td>
+                  <td className="py-2.5 px-4">zsh, bash, fish</td>
                 </tr>
               </tbody>
             </table>
@@ -1108,9 +1119,12 @@ ccpm unset-default`}
             The VS Code Claude extension always reads from{" "}
             <code>~/.claude</code>. Use{" "}
             <code>ccpm set-default &lt;profile&gt;</code> to point it at a
-            specific ccpm profile. On macOS, this copies the profile&apos;s
-            namespaced keychain entry into the default slot; on Linux and
-            Windows it copies <code>.credentials.json</code>.
+            specific ccpm profile. On macOS (verified) and Windows
+            (experimental) this copies the profile&apos;s namespaced
+            credential-store entry into the default slot under the OS-user
+            account; on Linux it falls back to copying{" "}
+            <code>.credentials.json</code> until a libsecret-backed handler
+            ships.
           </Callout>
 
           <Callout type="warn" title="Windows symlink fallback">
