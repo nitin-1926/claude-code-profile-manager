@@ -67,7 +67,7 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 - **Encrypted vault**: AES-256-GCM encrypted credential backups with master key in your OS keychain
 - **IDE support**: set the default profile for VS Code with `ccpm set-default`
 - **Shell integration**: `ccpm use` sets the profile for your entire shell session
-- **Cross-platform**: macOS Keychain, Linux Secret Service, Windows Credential Manager
+- **macOS first**: macOS Keychain is the verified path today. Linux (Secret Service) and Windows (Credential Manager) builds compile and ship, but OAuth `set-default` / `auth backup` / `status` on those platforms are **experimental** until a maintainer verifies them on real hardware.
 
 ## Commands
 
@@ -322,13 +322,15 @@ ccpm is 100% local. It never makes network requests, never collects data, and ne
 
 ## Platform support
 
-| Feature            | macOS                                    | Linux               | Windows                               |
-| ------------------ | ---------------------------------------- | ------------------- | ------------------------------------- |
-| OAuth per-profile  | Keychain entry namespaced by profile dir | `.credentials.json` | `.credentials.json`                   |
-| API key storage    | Keychain                                 | Secret Service      | Credential Manager                    |
-| Parallel sessions  | Yes                                      | Yes                 | Yes                                   |
-| Shared skill dedup | Symlinks (`~/.ccpm/share`)               | Symlinks            | Symlinks (Developer Mode) or copy[^1] |
-| Shell hook         | zsh, bash, fish                          | zsh, bash, fish     | PowerShell                            |
+> **macOS is the only verified platform today.** Linux and Windows builds compile, install, and run, but the OAuth-isolation paths (`set-default`, `auth backup/restore`, keychain-based `status`) are **experimental** — they have not been exercised against a real Linux Secret Service or Windows Credential Manager install. **macOS now; Linux + Windows coming soon.**
+
+| Feature            | macOS ✓ verified                         | Windows ⚠ experimental                                | Linux ⚠ experimental |
+| ------------------ | ---------------------------------------- | ----------------------------------------------------- | -------------------- |
+| OAuth per-profile  | Keychain entry namespaced by profile dir | wincred entry namespaced by profile dir (theoretical) | `.credentials.json`  |
+| API key storage    | Keychain                                 | Credential Manager                                    | Secret Service       |
+| Parallel sessions  | Yes                                      | Yes                                                   | Yes                  |
+| Shared skill dedup | Symlinks (`~/.ccpm/share`)               | Symlinks (Developer Mode) or copy[^1]                 | Symlinks             |
+| Shell hook         | zsh, bash, fish                          | PowerShell                                            | zsh, bash, fish      |
 
 [^1]: Without Developer Mode or admin, Windows users cannot create symlinks; ccpm falls back to copying and leaves a marker at `~/.ccpm/.windows-copy-fallback`. Turn on Developer Mode for true deduplication.
 
@@ -344,7 +346,7 @@ MCP servers authenticate in one of three ways, and ccpm isolates each differentl
 
 ## Known limitations
 
-- **VS Code extension**: The Claude VS Code extension always reads from `~/.claude`. Use `ccpm set-default` to point it at a specific ccpm profile. On macOS, `set-default` copies the profile's namespaced keychain OAuth entry into the default slot; on Linux/Windows it copies `.credentials.json`.
+- **VS Code extension**: The Claude VS Code extension always reads from `~/.claude`. Use `ccpm set-default` to point it at a specific ccpm profile. On macOS (verified) and Windows (experimental) `set-default` copies the profile's namespaced credential-store OAuth entry into the default slot; on Linux it falls back to copying `.credentials.json` until a Secret-Service handler ships.
 - **Linux headless**: `go-keyring` requires D-Bus and a secret service (gnome-keyring or kwallet). On headless servers, API-key profiles need a running secret service.
 - **Globally-cached MCP servers**: see the MCP auth section above — these cannot be isolated across profiles.
 
