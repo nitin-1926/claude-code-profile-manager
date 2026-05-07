@@ -84,6 +84,22 @@ func (v *Vault) Exists(profileName string) bool {
 	return err == nil
 }
 
+func (v *Vault) Rename(oldName, newName string) error {
+	vaultDir, err := config.VaultDir()
+	if err != nil {
+		return err
+	}
+	oldPath := filepath.Join(vaultDir, oldName+".enc")
+	newPath := filepath.Join(vaultDir, newName+".enc")
+	if _, err := os.Stat(oldPath); os.IsNotExist(err) {
+		return nil // no vault backup to rename
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return fmt.Errorf("renaming vault backup: %w", err)
+	}
+	return nil
+}
+
 func (v *Vault) Remove(profileName string) error {
 	vaultDir, err := config.VaultDir()
 	if err != nil {

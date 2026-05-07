@@ -200,6 +200,20 @@ func (c *Config) RemoveProfile(name string) {
 	delete(c.Profiles, name)
 }
 
+func (c *Config) RenameProfile(oldName, newName, newDir string) {
+	p, ok := c.Profiles[oldName]
+	if !ok {
+		return
+	}
+	p.Name = newName
+	p.Dir = newDir
+	delete(c.Profiles, oldName)
+	c.Profiles[newName] = p
+	if c.DefaultProfile == oldName {
+		c.DefaultProfile = newName
+	}
+}
+
 func (c *Config) UpdateLastUsed(name string) {
 	if p, ok := c.Profiles[name]; ok {
 		p.LastUsed = time.Now().UTC().Format(time.RFC3339)

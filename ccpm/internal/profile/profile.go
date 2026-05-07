@@ -78,6 +78,42 @@ func Create(name string) (string, error) {
 	return dir, nil
 }
 
+func Rename(oldName, newName string) error {
+	if err := ValidateName(newName); err != nil {
+		return err
+	}
+
+	oldDir, err := GetDir(oldName)
+	if err != nil {
+		return err
+	}
+	newDir, err := GetDir(newName)
+	if err != nil {
+		return err
+	}
+
+	exists, err := Exists(oldName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("profile %q not found", oldName)
+	}
+
+	newExists, err := Exists(newName)
+	if err != nil {
+		return err
+	}
+	if newExists {
+		return fmt.Errorf("profile %q already exists", newName)
+	}
+
+	if err := os.Rename(oldDir, newDir); err != nil {
+		return fmt.Errorf("renaming profile directory: %w", err)
+	}
+	return nil
+}
+
 func Remove(name string) error {
 	dir, err := GetDir(name)
 	if err != nil {
