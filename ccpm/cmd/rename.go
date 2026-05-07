@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
@@ -42,6 +47,41 @@ func runRename(cmd *cobra.Command, args []string) error {
 	}
 	if _, exists := cfg.Profiles[newName]; exists {
 		return fmt.Errorf("profile %q already exists", newName)
+	}
+
+	// If newName isn't in the registry but a directory by that name still
+	// exists on disk, it's an orphan from an earlier rename/import that didn't
+	// clean up — `claude` running inside a previously-renamed dir can also
+	// re-create it. profile.Rename would refuse with a misleading "profile
+	// already exists" message, so handle the case here with a clear summary
+	// and an explicit confirmation.
+	newDirPath, err := profile.GetDir(newName)
+	if err != nil {
+		return err
+	}
+	if info, statErr := os.Stat(newDirPath); statErr == nil && info.IsDir() {
+		fileCount, totalBytes := summarizeDir(newDirPath)
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"Directory %s exists on disk but is not a registered profile.\n"+
+				"  contents: %d file(s), %s\n",
+			newDirPath, fileCount, humanizeBytes(totalBytes))
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("orphan directory %q present; refusing to clobber in non-interactive mode (remove it manually first)", newDirPath)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "Remove this directory and continue with the rename? [y/N]: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		if strings.TrimSpace(strings.ToLower(input)) != "y" {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Cancelled.")
+			return nil
+		}
+		// Best-effort: also delete any orphan keychain entry whose namespace
+		// hashes from this exact path. If `claude` had ever logged in here,
+		// the entry is stale anyway.
+		_ = credentials.DeleteMacKeychainOAuth(newDirPath)
+		if err := os.RemoveAll(newDirPath); err != nil {
+			return fmt.Errorf("removing orphan directory: %w", err)
+		}
 	}
 
 	// The macOS keychain entry for OAuth tokens is keyed by sha256(absPath of
@@ -119,4 +159,36 @@ func runRename(cmd *cobra.Command, args []string) error {
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Profile %q renamed to %q\n", oldName, newName)
 	return nil
+}
+
+// summarizeDir walks dir and returns (file count, total bytes). Walk errors
+// are silently skipped — this is purely informational ahead of a confirm
+// prompt, not a measurement we'd act on programmatically.
+func summarizeDir(dir string) (int, int64) {
+	var count int
+	var bytes int64
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		count++
+		if info, ierr := d.Info(); ierr == nil {
+			bytes += info.Size()
+		}
+		return nil
+	})
+	return count, bytes
+}
+
+func humanizeBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
