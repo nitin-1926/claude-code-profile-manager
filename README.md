@@ -84,6 +84,7 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 | `ccpm remove <name>`      | Delete a profile                               |
 | `ccpm shell-init`         | Print shell hook for `ccpm use` support        |
 | `ccpm sync`               | Sync global installs into all (or one) profile |
+| `ccpm consolidate`        | Audit (and optionally repair) asset drift across host, profile, and project scopes |
 
 ### Assets (skills, agents, commands, rules)
 

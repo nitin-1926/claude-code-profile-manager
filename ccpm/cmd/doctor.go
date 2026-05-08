@@ -28,7 +28,11 @@ var doctorCmd = &cobra.Command{
   - Compare ~/.claude contents against profiles (unadopted items)
   - Check symlink integrity for shared skills
   - Show drift against the last ~/.claude fingerprint
-  - Flag platform-specific caveats (e.g. macOS OAuth requires Claude Code 2.1.56+)`,
+  - Flag platform-specific caveats (e.g. macOS OAuth requires Claude Code 2.1.56+)
+
+doctor is read-only. To audit and repair asset drift across host, profile,
+and project scopes (duplicates, dangling symlinks, ghost manifest entries,
+budget overflow), run ` + "`ccpm consolidate`" + ` instead.`,
 	RunE: runDoctor,
 }
 
