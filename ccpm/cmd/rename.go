@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -114,6 +115,15 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Plugin metadata files (`installed_plugins.json`, `known_marketplaces.json`)
+	// store absolute paths under the old profile dir. `os.Rename` only moves the
+	// directory itself; those embedded paths still point at <oldDir>, so Claude
+	// Code silently fails to load every affected plugin under the new name.
+	// Rewrite them in place.
+	if err := rewritePluginMetadataPaths(newDir, oldDir, newDir); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not rewrite plugin metadata paths: %v\n", err)
+	}
+
 	// Replay the OAuth keychain entry under the new dir's hash. If write fails,
 	// roll back the directory rename so the user isn't left with a profile dir
 	// that no longer matches its keychain namespace.
@@ -178,6 +188,89 @@ func summarizeDir(dir string) (int, int64) {
 		return nil
 	})
 	return count, bytes
+}
+
+// rewritePluginMetadataPaths rewrites every absolute path beginning with oldDir
+// inside profileDir/plugins/{installed_plugins.json,known_marketplaces.json} to
+// begin with newDir instead. Each file is parsed as untyped JSON so that
+// fields the schema picks up later (added by Claude Code or new ccpm versions)
+// are preserved verbatim. Returns nil silently when a file is absent.
+func rewritePluginMetadataPaths(profileDir, oldDir, newDir string) error {
+	files := []string{
+		filepath.Join(profileDir, "plugins", "installed_plugins.json"),
+		filepath.Join(profileDir, "plugins", "known_marketplaces.json"),
+	}
+	for _, path := range files {
+		if err := rewriteAbsPathsInJSON(path, oldDir, newDir); err != nil {
+			return fmt.Errorf("rewriting %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// rewriteAbsPathsInJSON loads path as a generic JSON value, walks it, and for
+// every string that is exactly oldPrefix or starts with oldPrefix + "/" rewrites
+// the prefix to newPrefix. Writes the result back atomically with 0600 perms
+// only if a rewrite actually occurred (so a touch-rename remains a no-op for
+// untouched files). Missing files are treated as success.
+func rewriteAbsPathsInJSON(path, oldPrefix, newPrefix string) error {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var doc interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+	rewrote := false
+	doc = walkRewrite(doc, oldPrefix, newPrefix, &rewrote)
+	if !rewrote {
+		return nil
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func walkRewrite(v interface{}, oldPrefix, newPrefix string, rewrote *bool) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		for k, sub := range t {
+			t[k] = walkRewrite(sub, oldPrefix, newPrefix, rewrote)
+		}
+		return t
+	case []interface{}:
+		for i, sub := range t {
+			t[i] = walkRewrite(sub, oldPrefix, newPrefix, rewrote)
+		}
+		return t
+	case string:
+		if t == oldPrefix {
+			*rewrote = true
+			return newPrefix
+		}
+		if strings.HasPrefix(t, oldPrefix+string(os.PathSeparator)) {
+			*rewrote = true
+			return newPrefix + t[len(oldPrefix):]
+		}
+		return t
+	default:
+		return v
+	}
 }
 
 func humanizeBytes(n int64) string {
