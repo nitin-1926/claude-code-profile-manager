@@ -149,3 +149,120 @@ func TestClearAPIKeyEnvIsNoopIfMissing(t *testing.T) {
 		t.Fatalf("clearAPIKeyEnv on missing file: %v", err)
 	}
 }
+
+func TestSyncOAuthIdentityToDefaultRewritesIdentityKeys(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	profileDir := filepath.Join(tmp, "profile")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	srcRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{
+			"emailAddress":     "cin@example.com",
+			"organizationName": "CIN Org",
+		},
+		"userID":      "cin-user-id",
+		"projects":    map[string]interface{}{"/foo": "bar"}, // must NOT leak into ~/.claude.json
+	})
+	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), srcRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-existing ~/.claude.json with a stale identity and unrelated state.
+	homeRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{
+			"emailAddress":     "labs@example.com",
+			"organizationName": "Labs Org",
+		},
+		"userID":         "labs-user-id",
+		"customApiKeyResponses": map[string]interface{}{"approved": []string{"x"}},
+	})
+	if err := os.WriteFile(filepath.Join(tmp, ".claude.json"), homeRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncOAuthIdentityToDefault(profileDir); err != nil {
+		t.Fatalf("syncOAuthIdentityToDefault: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(tmp, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatal(err)
+	}
+	oa, _ := out["oauthAccount"].(map[string]interface{})
+	if oa["emailAddress"] != "cin@example.com" {
+		t.Errorf("emailAddress not synced: %v", oa)
+	}
+	if oa["organizationName"] != "CIN Org" {
+		t.Errorf("organizationName not synced: %v", oa)
+	}
+	if out["userID"] != "cin-user-id" {
+		t.Errorf("userID not synced: %v", out["userID"])
+	}
+	// Unrelated keys must be preserved.
+	if _, has := out["customApiKeyResponses"]; !has {
+		t.Errorf("unrelated key was dropped: %v", out)
+	}
+	// Profile-only keys must NOT bleed in.
+	if _, has := out["projects"]; has {
+		t.Errorf("non-identity key leaked into ~/.claude.json: %v", out)
+	}
+}
+
+func TestSyncOAuthIdentityToDefaultIsNoopWhenSourceMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	profileDir := filepath.Join(tmp, "profile")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// No .claude.json in profileDir.
+	if err := syncOAuthIdentityToDefault(profileDir); err != nil {
+		t.Fatalf("expected no-op, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".claude.json")); !os.IsNotExist(err) {
+		t.Errorf("expected ~/.claude.json untouched, got err=%v", err)
+	}
+}
+
+func TestSyncOAuthIdentityToDefaultCreatesHomeFileIfNeeded(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	profileDir := filepath.Join(tmp, "profile")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	srcRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{"emailAddress": "x@y.z"},
+	})
+	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), srcRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncOAuthIdentityToDefault(profileDir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(tmp, ".claude.json"))
+	if err != nil {
+		t.Fatalf("~/.claude.json not created: %v", err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatal(err)
+	}
+	oa, _ := out["oauthAccount"].(map[string]interface{})
+	if oa["emailAddress"] != "x@y.z" {
+		t.Errorf("identity not written: %v", out)
+	}
+}

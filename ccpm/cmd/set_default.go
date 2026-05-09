@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -138,10 +139,96 @@ func applyOAuthDefault(profileDir string) error {
 		if err := copyKeychainToDefaultMac(profileDir); err != nil {
 			return fmt.Errorf("could not copy OS-credential entry into the default slot: %w", err)
 		}
+	} else {
+		if err := copyCredentialsToDefault(profileDir); err != nil {
+			return fmt.Errorf("could not copy credentials to ~/.claude/: %w", err)
+		}
+	}
+
+	// Claude Code displays the welcome banner identity (email, org name) from
+	// the cached `oauthAccount` block in ~/.claude.json, NOT from the keychain
+	// token. Without syncing it here, `claude` runs with the new profile's
+	// credentials but shows the previous default's email until the next /me
+	// fetch overwrites it — which looks like set-default did nothing.
+	if err := syncOAuthIdentityToDefault(profileDir); err != nil {
+		return fmt.Errorf("syncing identity into ~/.claude.json: %w", err)
+	}
+	return nil
+}
+
+// syncOAuthIdentityToDefault copies the identity fields Claude Code shows in
+// its welcome banner (`oauthAccount`, `userID`) from the profile's
+// `.claude.json` into `~/.claude.json`, leaving every other key untouched.
+// Returns nil silently when the source has no identity to copy (e.g. a
+// freshly-added profile that has not started Claude Code yet).
+func syncOAuthIdentityToDefault(profileDir string) error {
+	src, err := readClaudeJSON(filepath.Join(profileDir, ".claude.json"))
+	if err != nil {
+		return err
+	}
+	if src == nil {
 		return nil
 	}
-	if err := copyCredentialsToDefault(profileDir); err != nil {
-		return fmt.Errorf("could not copy credentials to ~/.claude/: %w", err)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dstPath := filepath.Join(home, ".claude.json")
+	dst, err := readClaudeJSON(dstPath)
+	if err != nil {
+		return err
+	}
+	if dst == nil {
+		dst = map[string]interface{}{}
+	}
+
+	wrote := false
+	for _, key := range []string{"oauthAccount", "userID"} {
+		if v, ok := src[key]; ok {
+			dst[key] = v
+			wrote = true
+		}
+	}
+	if !wrote {
+		return nil
+	}
+	return writeClaudeJSON(dstPath, dst)
+}
+
+func readClaudeJSON(path string) (map[string]interface{}, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return m, nil
+}
+
+// writeClaudeJSON serializes the map back to disk atomically with 0600 perms,
+// matching how Claude Code itself writes the file.
+func writeClaudeJSON(path string, data map[string]interface{}) error {
+	bytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	bytes = append(bytes, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, bytes, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return nil
 }

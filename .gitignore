@@ -37,3 +37,4 @@ graphify-out/*
 .reviews/
 .playwright-mcp/*
 .gitnexus
+plans/*
