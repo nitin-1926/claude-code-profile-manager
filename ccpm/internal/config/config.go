@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 )
 
 const (
@@ -83,6 +85,16 @@ func ProfilesDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "profiles"), nil
+}
+
+// LockPath returns the path to the advisory lock file that serializes
+// credential- and config-mutating commands. See internal/lock.
+func LockPath() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, ".lock"), nil
 }
 
 func VaultDir() (string, error) {
@@ -169,15 +181,14 @@ func Save(cfg *Config) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	// Atomic write: write to temp file, then rename. FilePerm is 0600 so the
-	// config (which lists every profile path + auth method) is not readable
-	// by other local users on shared hosts.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, FilePerm); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	// Atomic, crash-safe write via the shared atomicwrite package: it stages to
+	// a crypto-random temp name (so two concurrent ccpm processes can't clobber
+	// each other's temp file) and renames into place, rolling back on failure.
+	// FilePerm is 0600 so the config (which lists every profile path + auth
+	// method) is not readable by other local users on shared hosts.
+	if err := atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(path, data, FilePerm),
+	}); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 	return nil
