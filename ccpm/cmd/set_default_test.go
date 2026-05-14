@@ -319,3 +319,179 @@ func TestShouldSaveBackEmptyDefaultSlotIsNoop(t *testing.T) {
 		t.Fatal("empty-Raw cur must short-circuit")
 	}
 }
+
+func TestSyncOAuthIdentityFromDefaultPreservesUnrelatedKeysInProfile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	// Home holds the "fresh" identity Claude Code most recently observed (after
+	// rotations / /me fetches while the profile was the default).
+	homeRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{
+			"emailAddress":     "labs@rocketium.com",
+			"organizationName": "Labs Org",
+		},
+		"userID":   "labs-fresh-uid",
+		"projects": map[string]interface{}{"/home-only": "x"}, // must NOT bleed into profile
+	})
+	if err := os.WriteFile(filepath.Join(tmp, ".claude.json"), homeRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Profile holds a stale identity plus profile-only state that must survive.
+	profileDir := filepath.Join(tmp, "profile-labs")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	profileRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{
+			"emailAddress":     "labs@rocketium.com",
+			"organizationName": "Labs Org (stale)",
+		},
+		"userID":        "labs-stale-uid",
+		"projects":      map[string]interface{}{"/profile-only": "y"},
+		"feedbackSurvey": map[string]interface{}{"answered": true},
+	})
+	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), profileRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncOAuthIdentityFromDefault(profileDir); err != nil {
+		t.Fatalf("syncOAuthIdentityFromDefault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(profileDir, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatal(err)
+	}
+	oa, _ := out["oauthAccount"].(map[string]interface{})
+	if oa["organizationName"] != "Labs Org" {
+		t.Errorf("identity not refreshed in profile: %v", oa)
+	}
+	if out["userID"] != "labs-fresh-uid" {
+		t.Errorf("userID not refreshed: %v", out["userID"])
+	}
+	// Profile-only keys must survive.
+	if _, has := out["feedbackSurvey"]; !has {
+		t.Errorf("unrelated profile key dropped: %v", out)
+	}
+	prj, _ := out["projects"].(map[string]interface{})
+	if _, has := prj["/profile-only"]; !has {
+		t.Errorf("profile-only project entry was lost: %v", prj)
+	}
+	if _, has := prj["/home-only"]; has {
+		t.Errorf("home-only project entry leaked into profile: %v", prj)
+	}
+}
+
+func TestSyncOAuthIdentityFromDefaultIsNoopWhenHomeMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	profileDir := filepath.Join(tmp, "profile")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	existing, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{"emailAddress": "keep@me.com"},
+		"userID":       "keep-uid",
+	})
+	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), existing, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// No ~/.claude.json present.
+	if err := syncOAuthIdentityFromDefault(profileDir); err != nil {
+		t.Fatalf("expected no-op, got: %v", err)
+	}
+
+	// Profile file must be untouched.
+	data, _ := os.ReadFile(filepath.Join(profileDir, ".claude.json"))
+	var out map[string]interface{}
+	_ = json.Unmarshal(data, &out)
+	oa, _ := out["oauthAccount"].(map[string]interface{})
+	if oa["emailAddress"] != "keep@me.com" {
+		t.Errorf("profile identity changed unexpectedly: %v", oa)
+	}
+}
+
+func TestSyncOAuthIdentityFromDefaultCreatesProfileFileIfNeeded(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	homeRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{"emailAddress": "fresh@x.y"},
+		"userID":       "fresh-uid",
+	})
+	if err := os.WriteFile(filepath.Join(tmp, ".claude.json"), homeRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	profileDir := filepath.Join(tmp, "profile") // does not yet exist
+	if err := syncOAuthIdentityFromDefault(profileDir); err != nil {
+		t.Fatalf("syncOAuthIdentityFromDefault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(profileDir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("profile .claude.json not created: %v", err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatal(err)
+	}
+	oa, _ := out["oauthAccount"].(map[string]interface{})
+	if oa["emailAddress"] != "fresh@x.y" {
+		t.Errorf("identity not written: %v", out)
+	}
+}
+
+func TestCopyCredentialsFromDefaultCopiesAndCreatesDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	defaultClaude := filepath.Join(tmp, ".claude")
+	if err := os.MkdirAll(defaultClaude, 0755); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"claudeAiOauth":{"accessToken":"A","refreshToken":"R","expiresAt":1}}`)
+	if err := os.WriteFile(filepath.Join(defaultClaude, ".credentials.json"), payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	prevDir := filepath.Join(tmp, "profile-prev")
+	if err := copyCredentialsFromDefault(prevDir); err != nil {
+		t.Fatalf("copyCredentialsFromDefault: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(prevDir, ".credentials.json"))
+	if err != nil {
+		t.Fatalf("credentials not copied: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Errorf("payload mismatch: %s vs %s", got, payload)
+	}
+}
+
+func TestCopyCredentialsFromDefaultIsNoopWhenSourceMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	prevDir := filepath.Join(tmp, "profile-prev")
+	if err := copyCredentialsFromDefault(prevDir); err != nil {
+		t.Fatalf("expected no-op, got %v", err)
+	}
+	// Nothing should have been created.
+	if _, err := os.Stat(filepath.Join(prevDir, ".credentials.json")); !os.IsNotExist(err) {
+		t.Errorf("destination should not have been created when source absent (err=%v)", err)
+	}
+}
