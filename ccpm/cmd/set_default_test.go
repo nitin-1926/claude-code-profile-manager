@@ -236,3 +236,86 @@ func TestSyncOAuthIdentityToDefaultIsNoopWhenSourceMissing(t *testing.T) {
 		t.Errorf("expected ~/.claude.json untouched, got err=%v", err)
 	}
 }
+
+func TestShouldSaveBackPreservesFresherProfileSlot(t *testing.T) {
+	// Profile slot is FRESHER than default (recent `ccpm run X claude /login`).
+	// Save-back must NOT overwrite — that would destroy the user's re-login.
+	prev := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"FRESH","refreshToken":"FRESH-R","expiresAt":2000000000000}}`,
+		ExpiresAt: time.UnixMilli(2000000000000),
+	}
+	cur := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"STALE","refreshToken":"STALE-R","expiresAt":1000000000000}}`,
+		ExpiresAt: time.UnixMilli(1000000000000),
+	}
+	if shouldSaveBack(prev, cur) {
+		t.Fatal("must not overwrite a fresher profile slot with stale default content")
+	}
+}
+
+func TestShouldSaveBackSavesFresherDefaultSlot(t *testing.T) {
+	// Default slot is FRESHER (drift scenario — plain `claude` rotated tokens
+	// while this profile was active). Save-back captures the rotation.
+	prev := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"STALE","refreshToken":"STALE-R","expiresAt":1000000000000}}`,
+		ExpiresAt: time.UnixMilli(1000000000000),
+	}
+	cur := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"FRESH","refreshToken":"FRESH-R","expiresAt":2000000000000}}`,
+		ExpiresAt: time.UnixMilli(2000000000000),
+	}
+	if !shouldSaveBack(prev, cur) {
+		t.Fatal("must overwrite a stale profile slot with fresher default content")
+	}
+}
+
+func TestShouldSaveBackEqualPayloadIsNoop(t *testing.T) {
+	raw := `{"claudeAiOauth":{"accessToken":"SAME","refreshToken":"SAME-R","expiresAt":1500000000000}}`
+	exp := time.UnixMilli(1500000000000)
+	prev := &credentials.MacKeychainOAuth{Raw: raw, ExpiresAt: exp}
+	cur := &credentials.MacKeychainOAuth{Raw: raw, ExpiresAt: exp}
+	if shouldSaveBack(prev, cur) {
+		t.Fatal("identical payloads must short-circuit the save-back")
+	}
+}
+
+func TestShouldSaveBackEqualExpiryPreservesProfileSlot(t *testing.T) {
+	// Same expiresAt but different Raw — could be a benign re-issuance or a
+	// genuine drift, but we err on the side of preserving the profile slot
+	// since `ccpm run … /login` produces the exact same expiresAt as the
+	// default-slot tokens it just replaced. Profile wins ties.
+	prev := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"PROFILE","refreshToken":"P-R","expiresAt":1500000000000}}`,
+		ExpiresAt: time.UnixMilli(1500000000000),
+	}
+	cur := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"DEFAULT","refreshToken":"D-R","expiresAt":1500000000000}}`,
+		ExpiresAt: time.UnixMilli(1500000000000),
+	}
+	if shouldSaveBack(prev, cur) {
+		t.Fatal("tie on expiresAt must preserve the profile slot, not overwrite it")
+	}
+}
+
+func TestShouldSaveBackEmptyProfileSlotIsPopulated(t *testing.T) {
+	cur := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"X","refreshToken":"Y","expiresAt":2000000000000}}`,
+		ExpiresAt: time.UnixMilli(2000000000000),
+	}
+	if !shouldSaveBack(nil, cur) {
+		t.Fatal("a missing profile slot should be populated from default")
+	}
+}
+
+func TestShouldSaveBackEmptyDefaultSlotIsNoop(t *testing.T) {
+	prev := &credentials.MacKeychainOAuth{
+		Raw:       `{"claudeAiOauth":{"accessToken":"P","refreshToken":"Q","expiresAt":2000000000000}}`,
+		ExpiresAt: time.UnixMilli(2000000000000),
+	}
+	if shouldSaveBack(prev, nil) {
+		t.Fatal("nil cur must short-circuit")
+	}
+	if shouldSaveBack(prev, &credentials.MacKeychainOAuth{Raw: ""}) {
+		t.Fatal("empty-Raw cur must short-circuit")
+	}
+}
