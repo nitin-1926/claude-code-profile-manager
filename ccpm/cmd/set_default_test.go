@@ -495,3 +495,36 @@ func TestCopyCredentialsFromDefaultIsNoopWhenSourceMissing(t *testing.T) {
 		t.Errorf("destination should not have been created when source absent (err=%v)", err)
 	}
 }
+
+func TestSyncOAuthIdentityToDefaultCreatesHomeFileIfNeeded(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	profileDir := filepath.Join(tmp, "profile")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	srcRaw, _ := json.Marshal(map[string]interface{}{
+		"oauthAccount": map[string]interface{}{"emailAddress": "x@y.z"},
+	})
+	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), srcRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncOAuthIdentityToDefault(profileDir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(tmp, ".claude.json"))
+	if err != nil {
+		t.Fatalf("~/.claude.json not created: %v", err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatal(err)
+	}
+	oa, _ := out["oauthAccount"].(map[string]interface{})
+	if oa["emailAddress"] != "x@y.z" {
+		t.Errorf("identity not written: %v", out)
+	}
+}
