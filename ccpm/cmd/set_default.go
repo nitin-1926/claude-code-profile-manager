@@ -23,13 +23,14 @@ var setDefaultCmd = &cobra.Command{
 	Use:               "set-default [name]",
 	Short:             "Set profile as default for VS Code / IDE extension",
 	Args:              cobra.MaximumNArgs(1),
-	RunE:  runSetDefault,
+	RunE:              lockedRunE(runSetDefault),
+	ValidArgsFunction: completeProfileNames,
 }
 
 var unsetDefaultCmd = &cobra.Command{
 	Use:   "unset-default",
 	Short: "Clear default profile",
-	RunE:  runUnsetDefault,
+	RunE:  lockedRunE(runUnsetDefault),
 }
 
 func init() {
