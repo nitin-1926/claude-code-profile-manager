@@ -114,13 +114,18 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 		// Works around the Claude Code v2.1.x startup-refresh path that 401s
 		// when CLAUDE_CONFIG_DIR resolves to bare ~/.claude. Best-effort: a
 		// failure here doesn't undo the keychain/identity sync above.
-
+		if err := setSystemDefaultConfigDir(p.Dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not register system-wide CLAUDE_CONFIG_DIR: %v\n", err)
+			yellow.Println("  → IDE extensions may not pick up this profile until you restart them with the env set manually.")
+		}
 	case "api_key":
 		// Switching to an API-key profile: undo any system-wide
 		// CLAUDE_CONFIG_DIR we previously set for an OAuth profile. claude
 		// then reads ANTHROPIC_API_KEY from ~/.claude/settings.json's env
 		// block as before.
-
+		if err := clearSystemDefaultConfigDir(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
+		}
 		if err := applyAPIKeyDefault(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		} else {
@@ -155,7 +160,9 @@ func runUnsetDefault(cmd *cobra.Command, args []string) error {
 	// Remove the system-wide CLAUDE_CONFIG_DIR we may have set during a
 	// previous `set-default` for an OAuth profile, so IDE extensions stop
 	// being pinned to any specific profile on next launch.
-
+	if err := clearSystemDefaultConfigDir(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
+	}
 
 	cfg.DefaultProfile = ""
 	if err := config.Save(cfg); err != nil {
