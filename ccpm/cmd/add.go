@@ -130,9 +130,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if key == "" {
+		if err := validateAPIKey(key); err != nil {
 			profile.Remove(name)
-			return fmt.Errorf("API key cannot be empty")
+			return err
 		}
 
 		store := keystore.New()
@@ -144,15 +144,23 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		green.Printf("✓ Profile %q authenticated via API key\n", name)
 	}
 
-	// Auto set-default on first profile
-	isFirstProfile := len(cfg.Profiles) == 0
-
-	// Save to config
-	cfg.AddProfile(name, dir, authMethod)
-	if isFirstProfile {
-		cfg.DefaultProfile = name
-	}
-	if err := config.Save(cfg); err != nil {
+	// Persist the new profile under the global lock (re-loading config inside
+	// the lock so a concurrent ccpm command can't clobber this addition). The
+	// lock is taken here, after all interactive prompts, so the user choosing
+	// an auth method doesn't block other commands.
+	var isFirstProfile bool
+	if err := withConfigLock(func() error {
+		freshCfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("reloading config: %w", err)
+		}
+		isFirstProfile = len(freshCfg.Profiles) == 0
+		freshCfg.AddProfile(name, dir, authMethod)
+		if isFirstProfile {
+			freshCfg.DefaultProfile = name
+		}
+		return config.Save(freshCfg)
+	}); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
@@ -223,7 +231,7 @@ func applyImportDecision(profileDir, profileName string, d wizard.Decision, cfg 
 		if !ok {
 			return fmt.Errorf("source profile %q not found", d.ProfileName)
 		}
-		if err := importFromProfile(srcProfile.Dir, profileDir, d.Targets, false); err != nil {
+		if err := importFromProfile(srcProfile.Dir, profileDir, d.Targets, false, false); err != nil {
 			return err
 		}
 	}
