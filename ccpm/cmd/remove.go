@@ -23,8 +23,9 @@ var removeCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Delete a profile",
 	Aliases: []string{"rm"},
-	Args:  cobra.ExactArgs(1),
-	RunE:  runRemove,
+	Args:              cobra.ExactArgs(1),
+	RunE:              runRemove,
+	ValidArgsFunction: completeProfileNames,
 }
 
 func init() {
@@ -59,31 +60,41 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Remove profile directory
-	if err := profile.Remove(name); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-
-	// Remove API key from keychain if applicable
-	if p.AuthMethod == "api_key" {
-		store := keystore.New()
-		if err := store.DeleteAPIKey(name); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not remove API key from keychain: %v\n", err)
+	// Hold the global lock only for the mutation phase — not the y/N prompt
+	// above — so a user pondering the confirmation doesn't block other ccpm
+	// commands. Re-load config inside the lock so we delete from the freshest
+	// state instead of clobbering a concurrent profile add/rename.
+	return withConfigLock(func() error {
+		// Remove profile directory
+		if err := profile.Remove(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		}
-	}
 
-	// Remove vault backup
-	v := vault.New(keystore.New())
-	if err := v.Remove(name); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not remove vault backup: %v\n", err)
-	}
+		// Remove API key from keychain if applicable
+		if p.AuthMethod == "api_key" {
+			store := keystore.New()
+			if err := store.DeleteAPIKey(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove API key from keychain: %v\n", err)
+			}
+		}
 
-	// Update config
-	cfg.RemoveProfile(name)
-	if err := config.Save(cfg); err != nil {
-		return fmt.Errorf("saving config: %w", err)
-	}
+		// Remove vault backup
+		v := vault.New(keystore.New())
+		if err := v.Remove(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove vault backup: %v\n", err)
+		}
 
-	color.New(color.FgGreen, color.Bold).Printf("✓ Profile %q removed\n", name)
-	return nil
+		// Update config (re-loaded under lock)
+		freshCfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("reloading config: %w", err)
+		}
+		freshCfg.RemoveProfile(name)
+		if err := config.Save(freshCfg); err != nil {
+			return fmt.Errorf("saving config: %w", err)
+		}
+
+		color.New(color.FgGreen, color.Bold).Printf("✓ Profile %q removed\n", name)
+		return nil
+	})
 }

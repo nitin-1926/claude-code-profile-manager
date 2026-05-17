@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
@@ -22,8 +23,9 @@ import (
 var renameCmd = &cobra.Command{
 	Use:   "rename <old-name> <new-name>",
 	Short: "Rename a profile",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runRename,
+	Args:              cobra.ExactArgs(2),
+	RunE:              lockedRunE(runRename),
+	ValidArgsFunction: completeProfileNames,
 }
 
 func init() {
@@ -115,14 +117,14 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Plugin metadata files (`installed_plugins.json`, `known_marketplaces.json`)
-	// store absolute paths under the old profile dir. `os.Rename` only moves the
-	// directory itself; those embedded paths still point at <oldDir>, so Claude
-	// Code silently fails to load every affected plugin under the new name.
-	// Rewrite them in place.
-	if err := rewritePluginMetadataPaths(newDir, oldDir, newDir); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not rewrite plugin metadata paths: %v\n", err)
-	}
+	// Order matters for safe rollback. The keychain migrations below are the
+	// steps that can fail and force us to undo the directory rename. We run them
+	// FIRST, while the only thing to roll back is the `os.Rename` itself. The
+	// plugin-metadata rewrite — which bakes the *new* dir path into JSON on disk
+	// — is deliberately deferred until after the keychain steps succeed, so a
+	// keychain failure never leaves plugin metadata pointing at a directory we
+	// then move back. (A rename profile is either oauth or api_key, so at most
+	// one migration block runs.)
 
 	// Replay the OAuth keychain entry under the new dir's hash. If write fails,
 	// roll back the directory rename so the user isn't left with a profile dir
@@ -145,7 +147,9 @@ func runRename(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read API key from keychain: %v\n", err)
 		} else {
 			if err := store.SetAPIKey(newName, key); err != nil {
-				// Roll back directory rename before returning
+				// Roll back directory rename before returning. No plugin
+				// metadata has been rewritten yet, so the dir and its on-disk
+				// references stay consistent after the rollback.
 				_ = profile.Rename(newName, oldName)
 				return fmt.Errorf("storing API key under new name: %w", err)
 			}
@@ -153,6 +157,18 @@ func runRename(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove old API key from keychain: %v\n", err)
 			}
 		}
+	}
+
+	// Plugin metadata files (`installed_plugins.json`, `known_marketplaces.json`)
+	// store absolute paths under the old profile dir. `os.Rename` only moves the
+	// directory itself; those embedded paths still point at <oldDir>, so Claude
+	// Code silently fails to load every affected plugin under the new name.
+	// Rewrite them in place. Done only after the fallible keychain migrations
+	// above committed, so we never bake newDir into metadata for a rename we
+	// then roll back. A failure here is non-fatal (plugins may not load until a
+	// `ccpm sync`), but the profile identity itself is already consistent.
+	if err := rewritePluginMetadataPaths(newDir, oldDir, newDir); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not rewrite plugin metadata paths: %v\n", err)
 	}
 
 	// Rename vault backup if present
@@ -235,12 +251,9 @@ func rewriteAbsPathsInJSON(path, oldPrefix, newPrefix string) error {
 		return err
 	}
 	out = append(out, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(path, out, config.FilePerm),
+	}); err != nil {
 		return err
 	}
 	return nil
