@@ -31,8 +31,15 @@ var configSetCmd = &cobra.Command{
 var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Print a ccpm config value",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runConfigGet,
+	Long: `Supported keys:
+  check_default_drift   bool — drift-warning setting
+  cascade_auto_adopt    bool — host-asset auto-link setting
+  default_dir           string — absolute path of the current default profile's
+                        directory, or empty if no default is set. Used by
+                        ccpm shell-init's claude() wrapper to set
+                        CLAUDE_CONFIG_DIR for plain 'claude' invocations.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runConfigGet,
 }
 
 func init() {
@@ -85,6 +92,18 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		fmt.Println(cfg.Settings.CheckDefaultDrift)
 	case "cascade_auto_adopt":
 		fmt.Println(cfg.Settings.CascadeAutoAdoptEnabled())
+	case "default_dir":
+		// Print the default profile's directory, or empty when unset.
+		// Designed for shell scripts (notably the claude() wrapper in
+		// ccpm shell-init): always exit 0, no error noise on stderr,
+		// so a missing default profile simply prints "" and the caller
+		// falls through to invoking claude directly.
+		if cfg.DefaultProfile == "" {
+			return nil
+		}
+		if p, ok := cfg.Profiles[cfg.DefaultProfile]; ok {
+			fmt.Println(p.Dir)
+		}
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}
