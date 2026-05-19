@@ -18,10 +18,46 @@ func TestGenerateHookBash(t *testing.T) {
 	}
 }
 
+func TestGenerateHookBashIncludesClaudeWrapper(t *testing.T) {
+	hook := GenerateHook("bash")
+	if !strings.Contains(hook, "claude()") {
+		t.Error("bash hook must define a claude() wrapper so plain `claude` routes via the ccpm default profile")
+	}
+	if !strings.Contains(hook, "CLAUDE_CONFIG_DIR") {
+		t.Error("bash claude() wrapper must set CLAUDE_CONFIG_DIR")
+	}
+	if !strings.Contains(hook, "ccpm config get default_dir") {
+		t.Error("bash claude() wrapper must query 'ccpm config get default_dir'")
+	}
+	if !strings.Contains(hook, "command claude") {
+		t.Error("bash claude() wrapper must call `command claude` to avoid infinite recursion into itself")
+	}
+}
+
 func TestGenerateHookFish(t *testing.T) {
 	hook := GenerateHook("fish")
 	if !strings.Contains(hook, "function ccpm") {
 		t.Error("Fish hook should define ccpm function")
+	}
+}
+
+func TestGenerateHookFishIncludesClaudeWrapper(t *testing.T) {
+	hook := GenerateHook("fish")
+	if !strings.Contains(hook, "function claude") {
+		t.Error("fish hook must define a claude wrapper function")
+	}
+	if !strings.Contains(hook, "ccpm config get default_dir") {
+		t.Error("fish claude wrapper must query 'ccpm config get default_dir'")
+	}
+}
+
+func TestGenerateHookPowershellIncludesClaudeWrapper(t *testing.T) {
+	hook := GenerateHook("powershell")
+	if !strings.Contains(hook, "function claude") {
+		t.Error("powershell hook must define a claude wrapper function")
+	}
+	if !strings.Contains(hook, "default_dir") {
+		t.Error("powershell claude wrapper must query the default_dir config key")
 	}
 }
 
