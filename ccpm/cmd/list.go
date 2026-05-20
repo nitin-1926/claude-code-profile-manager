@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 )
 
+var listJSON bool
+
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Short:   "List all profiles with status",
@@ -22,7 +25,21 @@ var listCmd = &cobra.Command{
 }
 
 func init() {
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "output machine-readable JSON instead of a table")
 	rootCmd.AddCommand(listCmd)
+}
+
+// profileJSON is the stable machine-readable shape emitted by `ccpm list --json`.
+// Field names are snake_case and intended to be a supported scripting contract.
+type profileJSON struct {
+	Name       string `json:"name"`
+	AuthMethod string `json:"auth_method"`
+	Valid      bool   `json:"valid"`
+	Status     string `json:"status"`
+	Default    bool   `json:"default"`
+	LastUsed   string `json:"last_used,omitempty"`
+	ExpireAt   string `json:"expire_at,omitempty"`
+	Dir        string `json:"dir"`
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -32,6 +49,10 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(cfg.Profiles) == 0 {
+		if listJSON {
+			fmt.Println("[]")
+			return nil
+		}
 		fmt.Println("No profiles found. Create one with: ccpm add <name>")
 		return nil
 	}
@@ -45,6 +66,27 @@ func runList(cmd *cobra.Command, args []string) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+
+	if listJSON {
+		out := make([]profileJSON, 0, len(names))
+		for _, name := range names {
+			p := cfg.Profiles[name]
+			status := checker.Check(p.Dir, p.Name, p.AuthMethod)
+			out = append(out, profileJSON{
+				Name:       name,
+				AuthMethod: p.AuthMethod,
+				Valid:      status.Valid,
+				Status:     status.Detail,
+				Default:    cfg.DefaultProfile == name,
+				LastUsed:   p.LastUsed,
+				ExpireAt:   status.ExpireAt,
+				Dir:        p.Dir,
+			})
+		}
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
 
 	green := color.New(color.FgGreen).SprintFunc()
 	red := color.New(color.FgRed).SprintFunc()
