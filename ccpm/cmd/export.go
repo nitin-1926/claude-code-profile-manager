@@ -162,7 +162,136 @@ func runExport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 func runImportBundle(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("import-bundle: not yet available")
+	bundlePath := args[0]
+
+	override, _ := cmd.Flags().GetString("profile")
+
+	name := override
+	if name == "" {
+		// Default the profile name to the bundle's base filename, stripping the
+		// conventional suffixes.
+		base := filepath.Base(bundlePath)
+		base = strings.TrimSuffix(base, ".tar.gz")
+		base = strings.TrimSuffix(base, ".tgz")
+		base = strings.TrimSuffix(base, ".ccpm")
+		name = base
+	}
+	if err := profile.ValidateName(name); err != nil {
+		return fmt.Errorf("derived profile name %q is invalid; pass --profile: %w", name, err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if _, exists := cfg.Profiles[name]; exists {
+		return fmt.Errorf("profile %q already exists (use --profile to pick another name)", name)
+	}
+
+	dstDir, err := profile.Create(name)
+	if err != nil {
+		return fmt.Errorf("creating profile directory: %w", err)
+	}
+
+	if err := extractBundle(bundlePath, dstDir); err != nil {
+		_ = profile.Remove(name)
+		return err
+	}
+
+	if err := settingsmerge.MaterializeAll(dstDir, name, ""); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not materialize settings: %v\n", err)
+	}
+
+	// Detect auth method from what restored on disk; default to oauth.
+	authMethod := "oauth"
+	if _, err := os.Stat(filepath.Join(dstDir, ".credentials.json")); err == nil {
+		authMethod = "oauth"
+	}
+
+	if err := withConfigLock(func() error {
+		freshCfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("reloading config: %w", err)
+		}
+		freshCfg.AddProfile(name, dstDir, authMethod)
+		return config.Save(freshCfg)
+	}); err != nil {
+		_ = profile.Remove(name)
+		return fmt.Errorf("saving config: %w", err)
+	}
+
+	green := color.New(color.FgGreen, color.Bold)
+	green.Printf("✓ Restored profile %q from %s\n", name, bundlePath)
+	fmt.Printf("Authenticate it with:\n  ccpm auth refresh %s\n", name)
+	return nil
+}
+
+// extractBundle safely unpacks a gzipped tar into destDir. It rejects any entry
+// whose path would escape destDir (path-traversal / "zip slip"), refuses
+// absolute paths, and only writes regular files and directories.
+func extractBundle(bundlePath, destDir string) error {
+	f, err := os.Open(bundlePath)
+	if err != nil {
+		return fmt.Errorf("opening bundle: %w", err)
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("reading gzip: %w", err)
+	}
+	defer gz.Close()
+
+	cleanDest := filepath.Clean(destDir)
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading archive: %w", err)
+		}
+
+		// Reject absolute paths and traversal before joining.
+		clean := filepath.Clean(filepath.FromSlash(hdr.Name))
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("refusing unsafe path in bundle: %q", hdr.Name)
+		}
+		target := filepath.Join(cleanDest, clean)
+		// Defense in depth: ensure the joined path is still inside destDir.
+		if target != cleanDest && !strings.HasPrefix(target, cleanDest+string(os.PathSeparator)) {
+			return fmt.Errorf("refusing path escaping profile dir: %q", hdr.Name)
+		}
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, config.DirPerm); err != nil {
+				return fmt.Errorf("creating dir %q: %w", target, err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), config.DirPerm); err != nil {
+				return fmt.Errorf("creating parent of %q: %w", target, err)
+			}
+			mode := os.FileMode(hdr.Mode).Perm()
+			if mode == 0 {
+				mode = config.FilePerm
+			}
+			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+			if err != nil {
+				return fmt.Errorf("creating %q: %w", target, err)
+			}
+			// Cap the copy to guard against a maliciously huge bundle entry.
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return fmt.Errorf("writing %q: %w", target, err)
+			}
+			out.Close()
+		default:
+			// Skip symlinks, devices, etc. — bundles only carry files/dirs.
+			continue
+		}
+	}
+	return nil
 }
