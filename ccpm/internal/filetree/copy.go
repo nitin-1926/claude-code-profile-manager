@@ -22,6 +22,22 @@ import (
 // pointing at ~/.ssh or /etc would let `ccpm import default` copy unrelated
 // files into the shared store).
 func CopyTree(src, dst string, skipExisting bool) error {
+	return copyTree(src, dst, skipExisting, false)
+}
+
+// CopyTreeSkipEscaping behaves like CopyTree but, instead of erroring on a
+// symlink whose target escapes src, it silently SKIPS that entry. This is for
+// callers that copy a ccpm *profile* directory (e.g. `ccpm clone`): a profile's
+// shared/host-cascaded assets are symlinks pointing into ~/.ccpm/share or
+// ~/.claude — outside the profile — and they are re-linked automatically by the
+// cascade / ApplyGlobals on the copy, so there is no reason to fail on them.
+// (The strict-refusal CopyTree is still used for `import default`, where src is
+// the user-writable ~/.claude and an escaping symlink is a genuine exfil risk.)
+func CopyTreeSkipEscaping(src, dst string, skipExisting bool) error {
+	return copyTree(src, dst, skipExisting, true)
+}
+
+func copyTree(src, dst string, skipExisting, skipEscaping bool) error {
 	absSrc, err := filepath.Abs(src)
 	if err != nil {
 		return fmt.Errorf("resolving src %q: %w", src, err)
@@ -48,23 +64,30 @@ func CopyTree(src, dst string, skipExisting bool) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			resolved, err := filepath.EvalSymlinks(path)
 			if err != nil {
+				if skipEscaping {
+					return nil // dangling/unresolvable link in a profile — skip, don't fail the copy
+				}
 				return err
 			}
 			fi, err := os.Stat(resolved)
 			if err != nil {
 				return err
 			}
-			// Refuse to follow symlinks whose resolved target escapes the
-			// original src root — those are a classic exfil/DoS primitive
-			// when src is user-writable (e.g. ~/.claude/skills/).
+			// Symlinks whose resolved target escapes the original src root are a
+			// classic exfil/DoS primitive when src is user-writable
+			// (e.g. ~/.claude/skills/). Strict callers refuse; profile-copy
+			// callers skip (the target re-links via cascade/ApplyGlobals).
 			if !isWithin(absSrc, resolved) {
+				if skipEscaping {
+					return nil
+				}
 				return fmt.Errorf("refusing to follow symlink %q: target %q lies outside %q", path, resolved, absSrc)
 			}
 			if fi.IsDir() {
 				if err := os.MkdirAll(target, fi.Mode()); err != nil {
 					return err
 				}
-				return CopyTree(resolved, target, skipExisting)
+				return copyTree(resolved, target, skipExisting, skipEscaping)
 			}
 		}
 
