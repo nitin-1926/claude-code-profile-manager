@@ -33,6 +33,53 @@ func TestCopyTreeSymlinkToDirectory(t *testing.T) {
 	}
 }
 
+// TestCopyTreeEscapingSymlink covers the difference between the strict copier
+// (used by `import default`) and the skip-escaping copier (used by `ccpm clone`)
+// when a source tree contains a symlink whose target lies OUTSIDE the source —
+// exactly what a cascaded/shared asset looks like inside a ccpm profile.
+func TestCopyTreeEscapingSymlink(t *testing.T) {
+	tmp := t.TempDir()
+
+	// A target that lives outside the source root.
+	outside := filepath.Join(tmp, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "HOST.md"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(tmp, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A real file the copy SHOULD always carry.
+	if err := os.WriteFile(filepath.Join(src, "own.txt"), []byte("own"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An escaping symlink (points outside src) — like a cascaded host asset.
+	if err := os.Symlink(outside, filepath.Join(src, "escaping")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	// Strict CopyTree must REFUSE (preserves the import-default exfil guard).
+	if err := CopyTree(src, filepath.Join(tmp, "strict"), false); err == nil {
+		t.Fatal("CopyTree should refuse an escaping symlink, got nil")
+	}
+
+	// CopyTreeSkipEscaping must SUCCEED, copying real files and skipping the link.
+	dst := filepath.Join(tmp, "skip")
+	if err := CopyTreeSkipEscaping(src, dst, false); err != nil {
+		t.Fatalf("CopyTreeSkipEscaping: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dst, "own.txt")); err != nil || string(data) != "own" {
+		t.Fatalf("real file not copied: data=%q err=%v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "escaping")); !os.IsNotExist(err) {
+		t.Fatalf("escaping symlink should have been skipped, but something exists at dst/escaping (err=%v)", err)
+	}
+}
+
 func TestCopyTreeSkipExisting(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src")
