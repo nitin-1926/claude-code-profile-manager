@@ -164,8 +164,8 @@ func runAuthRefresh(cmd *cobra.Command, args []string) error {
 			}
 			key = strings.TrimSpace(line)
 		}
-		if key == "" {
-			return fmt.Errorf("API key cannot be empty")
+		if err := validateAPIKey(key); err != nil {
+			return err
 		}
 
 		store := keystore.New()
@@ -175,6 +175,21 @@ func runAuthRefresh(cmd *cobra.Command, args []string) error {
 		green.Printf("✓ API key updated for profile %q\n", name)
 	}
 
+	return nil
+}
+
+// validateAPIKey rejects obviously-malformed API keys at the input boundary.
+// It is deliberately lenient — the Anthropic key format can evolve — but a key
+// that is empty or absurdly short is certainly a paste/typing error, and
+// storing it would only surface later as a confusing auth failure. (Display
+// masking is independently panic-safe, see credentials.maskKey.)
+func validateAPIKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("API key cannot be empty")
+	}
+	if len(key) < 10 {
+		return fmt.Errorf("API key looks too short (%d chars) — check for a truncated paste", len(key))
+	}
 	return nil
 }
 
