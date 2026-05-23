@@ -36,12 +36,19 @@ budget overflow), run ` + "`ccpm consolidate`" + ` instead.`,
 	RunE: runDoctor,
 }
 
+// doctorFix, when set via --fix, lets doctor perform safe, idempotent repairs
+// (currently: pruning dangling shared-asset symlinks) instead of only
+// reporting them. Destructive cross-scope cleanup still belongs to
+// `ccpm consolidate --fix`; this is the narrow "my links are broken" repair.
+var doctorFix bool
+
 // minMacOSOAuthClaudeVersion is the first Claude Code release that namespaces
 // keychain entries by CLAUDE_CONFIG_DIR. Below this, OAuth profiles on macOS
 // cannot be isolated and `ccpm auth status` will look wrong.
 const minMacOSOAuthClaudeVersion = "2.1.56"
 
 func init() {
+	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "prune dangling shared-asset symlinks found during the check")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -195,17 +202,36 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// Section 5: symlink integrity
 	// -----------------------------------------------------------------
 	bold.Println("Shared symlink integrity")
-	symlinkIssues := checkSymlinkIntegrity(profileDirs)
-	if len(symlinkIssues) == 0 {
-		if len(profileDirs) > 0 {
-			green.Println("  ✓ no broken symlinks detected in profile skills")
-		} else {
-			dim.Println("  (no profiles to check)")
+	if doctorFix {
+		removed, failed := fixBrokenSymlinks(profileDirs)
+		if len(removed) == 0 && len(failed) == 0 {
+			if len(profileDirs) > 0 {
+				green.Println("  ✓ no broken symlinks to prune")
+			} else {
+				dim.Println("  (no profiles to check)")
+			}
+		}
+		for _, msg := range removed {
+			green.Printf("  ✓ pruned %s\n", msg)
+		}
+		for _, msg := range failed {
+			red.Printf("  ✗ could not prune %s\n", msg)
+			issues++
 		}
 	} else {
-		for _, msg := range symlinkIssues {
-			yellow.Printf("  ! %s\n", msg)
-			warnings++
+		symlinkIssues := checkSymlinkIntegrity(profileDirs)
+		if len(symlinkIssues) == 0 {
+			if len(profileDirs) > 0 {
+				green.Println("  ✓ no broken symlinks detected in profile skills")
+			} else {
+				dim.Println("  (no profiles to check)")
+			}
+		} else {
+			for _, msg := range symlinkIssues {
+				yellow.Printf("  ! %s\n", msg)
+				warnings++
+			}
+			dim.Println("  Re-run with `ccpm doctor --fix` to prune these dangling links.")
 		}
 	}
 	fmt.Println()
@@ -383,6 +409,43 @@ func checkSymlinkIntegrity(profileDirs map[string]string) []string {
 	return issues
 }
 
+// fixBrokenSymlinks prunes dangling shared-asset symlinks across every profile,
+// the repair behind `ccpm doctor --fix`. It only ever removes symbolic links
+// whose target no longer resolves — never regular files or copies — so it
+// cannot delete real data. Returns the human-readable labels of links removed
+// and of any that could not be removed.
+func fixBrokenSymlinks(profileDirs map[string]string) (removed, failed []string) {
+	assetSubdirs := []string{"skills", "agents", "commands", "rules", "hooks"}
+	for name, dir := range profileDirs {
+		for _, sub := range assetSubdirs {
+			subdir := filepath.Join(dir, sub)
+			entries, err := os.ReadDir(subdir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				path := filepath.Join(subdir, e.Name())
+				info, err := os.Lstat(path)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					continue
+				}
+				if _, err := filepath.EvalSymlinks(path); err == nil {
+					continue // link resolves — leave it alone
+				}
+				label := fmt.Sprintf("%s/%s/%s", name, sub, e.Name())
+				if rmErr := os.Remove(path); rmErr != nil {
+					failed = append(failed, fmt.Sprintf("%s (%v)", label, rmErr))
+				} else {
+					removed = append(removed, label)
+				}
+			}
+		}
+	}
+	sort.Strings(removed)
+	sort.Strings(failed)
+	return removed, failed
+}
+
 // compareSemver returns -1 / 0 / +1 comparing dotted numeric versions a vs b.
 // Non-numeric segments and version prefixes like "v" or Claude's quirky
 // "1.0.123 (claude-code)" suffix are tolerated.
@@ -497,9 +560,8 @@ func computeHostCascadeSummary(profileDirs map[string]string, m *manifest.Manife
 	}
 
 	type counts struct {
-		host       int
-		adopted    int
-		profileOnly int
+		host    int
+		adopted int
 	}
 	totals := map[manifest.AssetKind]counts{}
 	var shadows []shadowedAsset
