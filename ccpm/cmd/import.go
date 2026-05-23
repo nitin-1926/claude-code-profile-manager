@@ -451,7 +451,7 @@ func runImportFromProfile(state *importFromProfileState) error {
 		}
 	}
 
-	if err := importFromProfile(src.Dir, dst.Dir, targets, state.force); err != nil {
+	if err := importFromProfile(src.Dir, dst.Dir, targets, state.force, false); err != nil {
 		return err
 	}
 
@@ -464,8 +464,11 @@ func runImportFromProfile(state *importFromProfileState) error {
 }
 
 // importFromProfile copies selected targets from srcProfileDir into
-// dstProfileDir.
-func importFromProfile(srcProfileDir, dstProfileDir string, targets []defaultclaude.Target, force bool) error {
+// dstProfileDir. When skipEscaping is true, asset symlinks that point outside
+// the source profile (i.e. shared/host-cascaded assets) are skipped rather than
+// failing the copy — used by `ccpm clone`, where those assets re-link via
+// ApplyGlobals/cascade on the new profile.
+func importFromProfile(srcProfileDir, dstProfileDir string, targets []defaultclaude.Target, force, skipEscaping bool) error {
 	for _, t := range targets {
 		srcPath := profileTargetPath(srcProfileDir, t)
 		dstPath := profileTargetPath(dstProfileDir, t)
@@ -486,7 +489,7 @@ func importFromProfile(srcProfileDir, dstProfileDir string, targets []defaultcla
 		}
 
 		if info.IsDir() {
-			if err := copyProfileTree(srcPath, dstPath, force); err != nil {
+			if err := copyProfileTree(srcPath, dstPath, force, skipEscaping); err != nil {
 				return fmt.Errorf("copying %s: %w", srcPath, err)
 			}
 			continue
@@ -515,7 +518,10 @@ func mergeProfileSettings(src, dst string) error {
 	return settingsmerge.WriteJSON(dst, merged)
 }
 
-func copyProfileTree(src, dst string, force bool) error {
+func copyProfileTree(src, dst string, force, skipEscaping bool) error {
+	if skipEscaping {
+		return filetree.CopyTreeSkipEscaping(src, dst, !force)
+	}
 	return filetree.CopyTree(src, dst, !force)
 }
 
