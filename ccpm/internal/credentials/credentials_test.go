@@ -38,6 +38,42 @@ func TestCheckAPIKey(t *testing.T) {
 	}
 }
 
+// TestCheckAPIKeyShortDoesNotPanic is a regression test for a crash: the old
+// masking code sliced key[:7]+key[len-4:] unconditionally, so any stored key
+// shorter than 7 chars panicked with index-out-of-range and bricked
+// `ccpm status`/`list`/`auth status`. A malformed/truncated key must be handled
+// gracefully, never panic.
+func TestCheckAPIKeyShortDoesNotPanic(t *testing.T) {
+	for _, short := range []string{"a", "ab", "sk", "sk-ant", "1234567", "12345678"} {
+		store := keystore.NewMemoryStore()
+		store.SetAPIKey("p", short)
+		checker := NewChecker(store)
+
+		status := checker.Check("/tmp/test", "p", "api_key") // must not panic
+		if !status.Valid {
+			t.Errorf("short key %q: expected Valid=true, got invalid (%s)", short, status.Detail)
+		}
+		if contains(status.Detail, short) && len(short) > 4 {
+			t.Errorf("short key %q should not be echoed verbatim in %q", short, status.Detail)
+		}
+	}
+}
+
+func TestMaskKey(t *testing.T) {
+	cases := map[string]string{
+		"":                            "****",
+		"abc":                         "****",
+		"12345678":                    "****",
+		"123456789":                   "1234567...6789",
+		"sk-ant-api03-abcdef12345678": "sk-ant-...5678",
+	}
+	for in, want := range cases {
+		if got := maskKey(in); got != want {
+			t.Errorf("maskKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestCheckOAuthClaudeJSONOnlyIsInvalid asserts that a profile with only the
 // .claude.json metadata block — and no actual credential file or keychain
 // entry — is reported as INVALID. The metadata only proves "someone logged
