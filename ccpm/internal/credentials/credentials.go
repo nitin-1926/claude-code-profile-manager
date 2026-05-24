@@ -63,8 +63,19 @@ func (c *Checker) checkAPIKey(profileName string) CredStatus {
 		return CredStatus{Valid: false, Method: "api_key", Detail: "no API key found in keychain"}
 	}
 	// Mask the key for display
-	masked := key[:7] + "..." + key[len(key)-4:]
-	return CredStatus{Valid: true, Method: "api_key", Detail: fmt.Sprintf("key: %s", masked)}
+	return CredStatus{Valid: true, Method: "api_key", Detail: fmt.Sprintf("key: %s", maskKey(key))}
+}
+
+// maskKey produces a display-safe rendering of an API key without ever slicing
+// out of bounds. Anthropic keys are long (sk-ant-...), but a malformed or
+// fat-fingered entry could be arbitrarily short; slicing key[:7]/key[len-4:]
+// unconditionally would panic and brick `ccpm status`/`list`/`auth status`.
+func maskKey(key string) string {
+	if len(key) <= 8 {
+		// Too short to reveal a head and tail without overlap — mask entirely.
+		return "****"
+	}
+	return key[:7] + "..." + key[len(key)-4:]
 }
 
 func (c *Checker) checkOAuth(profileDir string) CredStatus {
