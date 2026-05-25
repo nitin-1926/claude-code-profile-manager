@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
@@ -91,12 +92,9 @@ func Save(l *List) error {
 	if err != nil {
 		return fmt.Errorf("marshaling trust list: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return fmt.Errorf("writing trust list: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(path, data, config.FilePerm),
+	}); err != nil {
 		return fmt.Errorf("saving trust list: %w", err)
 	}
 	return nil
