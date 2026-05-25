@@ -61,13 +61,13 @@ func RegisterMarketplace(opts AddMarketplaceOptions) (string, error) {
 	}
 	cloneDest := filepath.Join(tmp, "clone")
 	if err := CloneRepo(url, cloneDest, "", opts.SSH); err != nil {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 		return "", err
 	}
 
 	manifest, err := LoadMarketplaceManifest(cloneDest)
 	if err != nil {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 		return "", fmt.Errorf("loading marketplace manifest: %w", err)
 	}
 	name := opts.Name
@@ -75,7 +75,7 @@ func RegisterMarketplace(opts AddMarketplaceOptions) (string, error) {
 		name = manifest.Name
 	}
 	if name == "" {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 		return "", fmt.Errorf("marketplace manifest missing name and none provided")
 	}
 
@@ -85,22 +85,22 @@ func RegisterMarketplace(opts AddMarketplaceOptions) (string, error) {
 		// atomically swap; if the rename fails we restore the original.
 		backup := finalDest + ".old-" + time.Now().UTC().Format("20060102150405")
 		if err := os.Rename(finalDest, backup); err != nil {
-			os.RemoveAll(tmp)
+			_ = os.RemoveAll(tmp)
 			return "", fmt.Errorf("moving existing marketplace aside: %w", err)
 		}
 		if err := os.Rename(cloneDest, finalDest); err != nil {
 			_ = os.Rename(backup, finalDest)
-			os.RemoveAll(tmp)
+			_ = os.RemoveAll(tmp)
 			return "", fmt.Errorf("installing new clone: %w", err)
 		}
-		os.RemoveAll(backup)
+		_ = os.RemoveAll(backup)
 	} else {
 		if err := os.Rename(cloneDest, finalDest); err != nil {
-			os.RemoveAll(tmp)
+			_ = os.RemoveAll(tmp)
 			return "", fmt.Errorf("installing new clone: %w", err)
 		}
 	}
-	os.RemoveAll(tmp)
+	_ = os.RemoveAll(tmp)
 
 	reg, err := LoadRegistry()
 	if err != nil {
@@ -202,57 +202,57 @@ func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bo
 	case "local":
 		from := filepath.Join(mktDir, src.Path)
 		if err := copyTree(from, stageContent); err != nil {
-			os.RemoveAll(stage)
+			_ = os.RemoveAll(stage)
 			return "", fmt.Errorf("copying local plugin %q: %w", src.Path, err)
 		}
 	case "git-subdir":
 		repoStage := filepath.Join(stage, "repo")
 		if err := CloneRepo(src.URL, repoStage, src.Ref, ssh); err != nil {
-			os.RemoveAll(stage)
+			_ = os.RemoveAll(stage)
 			return "", err
 		}
 		if src.SHA != "" {
 			if err := CheckoutSHA(repoStage, src.SHA); err != nil {
-				os.RemoveAll(stage)
+				_ = os.RemoveAll(stage)
 				return "", err
 			}
 		}
 		from := filepath.Join(repoStage, src.Path)
 		if err := copyTree(from, stageContent); err != nil {
-			os.RemoveAll(stage)
+			_ = os.RemoveAll(stage)
 			return "", fmt.Errorf("copying subdir %q: %w", src.Path, err)
 		}
 	case "url":
 		if err := CloneRepo(src.URL, stageContent, "", ssh); err != nil {
-			os.RemoveAll(stage)
+			_ = os.RemoveAll(stage)
 			return "", err
 		}
 		if src.SHA != "" {
 			if err := CheckoutSHA(stageContent, src.SHA); err != nil {
-				os.RemoveAll(stage)
+				_ = os.RemoveAll(stage)
 				return "", err
 			}
 		}
 	case "github":
 		url := GitHubRepoURL(src.Repo, ssh)
 		if err := CloneRepo(url, stageContent, src.Ref, ssh); err != nil {
-			os.RemoveAll(stage)
+			_ = os.RemoveAll(stage)
 			return "", err
 		}
 		if src.SHA != "" {
 			if err := CheckoutSHA(stageContent, src.SHA); err != nil {
-				os.RemoveAll(stage)
+				_ = os.RemoveAll(stage)
 				return "", err
 			}
 		}
 	default:
-		os.RemoveAll(stage)
+		_ = os.RemoveAll(stage)
 		return "", fmt.Errorf("unsupported source kind %q", src.Kind)
 	}
 
 	version, err := readPluginVersion(stageContent)
 	if err != nil {
-		os.RemoveAll(stage)
+		_ = os.RemoveAll(stage)
 		return "", err
 	}
 	if version == "" {
@@ -261,23 +261,23 @@ func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bo
 
 	finalDest, err := CachePluginDir(marketplace, spec.Name, version)
 	if err != nil {
-		os.RemoveAll(stage)
+		_ = os.RemoveAll(stage)
 		return "", err
 	}
 	if _, err := os.Stat(finalDest); err == nil {
 		// Already cached at this version — discard the staging clone.
-		os.RemoveAll(stage)
+		_ = os.RemoveAll(stage)
 		return version, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(finalDest), config.DirPerm); err != nil {
-		os.RemoveAll(stage)
+		_ = os.RemoveAll(stage)
 		return "", fmt.Errorf("creating cache dir: %w", err)
 	}
 	if err := os.Rename(stageContent, finalDest); err != nil {
-		os.RemoveAll(stage)
+		_ = os.RemoveAll(stage)
 		return "", fmt.Errorf("installing plugin into cache: %w", err)
 	}
-	os.RemoveAll(stage)
+	_ = os.RemoveAll(stage)
 	return version, nil
 }
 
