@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
@@ -118,12 +119,12 @@ func Save(m *Manifest) error {
 		return fmt.Errorf("marshaling manifest: %w", err)
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, config.FilePerm); err != nil {
-		return fmt.Errorf("writing manifest: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	// Crash-safe, concurrency-safe write via atomicwrite (crypto-random staging
+	// name + atomic rename + rollback) instead of a fixed ".tmp" suffix that two
+	// concurrent processes would clobber.
+	if err := atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(path, data, config.FilePerm),
+	}); err != nil {
 		return fmt.Errorf("saving manifest: %w", err)
 	}
 	return nil
