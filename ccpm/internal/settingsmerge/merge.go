@@ -134,6 +134,13 @@ func WriteJSON(path string, data map[string]interface{}) error {
 		return fmt.Errorf("marshaling JSON: %w", err)
 	}
 	bytes = append(bytes, '\n')
+	// NOTE: deliberately NOT routed through atomicwrite. WriteJSON also writes
+	// the Claude-Code-owned ~/.claude/settings.json (via the set-default API-key
+	// env path), which a user may have symlinked into a dotfiles repo;
+	// atomicwrite refuses to overwrite a symlink and would hard-fail there. The
+	// temp-file + rename below replaces the target as it always has. (The
+	// crash-safe atomicwrite transaction is still used for profile-internal
+	// materialization in MaterializeAll, where targets are never symlinks.)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, bytes, config.FilePerm); err != nil {
 		return fmt.Errorf("writing %s: %w", tmp, err)
