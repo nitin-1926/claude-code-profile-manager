@@ -14,6 +14,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/filetree"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
@@ -663,12 +664,9 @@ func SaveFingerprint(fp *Fingerprint) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, config.FilePerm); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(path, data, config.FilePerm),
+	}); err != nil {
 		return err
 	}
 	return nil
