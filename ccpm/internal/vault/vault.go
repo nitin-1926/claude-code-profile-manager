@@ -37,7 +37,9 @@ func (v *Vault) Backup(profileName string, data []byte) error {
 		return err
 	}
 
-	if err := os.MkdirAll(vaultDir, 0755); err != nil {
+	// 0700: the vault holds encrypted credential backups (*.enc). Keep the
+	// directory owner-only so other local users can't even enumerate it.
+	if err := os.MkdirAll(vaultDir, config.DirPerm); err != nil {
 		return fmt.Errorf("creating vault directory: %w", err)
 	}
 
