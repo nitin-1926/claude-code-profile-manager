@@ -50,7 +50,7 @@ func InstallSkill() error {
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		out, err := os.Create(target)
 		if err != nil {
 			return err

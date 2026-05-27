@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -25,6 +26,8 @@ func fakeHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Windows resolves os.UserHomeDir() via %USERPROFILE%, not $HOME.
+	t.Setenv("USERPROFILE", home)
 	return home
 }
 
@@ -56,6 +59,9 @@ func TestInventoryReadsHostScopes(t *testing.T) {
 }
 
 func TestDetectDanglingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests need Developer Mode on Windows")
+	}
 	home := fakeHome(t)
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
@@ -140,6 +146,9 @@ func TestDetectBrokenEmptyFile(t *testing.T) {
 }
 
 func TestRunDryRunDoesNotApplyAutoFix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests need Developer Mode on Windows")
+	}
 	home := fakeHome(t)
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	_ = os.MkdirAll(skillsDir, 0o755)
@@ -157,6 +166,9 @@ func TestRunDryRunDoesNotApplyAutoFix(t *testing.T) {
 }
 
 func TestRunFixAppliesAutoFix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests need Developer Mode on Windows")
+	}
 	home := fakeHome(t)
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	_ = os.MkdirAll(skillsDir, 0o755)
