@@ -71,7 +71,9 @@ func Create(name string) (string, error) {
 		return "", err
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// 0700: a profile dir holds .credentials.json / .claude.json. Other local
+	// users must not be able to traverse or stat it on a shared host.
+	if err := os.MkdirAll(dir, config.DirPerm); err != nil {
 		return "", fmt.Errorf("creating profile directory: %w", err)
 	}
 
