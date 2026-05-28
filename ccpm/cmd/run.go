@@ -38,6 +38,7 @@ To forward --help or --version to claude, use:
 	Args:               cobra.MinimumNArgs(1),
 	DisableFlagParsing: true,
 	RunE:               runRun,
+	ValidArgsFunction:  completeProfileNames,
 }
 
 func init() {

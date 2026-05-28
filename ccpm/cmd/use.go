@@ -26,8 +26,9 @@ Then reload your shell:
   source ~/.zshrc
 
 Alternatively, use 'ccpm run <name>' which works without any shell setup.`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runUse,
+	Args:              cobra.MaximumNArgs(1),
+	RunE:              runUse,
+	ValidArgsFunction: completeProfileNames,
 }
 
 func init() {
