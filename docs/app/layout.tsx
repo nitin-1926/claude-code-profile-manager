@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { AiSearchRoot } from "./components/ai-search/ai-search-root";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -116,7 +117,7 @@ export default function RootLayout({
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: themeInitScript }}
         />
-        {children}
+        <AiSearchRoot>{children}</AiSearchRoot>
       </body>
     </html>
   );
