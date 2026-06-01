@@ -6,13 +6,13 @@
 [![npm](https://img.shields.io/npm/v/@ngcodes/ccpm)](https://www.npmjs.com/package/@ngcodes/ccpm)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-ccpm (Claude Code Profile Manager) lets you create isolated profiles for Claude Code, each with its own credentials, settings, MCP servers, and memory. Open two terminals, run two different accounts at the same time.
+ccpm (Claude Code Profile Manager) lets you keep multiple isolated Claude Code profiles on one machine. Each profile has its own credentials, settings, MCP servers, plugins, skills, and memory. Open two terminals, run two different accounts at the same time.
 
 ## Why
 
-Claude Code reads config from a single directory (`~/.claude`). If you have a personal account and a work account, you cannot use both at the same time. Switching means logging out and back in, or manually swapping config files.
+Claude Code reads its config from a single directory (`~/.claude`). Without ccpm you can only be signed into one account at a time and switching means logging out, swapping files, or both.
 
-ccpm fixes this. Each profile gets its own config directory. When you run `ccpm run <profile>`, it sets `CLAUDE_CONFIG_DIR` to the right directory and launches Claude Code. Two terminals, two profiles, zero conflicts.
+ccpm gives every profile its own config directory and sets `CLAUDE_CONFIG_DIR` to it when you launch claude. Two terminals, two profiles, zero conflicts.
 
 ## Install
 
@@ -30,404 +30,277 @@ go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
 ## Quick start
 
 ```bash
-# Create profiles
-ccpm add personal    # authenticate via OAuth or API key
-ccpm add work        # same, with a different account
+# Create profiles (each prompts for OAuth or API key)
+ccpm add personal
+ccpm add work
 
 # Run them in parallel
-ccpm run personal    # in terminal 1
-ccpm run work        # in terminal 2
+ccpm run personal    # terminal 1
+ccpm run work        # terminal 2
 
-# Check status
+# See what you have
 ccpm list
 ```
 
-Output:
+Sample output:
 
-```
+```text
 NAME       AUTH      STATUS
 personal   oauth     ✓ nitin@gmail.com
 work       api_key   ✓ sk-ant-...7f2k   ★
 ```
 
+### Migrating your existing `~/.claude`
+
+If you already use Claude Code, your first profile doesn't have to start empty. When `~/.claude` exists, the `ccpm add` wizard offers to **import your current config** — skills, MCP servers, hooks, agents, commands, rules, and settings all carry over into the new profile.
+
+```bash
+# the wizard prompts: start empty, import from ~/.claude, or clone a profile
+ccpm add personal
+```
+
+To do it explicitly (or to pull in changes you made to `~/.claude` later), run `ccpm import default` — see the [Import](#import) section for `--only`, `--all`, and dry-run flags.
+
+## Changelog
+
+Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/changelog)**.
+
 ## Key features
 
-- **Parallel sessions**: run different Claude Code accounts in different terminals simultaneously
-- **Full isolation**: each profile has its own credentials, settings, MCP servers, projects, and memory
-- **OAuth + API key**: supports both authentication methods per profile
-- **First-class asset management**: skills, agents, commands, rules, hooks, and MCP servers — install globally, per-profile, or per-project (`--scope global|profile|project` for MCP; `--global`/`--profile` for the rest)
+- **Parallel sessions**: run different Claude Code accounts side-by-side, fully isolated.
+- **OAuth + API key** per profile, with credentials in the OS keychain.
+- **Per-profile assets**: skills, agents, commands, rules, hooks, plugins, MCP servers, and settings install globally, per-profile, or per-project.
 - **MCP transports**: stdio, HTTP, and SSE. Remote MCPs authenticate via `ccpm mcp auth` so OAuth tokens land in the right profile.
-- **Plugin activation per profile**: override which Claude Code plugins are enabled for each profile via `ccpm plugin enable|disable`
-- **Permissions UI**: `ccpm permissions allow|ask|deny|mode` writes directly to `permissions.{allow,ask,deny,defaultMode}` so you never have to hand-edit JSON.
-- **Per-profile env vars**: `ccpm env set KEY=VAL --profile <name>` persists env vars per profile; `ccpm run --ccpm-env KEY=VAL` overlays one-shot overrides.
-- **Transparent arg forwarding**: unknown flags after the profile name (`--dangerously-skip-permissions`, `--model`, ...) flow through to claude without needing a `--` separator.
-- **Session listing**: `ccpm sessions list <profile>` browses Claude Code's session .jsonl files.
-- **Shared asset store**: directory-based assets are symlinked from `~/.ccpm/share/` into profiles for deduplication
-- **Settings materialization**: full native-Claude-compatible merge hierarchy — existing profile state → `~/.claude/settings.json` → profile fragment → project `.claude/settings.{json,local.json}` → enterprise managed-settings (org policy, highest precedence).
-- **Encrypted vault**: AES-256-GCM encrypted credential backups with master key in your OS keychain
-- **IDE support**: set the default profile for VS Code with `ccpm set-default`
-- **Shell integration**: `ccpm use` sets the profile for your entire shell session
-- **macOS first**: macOS Keychain is the verified path today. Linux (Secret Service) and Windows (Credential Manager) builds compile and ship, but OAuth `set-default` / `auth backup` / `status` on those platforms are **experimental** until a maintainer verifies them on real hardware.
+- **Permissions and hooks** without hand-editing JSON.
+- **Transparent arg forwarding**: unknown flags after `ccpm run <profile>` flow through to claude with no `--` separator.
+- **IDE default**: `ccpm set-default` pins a profile for direct `claude` launches (VS Code, Cursor, Antigravity, any GUI extension). On macOS this is set system-wide via a LaunchAgent.
+- **Encrypted vault**: AES-256-GCM credential backups with a master key in your OS keychain.
+- **Shared store**: directory-based assets are symlinked from `~/.ccpm/share/` into profiles for deduplication.
+- **macOS is the verified platform** today. Linux and Windows builds compile and ship; OAuth `set-default`, `auth backup/restore`, and keychain-based `status` on those platforms are experimental until verified on real hardware.
 
 ## Commands
 
-### Profile management
+### Profile lifecycle
 
-| Command                   | Description                                    |
-| ------------------------- | ---------------------------------------------- |
-| `ccpm add <name>`         | Create a new profile (OAuth or API key)        |
-| `ccpm run <name> [...]`   | Launch Claude Code with a profile. Unknown flags after `<name>` flow through to claude (no `--` separator needed). Pass `--ccpm-env KEY=VAL` for one-shot env overrides; use `-- --help` / `-- --version` to forward those two to claude. |
-| `ccpm use <name>`         | Set profile for the current shell session      |
-| `ccpm list`               | List all profiles and their status             |
-| `ccpm status`             | Show system overview                           |
-| `ccpm set-default <name>` | Set the default profile for IDEs               |
-| `ccpm remove <name>`      | Delete a profile                               |
-| `ccpm shell-init`         | Print shell hook for `ccpm use` support        |
-| `ccpm sync`               | Sync global installs into all (or one) profile |
-| `ccpm consolidate`        | Audit (and optionally repair) asset drift across host, profile, and project scopes |
+| Command                       | Description                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `ccpm add <name>`             | Create a new profile (interactive: import wizard + OAuth or API key)                     |
+| `ccpm run <name> [...]`       | Launch Claude Code with a profile. Unknown flags forward to claude.                      |
+| `ccpm use <name>`             | Set the profile for the current shell session (requires `ccpm shell-init`)               |
+| `ccpm list` / `ls`            | List profiles with auth status (`--json` for machine-readable output)                    |
+| `ccpm status [name]`          | System overview, or auth health for one profile                                          |
+| `ccpm rename <old> <new>`     | Rename a profile (migrates keychain entries and plugin paths)                            |
+| `ccpm remove <name>` / `rm`   | Delete a profile (`--force` to skip confirm)                                             |
+| `ccpm clone <src> <new>`      | Duplicate a profile (assets + settings + auth; `--no-auth` for assets only)              |
+| `ccpm set-default [name]`     | Pin the default profile for direct `claude` launches; macOS sets it system-wide          |
+| `ccpm unset-default`          | Clear the default                                                                        |
+| `ccpm prompt`                 | Print the active profile name for a shell prompt (PS1 / starship / p10k)                 |
+| `ccpm sync`                   | Re-apply global installs into one or all profiles                                        |
+| `ccpm doctor`                 | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes dangling symlinks)     |
+| `ccpm consolidate`            | Audit (and optionally `--fix`) asset drift across host, share, and profile scopes        |
+| `ccpm export <name>`          | Export a profile to a portable `.tar.gz` (credentials excluded by default)               |
+| `ccpm import-bundle <file>`   | Restore a profile from an export bundle                                                  |
+| `ccpm shell-init`             | Print the shell hook (auto-detects zsh / bash / fish / powershell)                       |
+| `ccpm completion <shell>`     | Generate a shell completion script (bash / zsh / fish / powershell)                      |
+| `ccpm uninstall`              | Remove all profiles, keychain entries, vault backups, and `~/.ccpm/`                     |
 
-### Assets (skills, agents, commands, rules)
+`ccpm run` intercepts four flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan for this launch), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
+
+### Assets: skills, agents, commands, rules
 
 All four share the same command shape. Replace `skill` with `agent`, `command`, or `rule`.
 
 | Command                                 | Description                                |
 | --------------------------------------- | ------------------------------------------ |
-| `ccpm skill add <path> --global`        | Install a skill for all profiles           |
-| `ccpm skill add <path> --profile work`  | Install a skill for one profile            |
-| `ccpm skill remove <name> --global`     | Remove a skill from all profiles           |
-| `ccpm skill link <name> --profile work` | Link a shared skill into a profile         |
-| `ccpm skill list`                       | List installed skills                      |
-| `ccpm agent add <path> --global`        | Install a Claude Code agent (same pattern) |
-| `ccpm command add <path> --profile x`   | Install a custom slash command             |
-| `ccpm rule add <path> --global`         | Install a rule file                        |
+| `ccpm skill add <path> --global`        | Install for every profile                  |
+| `ccpm skill add <path> --profile <p>`   | Install for one profile                    |
+| `ccpm skill remove <name> --global`     | Remove from every profile (alias `rm`)     |
+| `ccpm skill link <name> --profile <p>`  | Link a shared asset into a profile         |
+| `ccpm skill list`                       | List installed (alias `ls`)                |
 
-Source may be a directory (skills require a `SKILL.md` marker) or a single file (agents/commands/rules are usually `.md` files). Pass `--live-symlink` to keep the source linked so edits show up live, or `--copy` to snapshot it.
+Source may be a directory (skills require a `SKILL.md` marker) or a single file (agents/commands/rules are usually `.md`). Pass `--live-symlink` to keep the source linked so edits show up live, or `--copy` to snapshot it.
 
 ### Plugins
 
-ccpm installs plugins itself, end-to-end, without a Claude Code session. Marketplaces are cloned into a shared store, plugin files are cached once and symlinked into each profile, and per-profile activation is recorded in the same settings fragment ccpm uses for everything else. You can still use `/plugin install` inside a Claude Code session — ccpm reads the resulting state — but using `ccpm plugin install` directly is faster, gives you cross-profile dedup, and works headless.
+ccpm installs plugins itself, end-to-end, without a Claude Code session. Marketplaces clone into a shared store, plugin files cache once and symlink into each profile, and per-profile activation lives in the same settings fragment ccpm uses for everything else.
 
-| Command                                                           | Description                                             |
-| ----------------------------------------------------------------- | ------------------------------------------------------- |
-| `ccpm plugin marketplace add <org>/<repo>`                        | Clone a plugin marketplace into the shared store (HTTPS by default; use `--ssh` to opt into git@) |
-| `ccpm plugin marketplace list`                                    | Show registered marketplaces                            |
-| `ccpm plugin marketplace remove <name>`                           | Drop a marketplace (refuses if any profile still uses it) |
-| `ccpm plugin install <name>@<marketplace> --global`               | Install into every profile and enable it                |
-| `ccpm plugin install <name>@<marketplace> --profile work`         | Install into one profile only                           |
-| `ccpm plugin install <name>@<marketplace> --global --install-only`| Install but do not enable; turn on later with `ccpm plugin enable` |
-| `ccpm plugin remove <name>@<marketplace> --global`                | Remove from every profile                               |
-| `ccpm plugin remove <name>@<marketplace> --profile work`          | Remove from one profile                                 |
-| `ccpm plugin list`                                                | Show installed plugins + enabled state per profile      |
-| `ccpm plugin list --profile work`                                 | Limit output to one profile                             |
-| `ccpm plugin enable <name>@<marketplace> --profile work`          | Turn on a plugin for one profile                        |
-| `ccpm plugin disable <name>@<marketplace> --profile work`         | Turn off a globally-enabled plugin in one profile       |
-| `ccpm plugin gc`                                                  | Delete shared-cache entries no profile references (also runs as part of `ccpm sync`) |
+| Command                                                            | Description                                                  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `ccpm plugin marketplace add <org>/<repo>`                         | Clone a marketplace (HTTPS default; `--ssh` to use `git@`)   |
+| `ccpm plugin marketplace list` / `remove <name>`                   | Inspect or drop a marketplace                                |
+| `ccpm plugin install <name>@<marketplace> --global`                | Install into every profile and enable                        |
+| `ccpm plugin install <name>@<marketplace> --profile <p>`           | Install into one profile only                                |
+| `ccpm plugin install ... --install-only`                           | Install without enabling                                     |
+| `ccpm plugin remove <name>@<marketplace> --global` / `--profile`   | Remove the plugin from every profile or just one             |
+| `ccpm plugin list [--profile <p>]`                                 | Show installed plugins + per-profile enabled state           |
+| `ccpm plugin enable / disable <name>@<marketplace> --profile <p>`  | Toggle activation                                            |
+| `ccpm plugin gc`                                                   | Drop unreferenced shared-cache entries (also part of `sync`) |
 
-Plugin clones default to HTTPS so an `https://github.com/<org>/<repo>.git` URL works without an SSH key. If you prefer SSH (and have keys configured), pass `--ssh` to `marketplace add` or `install`.
+Plugin clones default to HTTPS so an `https://github.com/<org>/<repo>.git` URL works without an SSH key. If you prefer SSH, pass `--ssh`.
 
 ### Hooks
 
-| Command                                              | Description                                         |
-| ---------------------------------------------------- | --------------------------------------------------- |
-| `ccpm hooks add PreToolUse "<cmd>" --profile work`   | Append a hook to an event                           |
-| `ccpm hooks add PostToolUse "<cmd>" --matcher Edit`  | Restrict to a tool-name pattern                     |
-| `ccpm hooks remove PreToolUse --profile work`        | Remove the last entry (or `--index <i>`)            |
-| `ccpm hooks list --profile work`                     | Show merged hooks for a profile                     |
+| Command                                              | Description                              |
+| ---------------------------------------------------- | ---------------------------------------- |
+| `ccpm hooks add <event> "<cmd>" --profile <p>`       | Append a hook to an event                |
+| `ccpm hooks add <event> "<cmd>" --matcher <regex>`   | Restrict to a tool-name pattern          |
+| `ccpm hooks remove <event> --profile <p> [--index]`  | Remove the last entry, or one by index   |
+| `ccpm hooks list --profile <p>`                      | Show merged hooks for a profile          |
 
 Events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`. Hook shell scripts in `~/.claude/hooks/` are managed separately via `ccpm import default --only hooks`.
 
 ### MCP servers
 
-| Command                                                                                        | Description                                                        |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `ccpm mcp add <name> --scope global --command <cmd>`                                           | Add a stdio MCP for all profiles (ccpm global fragment)            |
-| `ccpm mcp add <name> --scope profile --profile work --command <cmd>`                           | Add a stdio MCP for one profile                                    |
-| `ccpm mcp add <name> --scope project --command <cmd>`                                          | Add a stdio MCP to the current repo's `.mcp.json`                  |
-| `ccpm mcp add <name> --scope profile --profile work --transport http --url <url>`              | Add a remote HTTP MCP (use `--header KEY=VAL` for auth tokens)     |
-| `ccpm mcp add <name> --transport sse --url <url>`                                              | Add an SSE MCP (same shape as http)                                |
-| `ccpm mcp auth <name> --profile work`                                                          | Complete OAuth for a remote MCP in the profile's scope             |
-| `ccpm mcp remove <name> --scope <global\|profile\|project>`                                    | Remove an MCP server                                               |
-| `ccpm mcp import <file.json> --scope <global\|profile\|project>`                               | Import MCP servers from a JSON file (accepts `{mcpServers:{...}}`) |
-| `ccpm mcp list`                                                                                | List MCPs with source (ccpm-global / ccpm-profile / host / project) |
+| Command                                                                | Description                                          |
+| ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| `ccpm mcp add <name> --scope global --command <cmd>`                   | Stdio MCP for every profile (ccpm global fragment)   |
+| `ccpm mcp add <name> --scope profile --profile <p> --command <cmd>`    | Stdio MCP for one profile                            |
+| `ccpm mcp add <name> --scope project --command <cmd>`                  | Stdio MCP in the current repo's `.mcp.json`          |
+| `ccpm mcp add <name> --transport http --url <url> [--header K=V]`      | Remote HTTP MCP                                      |
+| `ccpm mcp add <name> --transport sse --url <url>`                      | SSE MCP                                              |
+| `ccpm mcp auth <name> --profile <p>`                                   | Complete OAuth in the profile's scope                |
+| `ccpm mcp remove <name> --scope <global\|profile\|project>`            | Remove a server                                      |
+| `ccpm mcp import <file.json> --scope ...`                              | Import from a JSON file (`{mcpServers:{...}}`)       |
+| `ccpm mcp list`                                                        | List MCPs with source (global / profile / project)   |
 
-`--global` and `--profile <name>` are still accepted as aliases for `--scope global` / `--scope profile`. For `--scope project`, ccpm discovers the project root by walking up from CWD looking for `.claude/settings.json`, `.claude/settings.local.json`, or `.mcp.json` — or pass `--project-dir <path>` explicitly.
+`--global` and `--profile <name>` are accepted as aliases for `--scope global` / `--scope profile`. For `--scope project`, ccpm discovers the project root by walking up from CWD looking for `.claude/settings.json`, `.claude/settings.local.json`, or `.mcp.json`, or pass `--project-dir <path>` explicitly.
 
 ### Permissions
 
-`ccpm permissions` manages `permissions.{allow,ask,deny,defaultMode}` in the profile fragment (or, with `--global`, in `~/.claude/settings.json`).
+`ccpm permissions` manages `permissions.{allow,ask,deny,defaultMode}` in the profile fragment (or with `--global`, in `~/.claude/settings.json`). Adding to one bucket removes from the other two so the lists stay disjoint.
 
-| Command                                                                   | Description                                                  |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `ccpm permissions allow "Bash(git status:*)" --profile work`              | Add a rule to `permissions.allow`                            |
-| `ccpm permissions ask "Edit(**/*.md)" --profile work`                     | Add a rule to `permissions.ask`                              |
-| `ccpm permissions deny "Bash(rm:*)" --profile work`                       | Add a rule to `permissions.deny`                             |
-| `ccpm permissions remove "Bash(git status:*)" --profile work`             | Strip a rule from all three lists                            |
-| `ccpm permissions list --profile work`                                    | Show all rules + the default mode                            |
-| `ccpm permissions mode <default\|acceptEdits\|plan\|auto\|dontAsk\|bypassPermissions> --profile work` | Set `permissions.defaultMode` |
+| Command                                                                                          | Description                       |
+| ------------------------------------------------------------------------------------------------ | --------------------------------- |
+| `ccpm permissions allow "Bash(git status:*)" --profile <p>`                                      | Add to `permissions.allow`        |
+| `ccpm permissions ask "Edit(**/*.md)" --profile <p>`                                             | Add to `permissions.ask`          |
+| `ccpm permissions deny "Bash(rm:*)" --profile <p>`                                               | Add to `permissions.deny`         |
+| `ccpm permissions remove "<rule>" --profile <p>`                                                 | Strip from all three              |
+| `ccpm permissions list --profile <p>`                                                            | Show all rules + the default mode |
+| `ccpm permissions mode <default\|acceptEdits\|plan\|auto\|dontAsk\|bypassPermissions> --profile <p>` | Set `permissions.defaultMode`     |
 
-Adding to one bucket automatically removes from the other two so the lists stay disjoint.
+### Trust
+
+A new repo's `.claude/settings.json` (hooks, permissions, MCP) is ignored until you grant trust to that directory.
+
+| Command                       | Description                                                  |
+| ----------------------------- | ------------------------------------------------------------ |
+| `ccpm trust add [path]`       | Grant trust (defaults to CWD). Alias: `grant`                |
+| `ccpm trust remove [path]`    | Revoke trust. Aliases: `rm`, `forget`, `revoke`              |
+| `ccpm trust list`             | List trusted directories. Alias: `ls`                        |
 
 ### Environment variables
 
-`ccpm env` persists env vars on a profile; they're layered in below the parent process env at every `ccpm run`.
+`ccpm env` persists env vars on a profile; they are layered into the process env at every `ccpm run`, below the parent process env and `--ccpm-env`.
 
-| Command                                                          | Description                                      |
-| ---------------------------------------------------------------- | ------------------------------------------------ |
-| `ccpm env set KEY=VALUE [KEY=VALUE...] --profile work`           | Persist one or more env vars on the profile     |
-| `ccpm env unset KEY [KEY...] --profile work`                     | Remove env vars from the profile                |
-| `ccpm env list --profile work`                                   | List persisted env vars                         |
-| `ccpm run work --ccpm-env KEY=VALUE` (repeatable)                | One-shot env override at launch time            |
+| Command                                                | Description                          |
+| ------------------------------------------------------ | ------------------------------------ |
+| `ccpm env set KEY=VALUE [KEY=VALUE...] --profile <p>`  | Persist env vars on the profile      |
+| `ccpm env unset KEY [KEY...] --profile <p>`            | Remove env vars                      |
+| `ccpm env list --profile <p>`                          | List persisted env vars              |
+| `ccpm run <p> --ccpm-env KEY=VALUE` (repeatable)       | One-shot env override at launch time |
 
-`CLAUDE_CONFIG_DIR` and `ANTHROPIC_API_KEY` are reserved — ccpm always computes them — and cannot be set via `ccpm env`. Use `--ccpm-env` for a one-shot override when you really need to.
+`CLAUDE_CONFIG_DIR` and `ANTHROPIC_API_KEY` are reserved: ccpm always computes them and they cannot be set via `ccpm env`. Use `--ccpm-env` for a one-shot override.
 
 ### Sessions
 
-| Command                              | Description                                                            |
-| ------------------------------------ | ---------------------------------------------------------------------- |
-| `ccpm sessions list <profile>`       | Show sessions from `<profileDir>/projects/<encoded-cwd>/*.jsonl`        |
-| `ccpm sessions list <profile> --all` | Show sessions from every project the profile has worked on             |
-
-By default, `ccpm sessions list` is scoped to the current working directory, mirroring how native `claude --resume` scopes its picker.
+| Command                              | Description                                                                |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| `ccpm sessions list <profile>`       | Sessions scoped to the current working directory (matches `claude --resume`) |
+| `ccpm sessions list <profile> --all` | Sessions from every project the profile has worked on                      |
 
 ### Import
 
 | Command                                            | Description                                                                    |
 | -------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `ccpm import default --profile <name>`             | Import skills/commands/hooks/agents/settings from `~/.claude` into one profile |
-| `ccpm import default --all --only skills`          | Import specific targets into every profile                                     |
-| `ccpm import default --profile <name> --no-share`  | Copy assets directly instead of symlinking from the shared store               |
+| `ccpm import default --profile <p>`                | Interactive: import skills/commands/hooks/agents/rules/settings/MCP/plugins    |
+| `ccpm import default --all --only skills`          | Non-interactive: import specific targets into every profile                    |
+| `ccpm import default --profile <p> --no-share`     | Copy directly instead of symlinking from the shared store                      |
 | `ccpm import from-profile --src <a> --profile <b>` | Clone assets from one ccpm profile into another                                |
+
+`--only` accepts a comma-separated list of: `skills`, `commands`, `rules`, `hooks`, `agents`, `settings`, `mcp`, `plugins`.
+
+### Backup & migrate profiles
+
+`ccpm export` bundles a profile's directory — skills, agents, commands, rules, hooks, MCP fragments, plugin metadata, and settings — into a single `.tar.gz` you can copy to another machine and restore with `ccpm import-bundle`. `ccpm clone` duplicates a profile in place.
+
+| Command                                            | Description                                                                              |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ccpm export <name> [-o file.tar.gz]`              | Export a profile to a portable bundle (credentials **excluded** by default)              |
+| `ccpm export <name> --include-credentials`         | Include credential files (sensitive — trusted same-user moves only)                      |
+| `ccpm import-bundle <file.tar.gz> [--profile <p>]` | Restore a profile from a bundle (path-traversal-safe; `--profile` overrides the name)    |
+| `ccpm clone <src> <new>`                           | Duplicate a profile, copying assets, settings, and credentials                           |
+| `ccpm clone <src> <new> --no-auth`                 | Clone assets/settings only; leave the new profile unauthenticated                        |
+
+Credentials are NOT included in an export by default: OS-keychain tokens are machine-bound, and `.credentials.json` / `.claude.json` hold secrets you usually don't want in a shareable file. Use `--include-credentials` only for a trusted same-user move (e.g. a Linux machine migration). When a restored or cloned profile has no credentials, authenticate it afterward with `ccpm auth refresh <name>`.
+
+> **OAuth clone caveat**: a cloned OAuth profile shares the source account's tokens, so when Claude rotates the refresh token in one, the other goes stale. For a clone you'll use long-term against the same account, prefer `--no-auth` and run `ccpm auth refresh <new>` to give it its own login. API-key clones have no such caveat.
+
+### Shell completion
+
+`ccpm completion <shell>` prints a completion script for `bash`, `zsh`, `fish`, or `powershell`, with completion for profile names on `run` / `use` / `remove` / `rename` / `set-default` / `clone` / `export`.
+
+```bash
+# zsh: load on every new shell
+echo 'source <(ccpm completion zsh)' >> ~/.zshrc
+
+# bash
+echo 'source <(ccpm completion bash)' >> ~/.bashrc
+
+# fish
+ccpm completion fish > ~/.config/fish/completions/ccpm.fish
+```
+
+Run `ccpm completion <shell> --help` for the per-shell install details.
+
+### Shell prompt
+
+`ccpm prompt` prints the active profile name so you can show which Claude Code account a terminal is bound to. It resolves `$CCPM_ACTIVE_PROFILE` (set by `ccpm use`), then `$CLAUDE_CONFIG_DIR`, then — only with `--show-default` — the configured default. It prints nothing (exit 0) when no profile is active, so it stays quiet in non-ccpm shells.
+
+```bash
+# bash/zsh PS1
+PS1='$(ccpm prompt --format "[ccpm:%s] ")'"$PS1"
+
+# starship custom command
+command = "ccpm prompt"
+```
 
 ### Settings
 
-ccpm no longer manages its own global settings layer. Shared-across-profiles
-defaults go in `~/.claude/settings.json` (the file native Claude Code already
-uses); ccpm merges it into every profile at launch. Use `--profile` for
-per-account overrides, and per-repo `.claude/settings.json` for project
-overrides.
+ccpm does not maintain its own global settings layer. The cross-profile baseline is `~/.claude/settings.json` (the file native Claude Code reads); ccpm merges it into every profile at launch. Use `--profile` for per-account overrides, and per-repo `.claude/settings.json` for project overrides.
 
-| Command                                               | Description                                                                |
-| ----------------------------------------------------- | -------------------------------------------------------------------------- |
-| `ccpm settings set <key> <value> --profile work`      | Set a setting for one profile                                              |
-| `ccpm settings apply <file.json> --profile work`      | Apply a JSON settings fragment                                             |
-| `ccpm settings get <key> --profile work`              | Get the effective value of a setting                                       |
-| `ccpm settings show --profile work`                   | Show full merged settings for a profile                                    |
-| `ccpm settings statusline "<cmd>" --profile work`     | Set the native `statusLine` block (`{type: "command", command: "<cmd>"}`). Empty `""` removes it. |
-| `ccpm settings outputstyle <style> --profile work`    | Set `outputStyle` (allowlist: default, Build, Explanatory, Learning, Direct) |
+| Command                                            | Description                                                                                  |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `ccpm settings set <key> <value> --profile <p>`    | Set a setting for one profile (dot notation, JSON values)                                    |
+| `ccpm settings get <key> --profile <p>`            | Read the effective value                                                                     |
+| `ccpm settings apply <file.json> --profile <p>`    | Deep-merge a JSON fragment                                                                   |
+| `ccpm settings show --profile <p>`                 | Dump the fully-merged settings                                                               |
+| `ccpm settings statusline "<cmd>" --profile <p>`   | Set the native `statusLine` block. Empty `""` removes it.                                    |
+| `ccpm settings outputstyle <style> --profile <p>`  | Set `outputStyle` (allowlist: default, Build, Explanatory, Learning, Direct)                 |
 
 ### Authentication
 
 | Command                    | Description                                |
 | -------------------------- | ------------------------------------------ |
-| `ccpm auth status`         | Check credential validity for all profiles |
+| `ccpm auth status`         | Credential validity across profiles        |
 | `ccpm auth refresh <name>` | Re-authenticate a profile                  |
-| `ccpm auth backup <name>`  | Create encrypted credential backup         |
+| `ccpm auth backup <name>`  | Create an encrypted credential backup      |
 | `ccpm auth restore <name>` | Restore credentials from backup            |
 
-## How it works
+### Drift fingerprint
 
-ccpm uses one official mechanism: the `CLAUDE_CONFIG_DIR` environment variable.
+`ccpm import default` snapshots the files under `~/.claude` it touched. Later you can ask whether the host config has drifted:
 
-1. `ccpm add` creates `~/.ccpm/profiles/<name>/` with its own config and credentials
-2. `ccpm run` merges shared settings/MCP fragments, sets `CLAUDE_CONFIG_DIR`, and execs `claude`
-3. Each terminal gets a completely isolated Claude Code instance
+| Command                              | Description                                                |
+| ------------------------------------ | ---------------------------------------------------------- |
+| `ccpm default fingerprint update`    | Record the current `~/.claude` state as the baseline       |
+| `ccpm default fingerprint check`     | Diff `~/.claude` against the baseline; suggests `import`   |
+| `ccpm config set check_default_drift true`  | Show drift notifications on `ccpm run` / `ccpm use` |
 
-### Asset resolution: Project → Profile → Global → Host
+### Config
 
-Inside a `ccpm run` session, every asset (skills, agents, commands, rules, hooks, plugins, MCP servers, settings) resolves with this priority — higher wins:
+| Command                                            | Description                                  |
+| -------------------------------------------------- | -------------------------------------------- |
+| `ccpm config set cascade_auto_adopt false`         | Disable the host-asset cascade               |
+| `ccpm config set check_default_drift true`        | Enable drift notifications on run/use        |
+| `ccpm config get default_dir`                      | Print the default profile's absolute path    |
 
-1. **Project**: `<repo>/.claude/<asset>/` and `<repo>/.claude/settings.json` — repo-local overrides.
-2. **Profile**: assets installed via `ccpm <asset> add --profile <name>` — only the named profile sees them.
-3. **Global**: assets installed via `ccpm <asset> add --global` — every profile sees them.
-4. **Host**: assets that landed in `~/.claude/<asset>/` through any other channel (`/plugin install` inside a session, third-party CLIs like `npx skills add`, manual edits). These auto-cascade into every profile at launch — see "Host-asset cascade" below.
-
-Project always wins because Claude Code's own loader gives `<repo>/.claude/` precedence over `$CLAUDE_CONFIG_DIR`. The other three layers are merged into the profile dir by ccpm before launch.
-
-### Host-asset cascade
-
-When you launch `ccpm run`, ccpm scans `~/.claude/<asset>/` for entries that aren't yet in any profile and auto-adopts them — symlinking each into every profile and recording it in the manifest with `scope = host`. This means:
-
-- Skills installed via `npx skills@latest add <author>/<set>` show up in every ccpm profile on the next launch, no `ccpm import` required.
-- Plugins installed via `/plugin install` inside any session become visible in every profile.
-- Profile-local entries (`ccpm <asset> add --profile <name>`) always win over host entries with the same name. `ccpm doctor` flags shadowed cases.
-
-The cascade is on by default. To turn it off (strict reproducibility — only manifest-tracked assets appear):
-
-```sh
-ccpm config set cascade_auto_adopt false
-```
-
-For one-shot opt-out without flipping the persistent setting:
-
-```sh
-ccpm run <profile> --no-auto-adopt
-ccpm sync --profile <profile> --no-auto-adopt
-```
-
-`ccpm doctor` has a "Host-asset cascade" section showing per-kind adopted/total counts and any shadowing warnings.
-
-### Global vs per-profile installs
-
-For **skills**, **agents**, **commands**, **rules**, **hooks**, **MCP servers**, and **plugins**, `--global` installs into the shared store (`~/.ccpm/share/`) and is linked/merged into every profile; new profiles inherit global installs automatically. `--profile <name>` applies only to one.
-
-Plugins additionally have **marketplaces**: a marketplace is a git repo that lists plugins and where to fetch them from. `ccpm plugin marketplace add <org>/<repo>` clones the marketplace once into `~/.ccpm/share/plugins/marketplaces/`, then `ccpm plugin install <name>@<marketplace>` fetches the plugin into a shared cache and symlinks it into each target profile. `ccpm plugin gc` (also run as part of `ccpm sync`) removes shared-cache entries no profile references anymore.
-
-For **settings**, ccpm does **not** maintain a separate global layer. The shared baseline is `~/.claude/settings.json` — the same file native Claude Code reads when you run it without ccpm. Edit it directly (or run `claude /config …` natively) and every ccpm profile picks up the change on the next launch. Use `ccpm settings set --profile <name>` only for per-profile overrides.
-
-```
-~/.ccpm/
-├── config.json          # profile registry; cascade_auto_adopt lives here
-├── installs.json        # manifest of installed assets (skills/agents/commands/rules/hooks/mcp/plugins)
-│                          # entries carry scope: global | profile | host (auto-adopted from ~/.claude)
-├── share/
-│   ├── skills/          # shared skill directories (symlinked into profiles)
-│   ├── agents/          # shared agent files
-│   ├── commands/        # shared slash-command files
-│   ├── rules/           # shared rule files
-│   ├── hooks/           # shared hook scripts
-│   ├── mcp/             # MCP server fragments (global.json, <profile>.json)
-│   └── settings/        # per-profile settings fragments (<profile>.json)
-├── profiles/
-│   ├── personal/        # CLAUDE_CONFIG_DIR for "personal"
-│   │   ├── skills/      # symlinks → share/skills/*
-│   │   ├── agents/      # symlinks → share/agents/*
-│   │   └── settings.json # materialized at launch
-│   └── work/
-└── vault/               # encrypted credential backups
-```
-
-**Settings merge order** (lowest → highest, higher wins):
-
-1. `<profile>/settings.json` existing state (preserves keys Claude auto-wrote)
-2. `~/.claude/settings.json` — shared baseline
-3. `~/.ccpm/share/settings/<profile>.json` — ccpm-managed per-profile fragment
-4. Profile owned-keys re-assertion (values set via `ccpm settings set`)
-5. `./.claude/settings.json` at project root
-6. `./.claude/settings.local.json` at project root (gitignored local overrides)
-7. Enterprise managed-settings — `/Library/Application Support/ClaudeCode/managed-settings.json` (macOS), `/etc/claude-code/managed-settings.json` (Linux), `C:\ProgramData\ClaudeCode\managed-settings.json` (Windows), plus sibling `managed-settings.d/*.json` drop-ins merged alphabetically. Highest precedence so org policy always wins.
-
-**MCP merge order**: host `~/.claude.json#mcpServers` → ccpm global fragment → ccpm profile fragment → project `.claude/settings.json#mcpServers` → project `.mcp.json` → managed `mcpServers` (highest).
-
-Objects merge key-by-key; arrays and scalars from a higher-precedence source replace the lower one.
-
-No daemons. No patches. No magic.
-
-## Privacy and security
-
-ccpm is 100% local. It never makes network requests, never collects data, and never phones home.
-
-- API keys are stored in your OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager)
-- Vault backups use AES-256-GCM encryption with a master key in your OS keychain
-- All data lives in `~/.ccpm/` on your machine
-- No telemetry, analytics, or tracking
-
-## Platform support
-
-> **macOS is the only verified platform today.** Linux and Windows builds compile, install, and run, but the OAuth-isolation paths (`set-default`, `auth backup/restore`, keychain-based `status`) are **experimental** — they have not been exercised against a real Linux Secret Service or Windows Credential Manager install. **macOS now; Linux + Windows coming soon.**
-
-| Feature            | macOS ✓ verified                         | Windows ⚠ experimental                                | Linux ⚠ experimental |
-| ------------------ | ---------------------------------------- | ----------------------------------------------------- | -------------------- |
-| OAuth per-profile  | Keychain entry namespaced by profile dir | wincred entry namespaced by profile dir (theoretical) | `.credentials.json`  |
-| API key storage    | Keychain                                 | Credential Manager                                    | Secret Service       |
-| Parallel sessions  | Yes                                      | Yes                                                   | Yes                  |
-| Shared skill dedup | Symlinks (`~/.ccpm/share`)               | Symlinks (Developer Mode) or copy[^1]                 | Symlinks             |
-| Shell hook         | zsh, bash, fish                          | PowerShell                                            | zsh, bash, fish      |
-
-[^1]: Without Developer Mode or admin, Windows users cannot create symlinks; ccpm falls back to copying and leaves a marker at `~/.ccpm/.windows-copy-fallback`. Turn on Developer Mode for true deduplication.
-
-> **Requires Claude Code `v2.1.56` or newer for macOS OAuth isolation.** Earlier versions share a single keychain entry across all profiles, so multiple OAuth profiles cannot be kept authenticated at the same time. `ccpm doctor` prints a warning if your Claude Code is too old.
-
-## MCP authentication model
-
-MCP servers authenticate in one of three ways, and ccpm isolates each differently:
-
-1. **Environment-variable MCPs (e.g. `GITHUB_TOKEN`)** — stored inside the per-profile MCP fragment at `~/.ccpm/share/mcp/<profile>.json`. Each profile can carry a different token. Configure with `ccpm mcp add <name> --env KEY=VALUE --profile <name>`.
-2. **OAuth MCPs (servers that open a browser)** — Claude Code caches tokens inside `<CLAUDE_CONFIG_DIR>/.claude.json` under `mcpOAuth`. Because `CLAUDE_CONFIG_DIR` is per-profile, OAuth sessions are automatically isolated.
-3. **Globally-cached MCPs (servers that write to `~/.config/<service>` or the user keychain under a fixed service name)** — these are **shared across profiles**. ccpm cannot isolate them without cooperation from the MCP server itself. Treat them as "one account for all profiles" and plan accordingly.
-
-## Known limitations
-
-- **VS Code extension**: The Claude VS Code extension always reads from `~/.claude`. Use `ccpm set-default` to point it at a specific ccpm profile. On macOS (verified) and Windows (experimental) `set-default` copies the profile's namespaced credential-store OAuth entry into the default slot; on Linux it falls back to copying `.credentials.json` until a Secret-Service handler ships.
-- **Linux headless**: `go-keyring` requires D-Bus and a secret service (gnome-keyring or kwallet). On headless servers, API-key profiles need a running secret service.
-- **Globally-cached MCP servers**: see the MCP auth section above — these cannot be isolated across profiles.
-
-## Troubleshooting
-
-### `/plugin install` fails with `git@github.com: Permission denied (publickey)`
-
-Claude Code clones plugin marketplaces over SSH by default, which requires a GitHub SSH key. If you authenticate over HTTPS only, the clone fails inside `ccpm run` with a `Permission denied (publickey)` error. Force git to rewrite SSH URLs to HTTPS for github.com:
-
-```sh
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-```
-
-This applies to every tool that uses git, not just Claude Code.
-
-## Build from source
-
-```bash
-git clone https://github.com/nitin-1926/claude-code-profile-manager.git
-cd claude-code-profile-manager/ccpm
-go build -o ccpm .
-./ccpm --version
-```
-
-## Releasing
-
-The `scripts/release.sh` script handles the full end-to-end release (bump → verify → tag → GitHub Release → npm publish) with preflight checks so you can't ship a broken release by accident.
-
-```bash
-# Bump 0.1.0 → 0.1.1, run full release
-./scripts/release.sh patch
-
-# Bump 0.1.0 → 0.2.0
-./scripts/release.sh minor
-
-# Bump 0.1.0 → 1.0.0
-./scripts/release.sh major
-
-# Explicit version
-./scripts/release.sh 0.3.0
-
-# See what would happen without changing anything
-./scripts/release.sh patch --dry-run
-```
-
-Flags: `--skip-tests`, `--skip-npm` (GitHub release only), `--stash` (auto-stash uncommitted work for the release and pop it back on exit), `--allow-dirty` (unsafe; uncommitted changes will not be in the tag/binary/npm package), `-y` (skip confirmation). See `scripts/release.sh --help` for the full list.
-
-Preflight checks the script runs before touching anything: `git`/`go`/`node`/`npm`/`gh` on PATH, on `main`, clean working tree, in sync with `origin/main`, logged in to `gh`, logged in to npm with publish access to `@ngcodes/ccpm`, and the target tag is unused locally, on origin, and on GitHub Releases. The release only starts if every check passes.
-
-### Releasing a subset of in-flight work
-
-If you have a pile of uncommitted changes in your tree and only want to ship some of them, commit the subset you want to release and use `--stash` to set the rest aside:
-
-```bash
-# stage + commit only the files you want in this release
-git add cli/cmd/foo.go cli/internal/bar.go
-git commit -m "feat: ship foo and bar"
-
-# release just those; the rest of your tree is stashed and restored on exit
-./scripts/release.sh patch --stash
-```
-
-`--stash` uses `git stash push --include-untracked` with a unique label, installs an `EXIT` trap that pops the stash back whether the release succeeds or fails, and preserves the original staged/unstaged split via `git stash pop --index`. If the pop hits a conflict (rare — only if your stashed work touched `cli/cmd/root.go` or `npm/package.json`), the script leaves the stash in place and tells you the ref so you can resolve it manually.
-
-`--allow-dirty` is different and intentionally limited: it lets the release proceed with a dirty tree but does **not** include your uncommitted changes in the tag, binary, or npm package. Use it only if you know what you're doing.
-
-## Contributing
-
-Contributions are welcome. Please open an issue first to discuss what you want to change.
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Make your changes
-4. Run tests (`cd ccpm && go test ./...`)
-5. Open a pull request
-
-## License
-
-MIT
-
-## Author
-
-Built by [Nitin Gupta](https://x.com/nitingupta__7).
