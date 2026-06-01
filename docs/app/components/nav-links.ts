@@ -3,6 +3,7 @@
 // drifting apart whenever a section is added or removed.
 export const navLinks = [
   { href: "/docs", label: "Docs" },
+  { href: "/changelog", label: "Changelog" },
   { href: "/#features", label: "Features" },
   { href: "/#privacy", label: "Privacy" },
 ] as const;

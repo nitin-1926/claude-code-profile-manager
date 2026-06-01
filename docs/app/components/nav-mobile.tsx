@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Menu, X } from "lucide-react";
+import { Menu, Sparkles, X } from "lucide-react";
 import { GithubIcon } from "./brand-icons";
 import { navLinks } from "./nav-links";
+import { useAiSearch } from "./ai-search/ai-search-context";
 
 export function NavMobile() {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const { openDialog } = useAiSearch();
 
   // Close + restore focus to the trigger so keyboard users don't land on
   // <body>.
@@ -99,7 +101,9 @@ export function NavMobile() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between h-14 px-6 border-b border-border">
-              <span className="font-mono font-semibold tracking-tight">ccpm</span>
+              <span className="font-mono font-semibold tracking-tight">
+                ccpm
+              </span>
               <button
                 type="button"
                 onClick={close}
@@ -111,6 +115,17 @@ export function NavMobile() {
             </div>
 
             <div className="flex flex-col p-6 gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  openDialog();
+                  close();
+                }}
+                className="flex items-center gap-2 py-3 text-lg text-left text-fg hover:text-accent transition-colors rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <Sparkles size={20} className="text-accent shrink-0" />
+                Ask about ccpm
+              </button>
               {navLinks.map((l) => (
                 <Link
                   key={l.href}

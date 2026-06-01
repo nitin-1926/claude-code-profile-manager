@@ -5,9 +5,9 @@ const CURL_CMD =
   "curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh";
 
 const SOURCE_CMD = `git clone https://github.com/nitin-1926/claude-code-profile-manager.git
-cd claude-code-profile-manager
-make build
-# binary at ./bin/ccpm`;
+cd claude-code-profile-manager/ccpm
+go build -o ccpm .
+./ccpm --version`;
 
 export function InstallTabs() {
   return (

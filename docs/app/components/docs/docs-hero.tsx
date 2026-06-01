@@ -2,6 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { GithubIcon } from "../brand-icons";
 import { VERSION } from "@/lib/version";
 import { QuickLinksGrid } from "./quick-links";
+import { AiSearchTrigger } from "../ai-search/ai-search-trigger";
 
 // Docs page hero: version pill + GitHub pill + headline + quick-links grid.
 // Kept as a standalone component so the docs page's top of file stays
@@ -38,6 +39,10 @@ export function DocsHero() {
       </p>
 
       <QuickLinksGrid />
+
+      <div className="mt-6">
+        <AiSearchTrigger variant="hero" />
+      </div>
 
       <div className="mt-10 h-px bg-border" />
     </div>

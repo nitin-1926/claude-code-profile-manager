@@ -45,14 +45,12 @@ export function Footer() {
               </Link>
             </li>
             <li>
-              <a
-                href="https://github.com/nitin-1926/claude-code-profile-manager/releases"
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href="/changelog"
                 className="text-fg-muted hover:text-fg transition-colors"
               >
                 Changelog
-              </a>
+              </Link>
             </li>
           </ul>
         </div>
@@ -103,7 +101,8 @@ export function Footer() {
             <span>MIT License</span>
             <span className="text-fg-subtle/50">•</span>
             <span className="inline-flex items-center gap-1">
-              Built with <Heart size={11} strokeWidth={2.25} className="text-accent" /> by{" "}
+              Built with{" "}
+              <Heart size={11} strokeWidth={2.25} className="text-accent" /> by{" "}
               <a
                 href="https://x.com/nitingupta__7"
                 target="_blank"

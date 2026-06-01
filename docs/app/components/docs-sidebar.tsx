@@ -48,6 +48,7 @@ const groups: Group[] = [
       { id: "doctor", label: "Doctor" },
       { id: "drift", label: "Drift detection" },
       { id: "vault", label: "Vault backup" },
+      { id: "backup-migrate", label: "Backup & migrate" },
       { id: "uninstall", label: "Uninstall" },
     ],
   },
@@ -56,6 +57,8 @@ const groups: Group[] = [
     icon: BookOpen,
     items: [
       { id: "shell", label: "Shell integration" },
+      { id: "completion", label: "Shell completion" },
+      { id: "prompt", label: "Shell prompt" },
       { id: "ide", label: "IDE / VS Code" },
       { id: "privacy", label: "Privacy & security" },
       { id: "platforms", label: "Platform support" },

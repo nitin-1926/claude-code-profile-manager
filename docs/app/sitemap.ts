@@ -16,5 +16,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 0.9,
     },
+    {
+      url: `${base}/changelog`,
+      lastModified: now,
+      changeFrequency: "weekly",
+      priority: 0.75,
+    },
   ];
 }

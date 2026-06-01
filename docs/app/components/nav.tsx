@@ -8,14 +8,15 @@ import { ThemeToggle } from "./theme-toggle";
 import { NavMobile } from "./nav-mobile";
 import { GithubIcon } from "./brand-icons";
 import { navLinks } from "./nav-links";
+import { AiSearchTrigger } from "./ai-search/ai-search-trigger";
 
 export function Nav() {
   const pathname = usePathname();
   // Seed the state from the current scrollY so the first paint already
   // matches what the user sees on a mid-page refresh — otherwise the nav
   // renders transparent for one frame before the effect flips it.
-  const [scrolled, setScrolled] = useState(() =>
-    typeof window !== "undefined" && window.scrollY > 8,
+  const [scrolled, setScrolled] = useState(
+    () => typeof window !== "undefined" && window.scrollY > 8,
   );
 
   useEffect(() => {
@@ -43,11 +44,7 @@ export function Nav() {
           aria-label="ccpm home"
         >
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-accent-muted border border-accent/20 transition-transform duration-[var(--dur-base)] group-hover:rotate-[8deg]">
-            <Terminal
-              size={14}
-              strokeWidth={2.25}
-              className="text-accent"
-            />
+            <Terminal size={14} strokeWidth={2.25} className="text-accent" />
           </span>
           <span className="font-mono font-semibold tracking-tight text-fg">
             ccpm
@@ -59,7 +56,9 @@ export function Nav() {
             const active =
               l.href === "/docs"
                 ? pathname?.startsWith("/docs")
-                : pathname === l.href;
+                : l.href === "/changelog"
+                  ? pathname === "/changelog"
+                  : pathname === l.href;
             return (
               <Link
                 key={l.href}
@@ -87,6 +86,7 @@ export function Nav() {
           >
             <GithubIcon size={16} />
           </a>
+          <AiSearchTrigger variant="nav" />
           <ThemeToggle />
           <Link
             href="/docs"
