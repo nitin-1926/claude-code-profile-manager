@@ -38,16 +38,16 @@ It is an orchestration layer that composes the official `CLAUDE_CONFIG_DIR` env 
 
 ## 4. Global vs per-profile assets
 
-| Asset    | Cross-profile source                                | Profile path                         | Merge mechanism                               |
-| -------- | --------------------------------------------------- | ------------------------------------ | --------------------------------------------- |
-| Skills   | `~/.ccpm/share/skills/<name>` (global) or `~/.claude/skills/<name>` (host) | `<profile>/skills/<name>` (link)     | Symlink                                       |
-| MCP      | `~/.ccpm/share/mcp/global.json` + `<profile>.json`  | `<profile>/.claude.json#mcpServers`  | `settingsmerge.MaterializeMCP`                |
-| Settings | `~/.claude/settings.json` + `share/settings/<profile>.json` | `<profile>/settings.json`    | `settingsmerge.Materialize` (with owned-keys) |
-| Hooks    | `~/.ccpm/share/hooks/<name>` (global) or `~/.claude/hooks/<name>` (host) | `<profile>/hooks/<name>` (link)     | Symlink                                       |
-| Agents   | `~/.ccpm/share/agents/<name>` (global) or `~/.claude/agents/<name>` (host) | `<profile>/agents/<name>` (link)     | Symlink (dedup import)                        |
-| Commands | `~/.ccpm/share/commands/<name>` (global) or `~/.claude/commands/<name>` (host) | `<profile>/commands/<name>` (link)   | Symlink (dedup import)                        |
-| Rules    | `~/.ccpm/share/rules/<name>` (global) or `~/.claude/rules/<name>` (host) | `<profile>/rules/<name>` (link)     | Symlink                                       |
-| Plugins  | `~/.ccpm/share/plugins/cache/...` (global) or `~/.claude/plugins/cache/...` (host) | `<profile>/plugins/cache/...` + `installed_plugins.json` entry | Symlink + atomicwrite JSON merge |
+| Asset    | Cross-profile source                                                               | Profile path                                                   | Merge mechanism                               |
+| -------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| Skills   | `~/.ccpm/share/skills/<name>` (global) or `~/.claude/skills/<name>` (host)         | `<profile>/skills/<name>` (link)                               | Symlink                                       |
+| MCP      | `~/.ccpm/share/mcp/global.json` + `<profile>.json`                                 | `<profile>/.claude.json#mcpServers`                            | `settingsmerge.MaterializeMCP`                |
+| Settings | `~/.claude/settings.json` + `share/settings/<profile>.json`                        | `<profile>/settings.json`                                      | `settingsmerge.Materialize` (with owned-keys) |
+| Hooks    | `~/.ccpm/share/hooks/<name>` (global) or `~/.claude/hooks/<name>` (host)           | `<profile>/hooks/<name>` (link)                                | Symlink                                       |
+| Agents   | `~/.ccpm/share/agents/<name>` (global) or `~/.claude/agents/<name>` (host)         | `<profile>/agents/<name>` (link)                               | Symlink (dedup import)                        |
+| Commands | `~/.ccpm/share/commands/<name>` (global) or `~/.claude/commands/<name>` (host)     | `<profile>/commands/<name>` (link)                             | Symlink (dedup import)                        |
+| Rules    | `~/.ccpm/share/rules/<name>` (global) or `~/.claude/rules/<name>` (host)           | `<profile>/rules/<name>` (link)                                | Symlink                                       |
+| Plugins  | `~/.ccpm/share/plugins/cache/...` (global) or `~/.claude/plugins/cache/...` (host) | `<profile>/plugins/cache/...` + `installed_plugins.json` entry | Symlink + atomicwrite JSON merge              |
 
 ### 4a. Host-asset cascade (Project → Profile → Global → Host)
 
@@ -91,13 +91,13 @@ MCP merge (`MaterializeMCP(profileDir, profileName, projectRoot)`): existing pro
 
 ## 6. Authentication matrix
 
-| Method  | Platform                | Storage                                                                                                                                                |
-| ------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| OAuth   | macOS ✓                 | Login Keychain under service `Claude Code-credentials-<sha256(abs(CLAUDE_CONFIG_DIR))[:8]>`, account = OS user (Claude Code v2.1.56+)                  |
-| OAuth   | Windows ⚠ experimental  | Windows Credential Manager under the same namespaced service / OS-user account convention as macOS — **assumed identical, not yet verified on Windows** |
-| OAuth   | Linux ⚠ experimental    | `<profileDir>/.credentials.json` (legacy fallback; libsecret handler not yet written)                                                                  |
-| API key | All                     | `go-keyring` — service `ccpm`, account `<profile>`                                                                                                     |
-| Vault   | All                     | AES-256-GCM under `~/.ccpm/vault/<profile>.enc`, master key in `go-keyring` (service `ccpm-vault`)                                                     |
+| Method  | Platform               | Storage                                                                                                                                                 |
+| ------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OAuth   | macOS ✓                | Login Keychain under service `Claude Code-credentials-<sha256(abs(CLAUDE_CONFIG_DIR))[:8]>`, account = OS user (Claude Code v2.1.56+)                   |
+| OAuth   | Windows ⚠ experimental | Windows Credential Manager under the same namespaced service / OS-user account convention as macOS — **assumed identical, not yet verified on Windows** |
+| OAuth   | Linux ⚠ experimental   | `<profileDir>/.credentials.json` (legacy fallback; libsecret handler not yet written)                                                                   |
+| API key | All                    | `go-keyring` — service `ccpm`, account `<profile>`                                                                                                      |
+| Vault   | All                    | AES-256-GCM under `~/.ccpm/vault/<profile>.enc`, master key in `go-keyring` (service `ccpm-vault`)                                                      |
 
 Helpers live in `internal/credentials/`. `macos_keychain.go` (build-tagged `darwin`) is the verified reference implementation. `wincred_keychain.go` (build-tagged `windows`) mirrors the macOS surface against `go-keyring`'s wincred backend — theoretical until a Windows user exercises `ccpm set-default <oauth>` and reports back. A stub `macos_keychain_other.go` (build-tagged `!darwin && !windows`) keeps Linux + other builds compiling with no-ops; replace it with a libsecret handler when adding real Linux OAuth-isolation support.
 
@@ -195,6 +195,8 @@ When you make any substantive change to this repository (bug fix, feature, build
 
 The entry template is defined in `SUMMARY.md` itself; follow it exactly.
 
+**Ask Me / docs grounding:** The public docs site streams answers from a Portkey prompt whose trusted context is `docs/lib/ai/ccpm-context.md`. Whenever you change user-facing commands, flags, platform support, limitations, troubleshooting, or README/docs facts that users might ask about, update `docs/lib/ai/ccpm-context.md` in the same PR/session. Template copy for Portkey: `docs/lib/ai/PORTKEY_PROMPT.md`.
+
 Secondary agent hygiene:
 
 - Always run `go build ./...` and `GOOS=windows go build ./...` from `ccpm/` before finishing a change that touches Go code. Windows cross-compile is a non-negotiable CI step.
@@ -204,6 +206,7 @@ Secondary agent hygiene:
 - Never publish a release manually. Use `scripts/release.sh <patch|minor|major|X.Y.Z>` — it enforces the preflight (auth, clean tree, sync with origin, unused tag) and sequences tag push → goreleaser wait → `npm publish` in the correct order. If you change release mechanics, update both the script and this file in the same PR.
 
 <!-- gitnexus:start -->
+
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **claude-code-profile-manager** (2706 symbols, 5182 relationships, 234 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
@@ -227,22 +230,22 @@ This project is indexed by GitNexus as **claude-code-profile-manager** (2706 sym
 
 ## Resources
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/claude-code-profile-manager/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/claude-code-profile-manager/clusters` | All functional areas |
-| `gitnexus://repo/claude-code-profile-manager/processes` | All execution flows |
-| `gitnexus://repo/claude-code-profile-manager/process/{name}` | Step-by-step execution trace |
+| Resource                                                     | Use for                                  |
+| ------------------------------------------------------------ | ---------------------------------------- |
+| `gitnexus://repo/claude-code-profile-manager/context`        | Codebase overview, check index freshness |
+| `gitnexus://repo/claude-code-profile-manager/clusters`       | All functional areas                     |
+| `gitnexus://repo/claude-code-profile-manager/processes`      | All execution flows                      |
+| `gitnexus://repo/claude-code-profile-manager/process/{name}` | Step-by-step execution trace             |
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Task                                         | Read this skill file                                        |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius / "What breaks if I change X?"  | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?"             | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename / extract / split / refactor          | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema reference           | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->

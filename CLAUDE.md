@@ -1,4 +1,5 @@
 <!-- gitnexus:start -->
+
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **claude-code-profile-manager** (2706 symbols, 5182 relationships, 234 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
@@ -22,23 +23,23 @@ This project is indexed by GitNexus as **claude-code-profile-manager** (2706 sym
 
 ## Resources
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/claude-code-profile-manager/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/claude-code-profile-manager/clusters` | All functional areas |
-| `gitnexus://repo/claude-code-profile-manager/processes` | All execution flows |
-| `gitnexus://repo/claude-code-profile-manager/process/{name}` | Step-by-step execution trace |
+| Resource                                                     | Use for                                  |
+| ------------------------------------------------------------ | ---------------------------------------- |
+| `gitnexus://repo/claude-code-profile-manager/context`        | Codebase overview, check index freshness |
+| `gitnexus://repo/claude-code-profile-manager/clusters`       | All functional areas                     |
+| `gitnexus://repo/claude-code-profile-manager/processes`      | All execution flows                      |
+| `gitnexus://repo/claude-code-profile-manager/process/{name}` | Step-by-step execution trace             |
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Task                                         | Read this skill file                                        |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius / "What breaks if I change X?"  | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?"             | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename / extract / split / refactor          | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema reference           | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->
 
@@ -58,3 +59,7 @@ Hard rules:
 - Only skip the log for purely cosmetic edits (whitespace, typo, doc link rename). When in doubt, write the entry.
 
 Before you say a task is done, do this self-check: if any tracked file under `ccpm/**`, `scripts/**`, `docs/**`, or top-level docs has been modified in this session and you have not appended a `SUMMARY.md` entry covering it, you are not done. Append the entry first.
+
+## Ask Me context (`docs/lib/ai/ccpm-context.md`)
+
+The docs site’s **Ask Me** feature grounds answers in `docs/lib/ai/ccpm-context.md` (loaded server-side for `POST /api/ask`). Whenever you change **user-facing** behavior or facts — CLI commands/flags, platform support, limitations, troubleshooting, README or on-site docs that users rely on — update that file in the **same change** so the assistant does not drift. Portkey template variables and paste-instructions live in `docs/lib/ai/PORTKEY_PROMPT.md`.
