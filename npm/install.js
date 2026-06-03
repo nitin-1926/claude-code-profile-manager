@@ -2,12 +2,19 @@
 // Downloads the correct ccpm binary for the current platform during npm install
 
 const { execSync } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
 
 const REPO = "nitin-1926/claude-code-profile-manager";
 const BINARY = "ccpm";
+
+// Pin the download to the version of this exact npm package. Querying
+// releases/latest would let a freshly cut release ship a binary that doesn't
+// match the installed package version (and could be raced by an attacker who
+// can publish a release). require()ing package.json keeps the two in lockstep.
+const VERSION = require("./package.json").version;
 
 function getPlatform() {
   const platform = process.platform;
@@ -27,25 +34,43 @@ function getPlatform() {
   return { os, arch: cpu };
 }
 
-function getLatestVersion() {
+// Fetch a small text resource (the checksums manifest), following redirects.
+function fetchText(url) {
   return new Promise((resolve, reject) => {
-    const url = `https://api.github.com/repos/${REPO}/releases/latest`;
-    https.get(url, { headers: { "User-Agent": "ccpm-npm" } }, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        try {
-          const json = JSON.parse(data);
-          resolve(json.tag_name.replace(/^v/, ""));
-        } catch {
-          // Fallback to package.json version
-          const pkg = require("./package.json");
-          resolve(pkg.version);
+    const follow = (url) => {
+      https.get(url, { headers: { "User-Agent": "ccpm-npm" } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          follow(res.headers.location);
+          return;
         }
-      });
-      res.on("error", reject);
-    });
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+          return;
+        }
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => resolve(data));
+        res.on("error", reject);
+      }).on("error", reject);
+    };
+    follow(url);
   });
+}
+
+function sha256OfFile(filePath) {
+  const hash = crypto.createHash("sha256");
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest("hex");
+}
+
+// Parse goreleaser's checksums.txt ("<sha256>  <filename>" per line) and return
+// the expected hash for archiveName, or null if it isn't listed.
+function expectedChecksum(manifest, archiveName) {
+  for (const line of manifest.split("\n")) {
+    const m = line.match(/^([0-9a-fA-F]{64})\s+(\S+)\s*$/);
+    if (m && m[2] === archiveName) return m[1].toLowerCase();
+  }
+  return null;
 }
 
 async function download(url, dest) {
@@ -85,10 +110,13 @@ function warnIfUnverifiedPlatform(os) {
 async function main() {
   const { os, arch } = getPlatform();
   warnIfUnverifiedPlatform(os);
-  const version = await getLatestVersion();
+  const version = VERSION;
 
   const ext = os === "windows" ? "zip" : "tar.gz";
-  const url = `https://github.com/${REPO}/releases/download/v${version}/${BINARY}_${os}_${arch}.${ext}`;
+  const archiveName = `${BINARY}_${os}_${arch}.${ext}`;
+  const baseUrl = `https://github.com/${REPO}/releases/download/v${version}`;
+  const url = `${baseUrl}/${archiveName}`;
+  const checksumsUrl = `${baseUrl}/checksums.txt`;
 
   console.log(`Installing ccpm v${version} for ${os}/${arch}...`);
 
@@ -102,7 +130,49 @@ async function main() {
   fs.mkdirSync(tmpDir, { recursive: true });
 
   const archivePath = path.join(tmpDir, `archive.${ext}`);
-  await download(url, archivePath);
+  try {
+    await download(url, archivePath);
+  } catch (err) {
+    throw new Error(
+      `failed to download ${url}: ${err.message}\n` +
+        `  Is there a published release for v${version}? See https://github.com/${REPO}/releases`,
+    );
+  }
+
+  // Verify the archive against the SHA-256 published in the SAME release's
+  // checksums.txt. Fail closed: a missing manifest, a missing line, or a
+  // mismatch deletes the partial download and aborts — we never install an
+  // unverified binary that would run with the user's privileges.
+  let manifest;
+  try {
+    manifest = await fetchText(checksumsUrl);
+  } catch (err) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(
+      `failed to download ${checksumsUrl}: ${err.message}\n` +
+        `  Refusing to install without a checksum to verify against.`,
+    );
+  }
+
+  console.log("Verifying SHA-256...");
+  const expected = expectedChecksum(manifest, archiveName);
+  if (!expected) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(
+      `${archiveName} not listed in checksums.txt — possible tampering or missing release asset.`,
+    );
+  }
+  const actual = sha256OfFile(archivePath);
+  if (expected !== actual) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(
+      `checksum mismatch for ${archiveName}.\n` +
+        `  expected: ${expected}\n` +
+        `  actual:   ${actual}\n` +
+        `  Refusing to install a tampered binary.`,
+    );
+  }
+  console.log(`  sha256 ok (${expected})`);
 
   if (ext === "zip") {
     execSync(`unzip -o -q "${archivePath}" -d "${tmpDir}"`, { stdio: "inherit" });

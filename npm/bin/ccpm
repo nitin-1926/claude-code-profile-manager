@@ -10,11 +10,12 @@ const binary = path.join(__dirname, isWin ? "ccpm-native.exe" : "ccpm-native");
 if (!fs.existsSync(binary)) {
   console.error("ccpm: native binary not found at " + binary);
   console.error(
-    "The postinstall step may have failed. Reinstall with `npm i -g @ngcodes/ccpm`"
+    "The postinstall download was skipped (e.g. --ignore-scripts) or failed (e.g. offline). Fix it with any of:"
   );
-  console.error(
-    "Or download manually: https://github.com/nitin-1926/claude-code-profile-manager/releases"
-  );
+  console.error("  • Reinstall WITHOUT --ignore-scripts:  npm i -g @ngcodes/ccpm");
+  console.error("  • Re-run the download in-place:         node \"" + path.join(__dirname, "..", "install.js") + "\"");
+  console.error("  • Install via curl:                     curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh");
+  console.error("  • Or download manually:                 https://github.com/nitin-1926/claude-code-profile-manager/releases");
   process.exit(1);
 }
 
