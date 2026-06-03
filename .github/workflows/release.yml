@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: write
+  # Required for cosign keyless signing — lets goreleaser request an OIDC token
+  # from GitHub's identity provider to sign checksums.txt against Fulcio/Rekor.
+  id-token: write
 
 jobs:
   release:
@@ -23,6 +26,11 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: ccpm/go.sum
 
+      # Provides the `cosign` binary used by the goreleaser `signs` block to
+      # keyless-sign the checksums manifest.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       # Pin to a specific goreleaser-action SHA and goreleaser binary version
       # so a tag move or compromised label in the action repo can't silently
       # change what runs during a release.
@@ -33,3 +41,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Keyless (OIDC) signing for cosign.
+          COSIGN_EXPERIMENTAL: '1'
