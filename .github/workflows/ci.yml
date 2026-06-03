@@ -57,3 +57,37 @@ jobs:
         with:
           version: latest
           working-directory: ccpm
+
+  release-config:
+    name: Validate release config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: ccpm/go.sum
+
+      # Catch a broken .goreleaser.yaml in CI instead of at tag time. Same
+      # pinned action SHA + goreleaser version as release.yml.
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          version: v2.4.6
+          args: check
+
+      # Assert the Go and npm versions stay in lockstep — install.js pins the
+      # binary download to npm/package.json's version, so a drift would fetch a
+      # mismatched (or non-existent) release asset.
+      - name: Assert version parity (Go vs npm)
+        run: |
+          go_v="$(grep -E '^[[:space:]]*var[[:space:]]+version[[:space:]]*=' ccpm/cmd/root.go | sed -E 's/.*"([^"]+)".*/\1/')"
+          npm_v="$(node -e 'console.log(require("./npm/package.json").version)')"
+          echo "ccpm/cmd/root.go: $go_v"
+          echo "npm/package.json: $npm_v"
+          if [ "$go_v" != "$npm_v" ]; then
+            echo "::error::version mismatch — Go says '$go_v', npm says '$npm_v'. Keep them in sync." >&2
+            exit 1
+          fi
