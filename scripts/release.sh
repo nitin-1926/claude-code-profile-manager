@@ -19,7 +19,8 @@
 #      on main; up to date with origin; logged in to npm with publish access;
 #      logged in to gh; target tag doesn't already exist.
 #   2. Bumps ccpm/cmd/root.go and npm/package.json to the new version.
-#   3. Runs go build (host), GOOS=windows go build, go test ./..., docs tsc.
+#   3. Runs go build (host + windows/linux cross), go test ./..., the sandboxed
+#      on-system smoke test (scripts/smoke-test.sh), and docs tsc.
 #   4. Commits "chore: release vX.Y.Z", tags vX.Y.Z, pushes both.
 #   5. Waits for the GitHub "Release" workflow (goreleaser) to finish and
 #      the GitHub Release to be published.
@@ -79,7 +80,7 @@ Usage: $(basename "$0") <patch|minor|major|X.Y.Z> [flags]
 
 Flags:
   --dry-run       Print planned actions. Does not modify files, commit, tag, or publish.
-  --skip-tests    Skip the go build / go test / docs type-check verification.
+  --skip-tests    Skip verification (go build / go test / on-system smoke test / docs type-check).
   --skip-npm      Do GitHub release only, skip the npm publish step.
   --stash         Auto-stash uncommitted changes for the duration of the release
                   and pop them back when done (even on failure). Lets you release
@@ -358,6 +359,27 @@ run_verification() {
   info "go test ./..."
   ( cd ccpm && go test ./... )
   ok "tests green"
+
+  # On-system smoke gate: builds the binary and exercises real rename / cascade
+  # + merge / clone / export / doctor / parallel-mutation-lock behavior inside an
+  # isolated $HOME sandbox (no touch to the real ~/.ccpm, ~/.claude, default
+  # account, or login keychain). Catches integration regressions unit tests miss.
+  if command -v python3 >/dev/null 2>&1; then
+    info "on-system smoke test (sandboxed; scripts/smoke-test.sh)"
+    local smoke_log
+    smoke_log="$(mktemp)"
+    if bash "$SCRIPT_DIR/smoke-test.sh" >"$smoke_log" 2>&1; then
+      ok "smoke test green ($(grep -oE '[0-9]+ passed' "$smoke_log" | head -1 || echo 'all checks'))"
+      rm -f "$smoke_log"
+    else
+      printf '%s\n' "----- smoke test output (tail) -----" >&2
+      tail -40 "$smoke_log" >&2
+      rm -f "$smoke_log"
+      fatal "on-system smoke test FAILED — aborting release. Debug with: scripts/smoke-test.sh"
+    fi
+  else
+    warn "python3 not found — skipping the on-system smoke-test gate"
+  fi
 
   if [[ -f docs/package.json ]]; then
     info "docs: npx tsc --noEmit (no Next.js build, just type-check)"

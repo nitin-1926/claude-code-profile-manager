@@ -4,12 +4,17 @@ project_name: ccpm
 
 before:
   hooks:
-    - sh -c "cd ccpm && go mod tidy"
+    # Only download deps — never `go mod tidy`, which mutates go.sum/go.mod
+    # non-deterministically and would make release builds non-reproducible.
+    - sh -c "cd ccpm && go mod download"
 
 builds:
   - dir: ccpm
     env:
       - CGO_ENABLED=0
+    flags:
+      # Strip absolute build paths so the binary is reproducible across machines.
+      - -trimpath
     goos:
       - linux
       - darwin
@@ -30,6 +35,25 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+
+# Sign the checksums manifest with cosign in keyless (OIDC) mode. Because the
+# whole release is verified against checksums.txt, signing that one file
+# transitively attests every archive. `output: true` keeps the .sig/.pem as
+# release assets. The signing only runs in CI where cosign + an OIDC token are
+# present; local snapshot builds (`goreleaser release --snapshot`) skip signing,
+# so a missing cosign won't break local builds.
+signs:
+  - cmds:
+      - cosign
+    artifacts: checksum
+    output: true
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    certificate: "${artifact}.pem"
 
 changelog:
   sort: asc
