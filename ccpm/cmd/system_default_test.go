@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,12 @@ func TestBuildSystemDefaultPlistIsDeterministic(t *testing.T) {
 }
 
 func TestSystemDefaultPlistPathIsUserScoped(t *testing.T) {
+	// The plist/LaunchAgents system-default mechanism is macOS-only (its
+	// callers early-return on non-darwin), and the expected path below uses
+	// macOS "/"-separated semantics that filepath.Join wouldn't match on Windows.
+	if runtime.GOOS != "darwin" {
+		t.Skip("plist/LaunchAgents system default is macOS-only")
+	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)

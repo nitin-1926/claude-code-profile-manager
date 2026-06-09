@@ -197,13 +197,14 @@ func TestInstallSkillExtractsEmbedded(t *testing.T) {
 	if info.Size() == 0 {
 		t.Errorf("extracted SKILL.md is empty")
 	}
-	// Bundled scripts should be executable
+	// Bundled scripts should be executable. Windows has no Unix exec bit
+	// (os.Chmod only toggles the read-only attribute), so skip the check there.
 	script := filepath.Join(home, ".claude", "skills", "consolidate-claude-assets", "scripts", "inventory.sh")
 	scriptInfo, err := os.Stat(script)
 	if err != nil {
 		t.Fatalf("expected script at %s: %v", script, err)
 	}
-	if scriptInfo.Mode().Perm()&0o100 == 0 {
+	if runtime.GOOS != "windows" && scriptInfo.Mode().Perm()&0o100 == 0 {
 		t.Errorf("script should be executable, got mode=%v", scriptInfo.Mode())
 	}
 }
