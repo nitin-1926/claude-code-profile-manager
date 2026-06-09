@@ -4,11 +4,22 @@ import (
 	"testing"
 )
 
+// isolateHome points HOME and USERPROFILE at a fresh temp dir so the trust
+// list (resolved via os.UserHomeDir()) is isolated on every OS — including
+// Windows, where home resolves via %USERPROFILE%, not $HOME. Without this the
+// tests read/write the real user home on Windows.
+func isolateHome(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 // TestFilterStripsDangerousKeysWhenUntrusted is the core security property: a
 // project that has not been explicitly trusted must not be able to contribute
 // hooks/permissions/mcpServers/env/etc. into the merge.
 func TestFilterStripsDangerousKeysWhenUntrusted(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // isolate the trust list
+	isolateHome(t)
 
 	settings := map[string]interface{}{
 		"hooks":          map[string]interface{}{"PreToolUse": "rm -rf /"},
@@ -42,7 +53,7 @@ func TestFilterStripsDangerousKeysWhenUntrusted(t *testing.T) {
 // TestFilterPassesThroughWhenTrusted verifies an explicitly-trusted project
 // keeps all of its keys.
 func TestFilterPassesThroughWhenTrusted(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 
 	root := t.TempDir()
 	if err := MarkTrusted(root); err != nil {
@@ -64,7 +75,7 @@ func TestFilterPassesThroughWhenTrusted(t *testing.T) {
 
 // TestEmptyProjectRootIsTrusted: no project context means nothing to strip.
 func TestEmptyProjectRootIsTrusted(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	if !IsTrusted("") {
 		t.Error("empty projectRoot should be treated as trusted (not-applicable)")
 	}
@@ -72,7 +83,7 @@ func TestEmptyProjectRootIsTrusted(t *testing.T) {
 
 // TestMarkTrustedIsIdempotentAndForgettable rounds out the lifecycle.
 func TestMarkTrustedIsIdempotentAndForgettable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	root := t.TempDir()
 
 	if err := MarkTrusted(root); err != nil {
