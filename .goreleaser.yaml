@@ -43,8 +43,7 @@ checksum:
 # present; local snapshot builds (`goreleaser release --snapshot`) skip signing,
 # so a missing cosign won't break local builds.
 signs:
-  - cmds:
-      - cosign
+  - cmd: cosign
     artifacts: checksum
     output: true
     args:
