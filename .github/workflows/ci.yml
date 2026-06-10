@@ -19,10 +19,10 @@ jobs:
         working-directory: ccpm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
           cache-dependency-path: ccpm/go.sum
@@ -30,8 +30,24 @@ jobs:
       - name: Build
         run: go build -o ccpm .
 
+      # -race catches the cross-process/goroutine hazards the manifest and
+      # sync paths are prone to; -count=1 defeats stale cache hits in CI.
       - name: Test
-        run: go test -v ./...
+        run: go test -race -count=1 -coverprofile=cover.out ./...
+
+      # Floor set from the measured baseline (34.4% on 2026-06-10) minus a
+      # small noise band. Ratchet upward as coverage improves — never down.
+      - name: Coverage gate
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          total="$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')"
+          echo "total coverage: ${total}%"
+          min=32
+          if (( $(echo "$total < $min" | bc -l) )); then
+            echo "::error::coverage ${total}% fell below the ${min}% floor" >&2
+            exit 1
+          fi
 
       - name: Verify binary runs
         run: ./ccpm --version
@@ -44,28 +60,48 @@ jobs:
       run:
         working-directory: ccpm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
           cache-dependency-path: ccpm/go.sum
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           version: latest
           working-directory: ccpm
+
+  govulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ccpm
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: ccpm/go.sum
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   release-config:
     name: Validate release config
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
           cache-dependency-path: ccpm/go.sum
