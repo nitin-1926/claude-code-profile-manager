@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Downloads the correct ccpm binary for the current platform during npm install
 
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -174,10 +174,14 @@ async function main() {
   }
   console.log(`  sha256 ok (${expected})`);
 
+  // Extract via argv-array exec (no shell interpolation of paths). The
+  // archive content is already SHA-256-verified against the cosign-signed
+  // checksums manifest above, so residual zip-slip risk is accepted rather
+  // than adding a JS extractor dependency (itself supply-chain surface).
   if (ext === "zip") {
-    execSync(`unzip -o -q "${archivePath}" -d "${tmpDir}"`, { stdio: "inherit" });
+    execFileSync("unzip", ["-o", "-q", archivePath, "-d", tmpDir], { stdio: "inherit" });
   } else {
-    execSync(`tar -xzf "${archivePath}" -C "${tmpDir}"`, { stdio: "inherit" });
+    execFileSync("tar", ["-xzf", archivePath, "-C", tmpDir], { stdio: "inherit" });
   }
 
   // Move the native binary to bin/ccpm-native (or ccpm-native.exe on Windows).
@@ -189,6 +193,19 @@ async function main() {
 
   if (!fs.existsSync(extractedPath)) {
     throw new Error(`extracted binary not found at ${extractedPath}`);
+  }
+  // Belt-and-braces: the file we are about to install must really live inside
+  // the temp dir (no symlink escape from a hostile archive).
+  const realExtracted = fs.realpathSync(extractedPath);
+  const realTmp = fs.realpathSync(tmpDir);
+  if (realExtracted !== path.join(realTmp, extractedName)) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(`extracted binary resolves outside the staging dir: ${realExtracted}`);
+  }
+  const extractedStat = fs.lstatSync(extractedPath);
+  if (!extractedStat.isFile()) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(`extracted binary is not a regular file`);
   }
 
   if (fs.existsSync(nativePath)) fs.unlinkSync(nativePath);
