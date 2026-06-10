@@ -36,6 +36,12 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Per-archive SPDX SBOMs (generated with syft, installed by release.yml).
+# Published as release assets so downstream consumers can audit dependency
+# contents of each binary without rebuilding.
+sboms:
+  - artifacts: archive
+
 # Sign the checksums manifest with cosign in keyless (OIDC) mode. Because the
 # whole release is verified against checksums.txt, signing that one file
 # transitively attests every archive. `output: true` keeps the .sig/.pem as
