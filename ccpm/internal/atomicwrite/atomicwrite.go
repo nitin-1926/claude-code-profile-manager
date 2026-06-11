@@ -25,6 +25,13 @@
 //     are on the same filesystem. ccpm only writes inside ~/.ccpm and
 //     ~/.claude (always the same FS in practice).
 //
+// Durability: staged files are fsync'd before the rename, and each unique
+// parent directory is fsync'd (best-effort) after all renames commit, so a
+// power loss after Apply returns cannot replay a rename whose file contents
+// were never made durable (which would surface as a truncated/empty target).
+// Directory fsync is skipped on Windows, where it isn't supported; Windows
+// callers get the weaker rename-only guarantee.
+//
 // On Windows, os.Rename over an existing file works on modern releases. The
 // atomic-rename guarantee may be weaker on very old Windows versions; ccpm
 // targets aren't shared across processes so the practical risk is low.
@@ -38,6 +45,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // DefaultMode is used when a Write change has Mode == 0. Mirrors
@@ -160,7 +168,30 @@ func Apply(changes []FileChange) error {
 		committed = append(committed, i)
 	}
 
+	syncParentDirs(changes)
 	return nil
+}
+
+// syncParentDirs fsyncs the parent directory of every change so the committed
+// renames survive power loss. Best-effort by design: the transaction has
+// already committed, so a dir-sync failure (e.g. exotic filesystems that
+// reject fsync on directories) must not fail Apply or trigger rollback.
+func syncParentDirs(changes []FileChange) {
+	if runtime.GOOS == "windows" {
+		return // directory handles can't be fsync'd on Windows
+	}
+	seen := make(map[string]bool, len(changes))
+	for _, c := range changes {
+		dir := filepath.Dir(c.Path)
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		if d, err := os.Open(dir); err == nil {
+			_ = d.Sync()
+			_ = d.Close()
+		}
+	}
 }
 
 func commitSymlink(c FileChange, s snapshot) error {
@@ -257,8 +288,26 @@ func stageWrite(c FileChange) (string, error) {
 	if mode == 0 {
 		mode = DefaultMode
 	}
-	if err := os.WriteFile(staged, c.Data, mode); err != nil {
+	// Write + fsync before the commit rename: without the fsync, a crash can
+	// persist the rename but not the contents, leaving a truncated target —
+	// the exact corruption this package exists to prevent.
+	f, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return "", fmt.Errorf("atomicwrite: create staged %q: %w", staged, err)
+	}
+	if _, err := f.Write(c.Data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(staged)
 		return "", fmt.Errorf("atomicwrite: write staged %q: %w", staged, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(staged)
+		return "", fmt.Errorf("atomicwrite: fsync staged %q: %w", staged, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(staged)
+		return "", fmt.Errorf("atomicwrite: close staged %q: %w", staged, err)
 	}
 	return staged, nil
 }
