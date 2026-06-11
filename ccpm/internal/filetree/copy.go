@@ -37,6 +37,11 @@ func CopyTreeSkipEscaping(src, dst string, skipExisting bool) error {
 	return copyTree(src, dst, skipExisting, true)
 }
 
+// maxCopyDepth bounds how many symlink-to-directory hops copyTree will
+// follow. Legitimate trees nest a handful of links at most; anything deeper
+// is a loop or a deliberately hostile layout.
+const maxCopyDepth = 40
+
 func copyTree(src, dst string, skipExisting, skipEscaping bool) error {
 	absSrc, err := filepath.Abs(src)
 	if err != nil {
@@ -46,7 +51,22 @@ func copyTree(src, dst string, skipExisting, skipEscaping bool) error {
 	if err != nil {
 		return fmt.Errorf("evaluating src symlinks: %w", err)
 	}
+	// inChain tracks the resolved directories on the CURRENT recursion path
+	// so a symlink pointing at its own ancestor (skills/x → skills) cannot
+	// recurse forever. It is a stack, not a global set: two sibling links
+	// legitimately pointing at the same target are not a cycle.
+	inChain := map[string]bool{absSrc: true}
+	return copyTreeFrom(absSrc, dst, absSrc, skipExisting, skipEscaping, inChain, 0)
+}
 
+// copyTreeFrom walks src (already symlink-resolved) and copies into dst.
+// root is the ORIGINAL copy root: every followed symlink is checked against
+// it, not against the subtree being recursed into — re-deriving the root from
+// a resolved target would let nested links walk back out of the tree.
+func copyTreeFrom(src, dst, root string, skipExisting, skipEscaping bool, inChain map[string]bool, depth int) error {
+	if depth > maxCopyDepth {
+		return fmt.Errorf("copy tree: symlink nesting exceeds %d levels under %q", maxCopyDepth, root)
+	}
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -61,6 +81,8 @@ func copyTree(src, dst string, skipExisting, skipEscaping bool) error {
 			return os.MkdirAll(target, info.Mode())
 		}
 
+		readPath := path
+		mode := info.Mode()
 		if info.Mode()&os.ModeSymlink != 0 {
 			resolved, err := filepath.EvalSymlinks(path)
 			if err != nil {
@@ -73,21 +95,46 @@ func copyTree(src, dst string, skipExisting, skipEscaping bool) error {
 			if err != nil {
 				return err
 			}
-			// Symlinks whose resolved target escapes the original src root are a
-			// classic exfil/DoS primitive when src is user-writable
+			// Symlinks whose resolved target escapes the original copy root are
+			// a classic exfil/DoS primitive when src is user-writable
 			// (e.g. ~/.claude/skills/). Strict callers refuse; profile-copy
 			// callers skip (the target re-links via cascade/ApplyGlobals).
-			if !isWithin(absSrc, resolved) {
+			if !isWithin(root, resolved) {
 				if skipEscaping {
 					return nil
 				}
-				return fmt.Errorf("refusing to follow symlink %q: target %q lies outside %q", path, resolved, absSrc)
+				return fmt.Errorf("refusing to follow symlink %q: target %q lies outside %q", path, resolved, root)
 			}
 			if fi.IsDir() {
+				if inChain[resolved] {
+					if skipEscaping {
+						return nil
+					}
+					return fmt.Errorf("refusing to follow symlink %q: cycle back to %q", path, resolved)
+				}
 				if err := os.MkdirAll(target, fi.Mode()); err != nil {
 					return err
 				}
-				return copyTree(resolved, target, skipExisting, skipEscaping)
+				inChain[resolved] = true
+				recErr := copyTreeFrom(resolved, target, root, skipExisting, skipEscaping, inChain, depth+1)
+				delete(inChain, resolved)
+				return recErr
+			}
+			// Symlink to a regular file: read through the verified resolved
+			// path, not the link, so the content cannot be re-pointed between
+			// the check and the read.
+			readPath = resolved
+			mode = fi.Mode()
+		} else {
+			// Plain regular file at walk time. Re-Lstat immediately before
+			// reading: ReadFile follows symlinks, so an entry swapped for a
+			// link after the walk statted it would otherwise read through it.
+			fi, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			if !fi.Mode().IsRegular() {
+				return fmt.Errorf("refusing to copy %q: changed type during copy", path)
 			}
 		}
 
@@ -100,11 +147,11 @@ func copyTree(src, dst string, skipExisting, skipEscaping bool) error {
 		if err := os.MkdirAll(filepath.Dir(target), config.DirPerm); err != nil {
 			return err
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(readPath)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, info.Mode())
+		return os.WriteFile(target, data, mode)
 	})
 }
 
