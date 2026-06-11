@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCopyTreeSymlinkToDirectory(t *testing.T) {
@@ -117,5 +118,92 @@ func TestCopyTreeSkipExisting(t *testing.T) {
 	}
 	if string(data) != "new" {
 		t.Fatalf("expected overwrite, got %q", data)
+	}
+}
+
+// TestCopyTreeSelfLoopSymlink guards against infinite recursion when a
+// directory contains a symlink pointing back at itself or an ancestor.
+// Pre-fix this hung forever; now it must terminate with an error (strict) or
+// by skipping the entry (skip-escaping).
+func TestCopyTreeSelfLoopSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(src, filepath.Join(src, "loop")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- CopyTree(src, filepath.Join(tmp, "out-strict"), false) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("strict CopyTree with self-loop symlink: want error, got nil")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("strict CopyTree hung on self-loop symlink")
+	}
+
+	go func() { done <- CopyTreeSkipEscaping(src, filepath.Join(tmp, "out-skip"), false) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("skip-escaping CopyTree with self-loop symlink: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(tmp, "out-skip", "file.txt")); err != nil {
+			t.Errorf("regular file not copied alongside skipped loop: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("skip-escaping CopyTree hung on self-loop symlink")
+	}
+}
+
+// TestCopyTreeNestedSymlinkChecksOriginalRoot pins the root-threading fix: a
+// symlink inside a followed subtree that targets a sibling elsewhere in the
+// ORIGINAL root is legitimate and must copy (the old code re-derived the root
+// from the resolved subtree and falsely treated it as escaping), while a
+// nested symlink that truly escapes the original root must still refuse.
+func TestCopyTreeNestedSymlinkChecksOriginalRoot(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	for _, d := range []string{"sub", "sibling"} {
+		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(src, "sibling", "data.txt"), []byte("sib"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// src/dirlink -> src/sub ; src/sub/tosibling -> src/sibling
+	if err := os.Symlink(filepath.Join(src, "sub"), filepath.Join(src, "dirlink")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(src, "sibling"), filepath.Join(src, "sub", "tosibling")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(tmp, "out")
+	if err := CopyTree(src, dst, false); err != nil {
+		t.Fatalf("CopyTree with within-root nested symlink: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "dirlink", "tosibling", "data.txt")); err != nil {
+		t.Errorf("nested within-root symlink content missing: %v", err)
+	}
+
+	// Now a nested symlink that escapes the original root entirely.
+	outside := filepath.Join(tmp, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(src, "sub", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(src, filepath.Join(tmp, "out2"), false); err == nil {
+		t.Error("CopyTree with nested escaping symlink: want error, got nil")
 	}
 }
