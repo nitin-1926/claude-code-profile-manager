@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
 // SeedStoreEntry populates dst from src using one of two strategies:
@@ -36,7 +38,7 @@ func SeedStoreEntry(src, dst string, live bool) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("abs %s: %w", resolved, err)
 			}
-			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(dst), config.DirPerm); err != nil {
 				return false, err
 			}
 			if err := os.Symlink(abs, dst); err != nil {
@@ -53,7 +55,7 @@ func SeedStoreEntry(src, dst string, live bool) (bool, error) {
 	if info.IsDir() {
 		return false, CopyTree(src, dst, false)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), config.DirPerm); err != nil {
 		return false, err
 	}
 	data, err := os.ReadFile(src)
