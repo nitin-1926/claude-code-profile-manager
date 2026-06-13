@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -145,5 +146,44 @@ func TestLinkReplacesExisting(t *testing.T) {
 	target, _ := os.Readlink(dst)
 	if target != src2 {
 		t.Errorf("symlink should point to src2 after replacement, got %q", target)
+	}
+}
+
+// TestLinkAtomicReplaceOfWrongTargetSymlink pins the A3 fix: replacing a
+// wrong-target symlink must go through rename (no remove-then-create window)
+// and must leave no temp turds behind.
+func TestLinkAtomicReplaceOfWrongTargetSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	srcA := filepath.Join(tmp, "srcA")
+	srcB := filepath.Join(tmp, "srcB")
+	for _, d := range []string{srcA, srcB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := filepath.Join(tmp, "dst")
+	if err := os.Symlink(srcA, dst); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	if err := Link(srcB, dst); err != nil {
+		t.Fatalf("Link over wrong-target symlink: %v", err)
+	}
+	target, err := os.Readlink(dst)
+	if err != nil {
+		t.Fatalf("dst is not a symlink after Link: %v", err)
+	}
+	if target != srcB {
+		t.Errorf("dst -> %q, want %q", target, srcB)
+	}
+
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".ccpm-link-") {
+			t.Errorf("temp link left behind: %s", e.Name())
+		}
 	}
 }
