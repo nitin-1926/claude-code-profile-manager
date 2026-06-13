@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zalando/go-keyring"
@@ -143,22 +144,43 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 		_ = keyring.Delete(service, account)
 	}
 	// `-U` updates if the entry already exists, otherwise creates it. The
-	// password is passed via argv which is briefly visible in `ps` to the same
-	// user; `claude` itself uses Security.framework directly, but that
-	// requires cgo. The argv exposure window is microseconds for a token only
-	// the local user could already extract from their own keychain.
-	cmd := exec.Command(
-		"/usr/bin/security",
-		"add-generic-password",
-		"-U",
-		"-s", service,
-		"-a", primary,
-		"-w", raw,
-	)
+	// whole command — including the token payload — is fed to `security -i`
+	// via stdin so the secret never appears in argv, where any same-UID
+	// process (or ps-polling telemetry/EDR agent) could read it.
+	qService, err := securityQuote(service)
+	if err != nil {
+		return fmt.Errorf("quoting keychain service: %w", err)
+	}
+	qAccount, err := securityQuote(primary)
+	if err != nil {
+		return fmt.Errorf("quoting keychain account: %w", err)
+	}
+	qPayload, err := securityQuote(raw)
+	if err != nil {
+		return fmt.Errorf("quoting keychain payload: %w", err)
+	}
+	line := fmt.Sprintf("add-generic-password -U -s %s -a %s -w %s\n", qService, qAccount, qPayload)
+	cmd := exec.Command("/usr/bin/security", "-i")
+	cmd.Stdin = strings.NewReader(line)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("writing keychain entry via security CLI: %w (output: %s)", err, out)
 	}
 	return nil
+}
+
+// securityQuote wraps s in double quotes for the `security -i` command
+// tokenizer, escaping backslashes and embedded quotes. The interactive parser
+// is line-based, so control characters (which never occur in the compact-JSON
+// OAuth payload) are rejected rather than escaped.
+func securityQuote(s string) (string, error) {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return "", fmt.Errorf("value contains control character %q", r)
+		}
+	}
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`, nil
 }
 
 // DeleteMacKeychainOAuth removes the namespaced keychain entry for a profile.
