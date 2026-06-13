@@ -50,9 +50,12 @@ func TestDecodeVaultKey(t *testing.T) {
 	}
 	encoded := base64.StdEncoding.EncodeToString(valid)
 
-	got, err := decodeVaultKey(encoded)
+	got, isLegacy, err := decodeVaultKey(encoded)
 	if err != nil {
 		t.Fatalf("valid base64: %v", err)
+	}
+	if isLegacy {
+		t.Error("base64 key must not be flagged legacy")
 	}
 	if !bytes.Equal(got, valid) {
 		t.Error("decoded != original")
@@ -60,19 +63,50 @@ func TestDecodeVaultKey(t *testing.T) {
 
 	// Legacy: exactly 32 bytes of string data round-trips as raw. Regression
 	// guard: the decoder must not reject a legacy key so existing installs
-	// stay openable after upgrade.
+	// stay openable after upgrade — but it must flag it for migration.
 	legacy := string(valid)
-	got, err = decodeVaultKey(legacy)
+	got, isLegacy, err = decodeVaultKey(legacy)
 	if err != nil {
 		t.Fatalf("legacy raw: %v", err)
+	}
+	if !isLegacy {
+		t.Error("raw 32-byte key must be flagged legacy")
 	}
 	if !bytes.Equal(got, valid) {
 		t.Error("legacy path did not round-trip correctly")
 	}
 
 	// Wrong length must fail loud rather than returning a truncated key.
-	if _, err := decodeVaultKey("short"); err == nil {
+	if _, _, err := decodeVaultKey("short"); err == nil {
 		t.Error("short string should error")
+	}
+}
+
+// TestMemoryStore_LegacyKeyMigratesOnRead seeds a raw legacy key and verifies
+// the first read re-stores it base64-encoded with identical bytes.
+func TestMemoryStore_LegacyKeyMigratesOnRead(t *testing.T) {
+	raw := make([]byte, vaultKeyBytes)
+	for i := range raw {
+		raw[i] = byte(40 + i)
+	}
+	s := NewMemoryStore()
+	mem := s.(*MemoryStore)
+	mem.data[serviceVault+"/"+vaultAccount] = string(raw)
+
+	key, err := s.GetOrCreateVaultMasterKey()
+	if err != nil {
+		t.Fatalf("read legacy: %v", err)
+	}
+	if !bytes.Equal(key, raw) {
+		t.Error("legacy key bytes changed during migration")
+	}
+	stored := mem.data[serviceVault+"/"+vaultAccount]
+	decoded, err := base64.StdEncoding.DecodeString(stored)
+	if err != nil {
+		t.Fatalf("stored value must be base64 after migration (got %q): %v", stored, err)
+	}
+	if !bytes.Equal(decoded, raw) {
+		t.Error("migrated stored bytes != original key")
 	}
 }
 
