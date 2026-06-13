@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
 
 	"github.com/zalando/go-keyring"
 )
@@ -54,9 +55,17 @@ func (s *SystemStore) DeleteAPIKey(profile string) error {
 
 func (s *SystemStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 	if existing, err := keyring.Get(serviceVault, vaultAccount); err == nil {
-		key, decodeErr := decodeVaultKey(existing)
+		key, legacy, decodeErr := decodeVaultKey(existing)
 		if decodeErr != nil {
 			return nil, fmt.Errorf("decoding master key from keychain: %w", decodeErr)
+		}
+		if legacy {
+			// Migrate the raw-byte legacy entry to base64 immediately so the
+			// length-based fallback below can be removed.
+			if err := keyring.Set(serviceVault, vaultAccount, base64.StdEncoding.EncodeToString(key)); err != nil {
+				return nil, fmt.Errorf("migrating legacy master key to base64: %w", err)
+			}
+			fmt.Fprintln(os.Stderr, "ccpm: migrated vault master key to base64 keychain encoding")
 		}
 		return key, nil
 	}
@@ -76,17 +85,21 @@ func (s *SystemStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 // decodeVaultKey accepts a keychain-stored master key. New installs store the
 // key base64-encoded so that arbitrary random bytes survive the UTF-8 layers in
 // secret-service / kwallet / wincred. Legacy installs (pre-base64) stored the
-// raw bytes cast to string; if decoding fails and the raw value happens to be
-// exactly 32 bytes we fall back to treating it as the legacy encoding and
-// re-encode on the next write via the caller.
-func decodeVaultKey(stored string) ([]byte, error) {
+// raw bytes cast to string; that path reports legacy=true so the caller can
+// re-store the key base64-encoded right away instead of accepting any
+// 32-byte keychain value as the master key forever.
+//
+// DEPRECATION: the legacy branch exists only for pre-base64 installs and
+// should be removed once migrate-on-read has been in two released versions
+// (added in the release after v0.5.1).
+func decodeVaultKey(stored string) (key []byte, legacy bool, err error) {
 	if decoded, err := base64.StdEncoding.DecodeString(stored); err == nil && len(decoded) == vaultKeyBytes {
-		return decoded, nil
+		return decoded, false, nil
 	}
 	if len(stored) == vaultLegacyBytes {
-		return []byte(stored), nil
+		return []byte(stored), true, nil
 	}
-	return nil, fmt.Errorf("master key has unexpected length %d (expected base64 of %d bytes)", len(stored), vaultKeyBytes)
+	return nil, false, fmt.Errorf("master key has unexpected length %d (expected base64 of %d bytes)", len(stored), vaultKeyBytes)
 }
 
 // MemoryStore is an in-memory implementation for testing.
@@ -118,7 +131,14 @@ func (m *MemoryStore) DeleteAPIKey(profile string) error {
 
 func (m *MemoryStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 	if existing, ok := m.data[serviceVault+"/"+vaultAccount]; ok {
-		return decodeVaultKey(existing)
+		key, legacy, err := decodeVaultKey(existing)
+		if err != nil {
+			return nil, err
+		}
+		if legacy {
+			m.data[serviceVault+"/"+vaultAccount] = base64.StdEncoding.EncodeToString(key)
+		}
+		return key, nil
 	}
 	key := make([]byte, vaultKeyBytes)
 	if _, err := rand.Read(key); err != nil {
