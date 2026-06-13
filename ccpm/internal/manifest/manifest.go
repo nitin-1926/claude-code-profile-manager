@@ -41,6 +41,24 @@ const (
 	KindPlugin  AssetKind = "plugin"
 )
 
+// KindPlural maps each directory-backed AssetKind to the subdirectory name
+// used under both ~/.claude/ and a profile dir. Single source of truth — the
+// cascade scanner, doctor, and asset commands all key directories off this
+// instead of repeating the mapping.
+var KindPlural = map[AssetKind]string{
+	KindSkill:   "skills",
+	KindAgent:   "agents",
+	KindCommand: "commands",
+	KindRule:    "rules",
+	KindHook:    "hooks",
+}
+
+// DedupableKindsOrdered returns the directory-backed kinds in a stable
+// display/scan order.
+func DedupableKindsOrdered() []AssetKind {
+	return []AssetKind{KindSkill, KindAgent, KindCommand, KindRule, KindHook}
+}
+
 type Install struct {
 	ID        string       `json:"id"`
 	Kind      AssetKind    `json:"kind"`
