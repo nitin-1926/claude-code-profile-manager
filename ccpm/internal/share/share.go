@@ -100,19 +100,28 @@ func EnsureDirs() error {
 // recursive copy and emits a one-time warning so the user knows
 // deduplication is degraded.
 func Link(src, dst string) error {
-	if _, err := os.Lstat(dst); err == nil {
-		if target, terr := os.Readlink(dst); terr == nil {
-			if target == src {
-				return nil
+	if fi, err := os.Lstat(dst); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			if target, terr := os.Readlink(dst); terr == nil {
+				if target == src {
+					return nil
+				}
+				absSrc, _ := filepath.Abs(src)
+				absTarget, _ := filepath.Abs(target)
+				if absSrc == absTarget {
+					return nil
+				}
 			}
-			absSrc, _ := filepath.Abs(src)
-			absTarget, _ := filepath.Abs(target)
-			if absSrc == absTarget {
-				return nil
+			// Wrong-target symlink: leave it in place — the rename below
+			// replaces it atomically, so concurrent profile launches never
+			// observe a missing dst.
+		} else {
+			// Real file/dir (e.g. a Windows copy-fallback leftover). This one
+			// case is inherently non-atomic: a directory cannot be replaced
+			// by rename, so it must be removed before linking.
+			if err := os.RemoveAll(dst); err != nil {
+				return fmt.Errorf("removing existing path at %s: %w", dst, err)
 			}
-		}
-		if err := os.RemoveAll(dst); err != nil {
-			return fmt.Errorf("removing existing path at %s: %w", dst, err)
 		}
 	}
 
@@ -121,8 +130,20 @@ func Link(src, dst string) error {
 	}
 
 	// Try a real symlink first. On Unix this always works; on Windows it
-	// works when Developer Mode is on or the process is elevated.
-	if err := os.Symlink(src, dst); err == nil {
+	// works when Developer Mode is on or the process is elevated. The link is
+	// created under a temp name and renamed over dst (atomic replace).
+	tmp := fmt.Sprintf("%s.ccpm-link-%d.tmp", dst, os.Getpid())
+	_ = os.Remove(tmp)
+	if err := os.Symlink(src, tmp); err == nil {
+		if err := os.Rename(tmp, dst); err != nil {
+			// Windows cannot rename over some existing entries; degrade to
+			// remove+rename rather than failing the cascade.
+			_ = os.RemoveAll(dst)
+			if err := os.Rename(tmp, dst); err != nil {
+				_ = os.Remove(tmp)
+				return fmt.Errorf("activating symlink at %s: %w", dst, err)
+			}
+		}
 		return nil
 	} else if runtime.GOOS != "windows" || !isPrivilegeError(err) {
 		return err
@@ -134,6 +155,9 @@ func Link(src, dst string) error {
 	// next diagnostic message.
 	emitWindowsCopyFallbackWarning()
 	_ = markWindowsCopyFallback()
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("removing existing path at %s: %w", dst, err)
+	}
 	return copyDir(src, dst)
 }
 
