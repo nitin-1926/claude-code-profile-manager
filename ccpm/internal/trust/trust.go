@@ -100,6 +100,22 @@ func Save(l *List) error {
 	return nil
 }
 
+// canonicalPath resolves p to an absolute, symlink-free form. Trust grants
+// and checks must compare canonical paths: comparing plain Abs() output lets
+// a symlink at a trusted location be re-pointed at a hostile directory (or a
+// symlinked cwd spoof a trusted path) without invalidating the grant. Falls
+// back to the absolute form when the path doesn't exist.
+func canonicalPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	return abs, nil
+}
+
 // IsTrusted reports whether projectRoot appears in the trust list. An empty
 // projectRoot (no project context) is treated as not-applicable and returns
 // true so the caller doesn't unnecessarily strip keys that aren't there.
@@ -107,7 +123,7 @@ func IsTrusted(projectRoot string) bool {
 	if projectRoot == "" {
 		return true
 	}
-	abs, err := filepath.Abs(projectRoot)
+	abs, err := canonicalPath(projectRoot)
 	if err != nil {
 		return false
 	}
@@ -115,6 +131,10 @@ func IsTrusted(projectRoot string) bool {
 	if err != nil {
 		return false
 	}
+	// Stored paths are canonical at grant time and deliberately NOT
+	// re-resolved here: if the granted directory has since been replaced by a
+	// symlink, resolving the stored entry would follow it and re-grant trust
+	// to wherever it now points.
 	for _, r := range l.Projects {
 		if r.Path == abs {
 			return true
@@ -125,7 +145,7 @@ func IsTrusted(projectRoot string) bool {
 
 // MarkTrusted adds projectRoot to the trust list. Idempotent.
 func MarkTrusted(projectRoot string) error {
-	abs, err := filepath.Abs(projectRoot)
+	abs, err := canonicalPath(projectRoot)
 	if err != nil {
 		return fmt.Errorf("resolving %q: %w", projectRoot, err)
 	}
@@ -149,6 +169,13 @@ func MarkTrusted(projectRoot string) error {
 // Forget removes projectRoot from the trust list. Returns true if a record
 // was actually removed.
 func Forget(projectRoot string) (bool, error) {
+	canon, err := canonicalPath(projectRoot)
+	if err != nil {
+		return false, fmt.Errorf("resolving %q: %w", projectRoot, err)
+	}
+	// Revoking trust should be easy: match the canonical form and the plain
+	// absolute form so entries granted before canonicalization landed are
+	// still removable.
 	abs, err := filepath.Abs(projectRoot)
 	if err != nil {
 		return false, fmt.Errorf("resolving %q: %w", projectRoot, err)
@@ -160,7 +187,7 @@ func Forget(projectRoot string) (bool, error) {
 	var kept []Record
 	removed := false
 	for _, r := range l.Projects {
-		if r.Path == abs {
+		if r.Path == canon || r.Path == abs {
 			removed = true
 			continue
 		}
@@ -207,6 +234,82 @@ func isDangerous(key string) bool {
 		}
 	}
 	return false
+}
+
+// dangerousEnvNames are env keys a project layer must never set, trusted or
+// not: each one redirects code execution (loader paths, interpreter startup
+// files, node flags) and turns a one-time trust grant into a persistent
+// arbitrary-exec channel for anyone who can commit to the repo.
+var dangerousEnvNames = map[string]bool{
+	"PATH":          true,
+	"NODE_OPTIONS":  true,
+	"BASH_ENV":      true,
+	"ENV":           true,
+	"PYTHONSTARTUP": true,
+	"PYTHONPATH":    true,
+	"PERL5LIB":      true,
+	"RUBYOPT":       true,
+}
+
+var dangerousEnvPrefixes = []string{"LD_", "DYLD_"}
+
+func isDangerousEnvName(name string) bool {
+	if dangerousEnvNames[name] {
+		return true
+	}
+	for _, p := range dangerousEnvPrefixes {
+		if len(name) >= len(p) && name[:len(p)] == p {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterEnvAlways strips dangerous variable names from a project layer's
+// "env" map regardless of trust state. Returns the (possibly shallow-copied)
+// settings and the env names removed. Settings without an env map pass
+// through untouched.
+func FilterEnvAlways(settings map[string]interface{}) (map[string]interface{}, []string) {
+	rawEnv, ok := settings["env"].(map[string]interface{})
+	if !ok || len(rawEnv) == 0 {
+		return settings, nil
+	}
+	var stripped []string
+	cleanEnv := make(map[string]interface{}, len(rawEnv))
+	for k, v := range rawEnv {
+		if isDangerousEnvName(k) {
+			stripped = append(stripped, k)
+			continue
+		}
+		cleanEnv[k] = v
+	}
+	if len(stripped) == 0 {
+		return settings, nil
+	}
+	sort.Strings(stripped)
+	out := make(map[string]interface{}, len(settings))
+	for k, v := range settings {
+		out[k] = v
+	}
+	if len(cleanEnv) == 0 {
+		delete(out, "env")
+	} else {
+		out["env"] = cleanEnv
+	}
+	return out, stripped
+}
+
+// WarnStrippedEnv prints a one-time warning when dangerous env vars were
+// dropped from a trusted project's settings layer.
+func WarnStrippedEnv(projectRoot string, stripped []string) {
+	if projectRoot == "" || len(stripped) == 0 {
+		return
+	}
+	key := "env:" + projectRoot
+	if _, already := warnedOnce.LoadOrStore(key, struct{}{}); already {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Note: dropped unsafe env vars %v from project %q settings — PATH/loader/interpreter overrides are never applied from project layers.\n", stripped, projectRoot)
 }
 
 // warnedOnce prevents the "stripped dangerous keys" warning from firing on
