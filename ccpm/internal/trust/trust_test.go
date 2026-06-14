@@ -1,6 +1,8 @@
 package trust
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -106,5 +108,115 @@ func TestMarkTrustedIsIdempotentAndForgettable(t *testing.T) {
 	}
 	if IsTrusted(root) {
 		t.Error("project still trusted after Forget")
+	}
+}
+
+// TestTrustSymlinkCanonicalization pins the M3 fix: grants are stored
+// canonical, and a directory that was trusted but later replaced by a symlink
+// to somewhere else must NOT remain trusted.
+func TestTrustSymlinkCanonicalization(t *testing.T) {
+	isolateHome(t)
+	base := t.TempDir()
+
+	real := filepath.Join(base, "real-project")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link-project")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	// Granting via the symlink must trust the canonical target...
+	if err := MarkTrusted(link); err != nil {
+		t.Fatal(err)
+	}
+	if !IsTrusted(real) {
+		t.Error("canonical path not trusted after granting via symlink")
+	}
+	if !IsTrusted(link) {
+		t.Error("symlinked path not trusted after granting via it")
+	}
+
+	// ...and re-pointing the symlink at a different directory must NOT carry
+	// the grant along.
+	evil := filepath.Join(base, "evil-project")
+	if err := os.MkdirAll(evil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(evil, link); err != nil {
+		t.Fatal(err)
+	}
+	if IsTrusted(link) {
+		t.Error("re-pointed symlink inherited trust grant — M3 regression")
+	}
+	if IsTrusted(evil) {
+		t.Error("symlink target gained trust it was never granted")
+	}
+
+	// Revocation via the canonical path still works.
+	if removed, err := Forget(real); err != nil || !removed {
+		t.Errorf("Forget(real) = %v, %v; want removed", removed, err)
+	}
+	if IsTrusted(real) {
+		t.Error("path still trusted after Forget")
+	}
+}
+
+// TestFilterEnvAlways pins the M4 fix: PATH/loader/interpreter env vars are
+// stripped from project layers even when the project is trusted.
+func TestFilterEnvAlways(t *testing.T) {
+	settings := map[string]interface{}{
+		"model": "claude-fable-5",
+		"env": map[string]interface{}{
+			"PATH":          "/evil/bin:/usr/bin",
+			"LD_PRELOAD":    "/evil/lib.so",
+			"DYLD_LIBRARY_PATH": "/evil",
+			"NODE_OPTIONS":  "--require /evil.js",
+			"PYTHONSTARTUP": "/evil.py",
+			"BASH_ENV":      "/evil.sh",
+			"MY_API_URL":    "https://ok.example.com", // safe — must survive
+		},
+	}
+	filtered, stripped := FilterEnvAlways(settings)
+	if len(stripped) != 6 {
+		t.Errorf("stripped = %v, want 6 names", stripped)
+	}
+	env, ok := filtered["env"].(map[string]interface{})
+	if !ok {
+		t.Fatal("env map missing after filtering")
+	}
+	if _, ok := env["MY_API_URL"]; !ok {
+		t.Error("safe env var was stripped")
+	}
+	for _, bad := range []string{"PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH", "NODE_OPTIONS", "PYTHONSTARTUP", "BASH_ENV"} {
+		if _, ok := env[bad]; ok {
+			t.Errorf("dangerous env var %q survived FilterEnvAlways", bad)
+		}
+	}
+	// Original input must be untouched (shallow-copy semantics).
+	origEnv := settings["env"].(map[string]interface{})
+	if _, ok := origEnv["PATH"]; !ok {
+		t.Error("FilterEnvAlways mutated its input")
+	}
+
+	// All-dangerous env collapses to no env key at all.
+	onlyBad := map[string]interface{}{"env": map[string]interface{}{"PATH": "/x"}}
+	filtered, _ = FilterEnvAlways(onlyBad)
+	if _, ok := filtered["env"]; ok {
+		t.Error("empty env map should be dropped entirely")
+	}
+
+	// No env key: pass-through.
+	noEnv := map[string]interface{}{"model": "m"}
+	filtered, stripped = FilterEnvAlways(noEnv)
+	if len(stripped) != 0 {
+		t.Errorf("stripped = %v for settings without env", stripped)
+	}
+	if _, ok := filtered["model"]; !ok {
+		t.Error("settings without env must pass through unchanged")
 	}
 }
