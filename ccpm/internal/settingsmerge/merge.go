@@ -79,19 +79,17 @@ func loadHostClaudeSettings() (map[string]interface{}, error) {
 	return doc, nil
 }
 
-// DeepMerge merges src into dst recursively, returning a fresh top-level map.
+// DeepMerge merges src into dst recursively, returning a fresh structure.
 // Objects merge key-by-key; arrays and scalars in src replace the dst value.
 //
-// Aliasing note: the returned map shares value references with dst and src —
-// nested submaps are NOT deep-cloned. Callers should treat the result as
-// immutable (i.e. never mutate a submap after merging) so a later edit in
-// either source doesn't surprise the reader. Every ccpm caller today obeys
-// this by discarding dst/src after the merge and writing the result
-// atomically via WriteJSON.
+// The result shares NO map or slice references with dst or src — every nested
+// container is cloned, so mutating the result (or either input) afterwards
+// can't corrupt the other. JSON-decoded values are cheap to clone and the
+// maps involved are small profile settings, so the safety is worth the copy.
 func DeepMerge(dst, src map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(dst))
+	out := make(map[string]interface{}, len(dst)+len(src))
 	for k, v := range dst {
-		out[k] = v
+		out[k] = cloneJSONValue(v)
 	}
 	for k, v := range src {
 		if srcMap, ok := v.(map[string]interface{}); ok {
@@ -100,9 +98,30 @@ func DeepMerge(dst, src map[string]interface{}) map[string]interface{} {
 				continue
 			}
 		}
-		out[k] = v
+		out[k] = cloneJSONValue(v)
 	}
 	return out
+}
+
+// cloneJSONValue deep-copies the container types produced by encoding/json
+// (map[string]interface{} and []interface{}); scalars are returned as-is.
+func cloneJSONValue(v interface{}) interface{} {
+	switch tv := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(tv))
+		for k, val := range tv {
+			out[k] = cloneJSONValue(val)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(tv))
+		for i, val := range tv {
+			out[i] = cloneJSONValue(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // LoadJSON reads a JSON file into a map. Returns empty map if file doesn't exist.
@@ -137,17 +156,42 @@ func WriteJSON(path string, data map[string]interface{}) error {
 	// NOTE: deliberately NOT routed through atomicwrite. WriteJSON also writes
 	// the Claude-Code-owned ~/.claude/settings.json (via the set-default API-key
 	// env path), which a user may have symlinked into a dotfiles repo;
-	// atomicwrite refuses to overwrite a symlink and would hard-fail there. The
-	// temp-file + rename below replaces the target as it always has. (The
-	// crash-safe atomicwrite transaction is still used for profile-internal
-	// materialization in MaterializeAll, where targets are never symlinks.)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, bytes, config.FilePerm); err != nil {
+	// atomicwrite refuses to overwrite a symlink and would hard-fail there.
+	// Instead, an existing symlink target is resolved first and the temp+rename
+	// happens AT the resolved location — the symlink itself is preserved and
+	// the write lands where the user pointed it.
+	dest := path
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return fmt.Errorf("resolving symlinked settings path %s: %w", path, err)
+		}
+		dest = resolved
+	}
+	tmp := dest + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, config.FilePerm)
+	if err != nil {
 		return fmt.Errorf("writing %s: %w", tmp, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if _, err := f.Write(bytes); err != nil {
+		_ = f.Close()
 		_ = os.Remove(tmp)
-		return fmt.Errorf("renaming to %s: %w", path, err)
+		return fmt.Errorf("writing %s: %w", tmp, err)
+	}
+	// fsync before rename so a crash can't commit the rename without the
+	// contents (same durability story as internal/atomicwrite).
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("syncing %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("closing %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("renaming to %s: %w", dest, err)
 	}
 	return nil
 }
@@ -224,6 +268,13 @@ func ComputeMerged(profileDir, profileName, projectRoot string) (map[string]inte
 	trust.WarnUntrusted(projectRoot, stripped)
 	projectLocal, strippedLocal := trust.FilterProjectLayer(projectLocal, projectRoot)
 	trust.WarnUntrusted(projectRoot, strippedLocal)
+	// Even a TRUSTED project must not set PATH/loader/interpreter env vars —
+	// a one-time trust grant is consent to hooks the user reviewed, not an
+	// open-ended exec channel for future commits.
+	projectSettings, strippedEnv := trust.FilterEnvAlways(projectSettings)
+	trust.WarnStrippedEnv(projectRoot, strippedEnv)
+	projectLocal, strippedEnvLocal := trust.FilterEnvAlways(projectLocal)
+	trust.WarnStrippedEnv(projectRoot, strippedEnvLocal)
 	merged = DeepMerge(merged, projectSettings)
 	merged = DeepMerge(merged, projectLocal)
 
