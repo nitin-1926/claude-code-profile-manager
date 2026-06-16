@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/trust"
@@ -936,5 +937,69 @@ func TestMaterializeMCPIsolation(t *testing.T) {
 	}
 	if _, ok := servers["personal-notes"]; !ok {
 		t.Error("personal-notes MCP server should be present from personal.json")
+	}
+}
+
+// TestWriteJSONPreservesSymlinkedTarget pins the B1/M6 fix: writing through a
+// symlinked settings path (e.g. ~/.claude/settings.json symlinked into a
+// dotfiles repo) must update the TARGET file and keep the symlink intact,
+// not replace the link with a regular file.
+func TestWriteJSONPreservesSymlinkedTarget(t *testing.T) {
+	tmp := t.TempDir()
+	real := filepath.Join(tmp, "dotfiles", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(real), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(tmp, "settings.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	if err := WriteJSON(link, map[string]interface{}{"model": "claude-fable-5"}); err != nil {
+		t.Fatalf("WriteJSON through symlink: %v", err)
+	}
+
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("symlink was replaced by a regular file")
+	}
+	data, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "claude-fable-5") {
+		t.Errorf("target content not updated: %s", data)
+	}
+}
+
+// TestDeepMergeReturnsFullyDetachedResult pins the M11 fix: mutating the
+// merge result must not corrupt either input (and vice versa).
+func TestDeepMergeReturnsFullyDetachedResult(t *testing.T) {
+	dst := map[string]interface{}{
+		"env":  map[string]interface{}{"A": "1"},
+		"list": []interface{}{"x", "y"},
+	}
+	src := map[string]interface{}{
+		"env": map[string]interface{}{"B": "2"},
+	}
+	out := DeepMerge(dst, src)
+
+	out["env"].(map[string]interface{})["A"] = "mutated"
+	out["list"].([]interface{})[0] = "mutated"
+
+	if dst["env"].(map[string]interface{})["A"] != "1" {
+		t.Error("mutating merge result corrupted dst submap (aliasing)")
+	}
+	if src["env"].(map[string]interface{})["B"] != "2" {
+		t.Error("mutating merge result corrupted src submap (aliasing)")
+	}
+	if dst["list"].([]interface{})[0] != "x" {
+		t.Error("mutating merge result corrupted dst slice (aliasing)")
 	}
 }
