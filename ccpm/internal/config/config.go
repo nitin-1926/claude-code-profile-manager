@@ -44,6 +44,25 @@ type Settings struct {
 	// disabled" (false) from "not set" (nil), since the default is on.
 	// Use Settings.CascadeAutoAdoptEnabled() to read the resolved value.
 	CascadeAutoAdopt *bool `json:"cascade_auto_adopt,omitempty"`
+	// DefaultStatusLine controls whether `ccpm run` injects a default
+	// statusLine command (`ccpm statusline`) into a launched profile that has
+	// none, so every session shows which profile is active plus usage/limit
+	// windows in the Claude Code TUI. Pointer to distinguish "explicitly
+	// disabled" (false) from "not set" (nil), since the default is on.
+	// Use Settings.StatusLineEnabled() to read the resolved value.
+	DefaultStatusLine *bool `json:"default_statusline,omitempty"`
+}
+
+// StatusLineEnabled returns the resolved value of the default-statusLine
+// setting. Defaults to true when unset so launched sessions show the active
+// profile out of the box; an explicit false in config.json turns the
+// auto-injection off (an already-injected statusLine is left in place — clear
+// it per profile with `ccpm settings statusline "" --profile <name>`).
+func (s Settings) StatusLineEnabled() bool {
+	if s.DefaultStatusLine == nil {
+		return true
+	}
+	return *s.DefaultStatusLine
 }
 
 // CascadeAutoAdoptEnabled returns the resolved value of the cascade auto-adopt
