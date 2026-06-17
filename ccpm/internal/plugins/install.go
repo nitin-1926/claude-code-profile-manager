@@ -11,6 +11,7 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/filetree"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/pluginschema"
 )
 
 func copyTree(src, dst string) error {
@@ -36,6 +37,11 @@ type AddMarketplaceOptions struct {
 func RegisterMarketplace(opts AddMarketplaceOptions) (string, error) {
 	if opts.Repo == "" && opts.URL == "" {
 		return "", fmt.Errorf("AddMarketplaceOptions: Repo or URL required")
+	}
+	if opts.Repo != "" {
+		if err := ValidateRepo(opts.Repo); err != nil {
+			return "", err
+		}
 	}
 	if err := EnsureDirs(); err != nil {
 		return "", err
@@ -77,6 +83,12 @@ func RegisterMarketplace(opts AddMarketplaceOptions) (string, error) {
 	if name == "" {
 		_ = os.RemoveAll(tmp)
 		return "", fmt.Errorf("marketplace manifest missing name and none provided")
+	}
+	// The manifest name becomes a path segment in the shared store — never
+	// trust it raw.
+	if err := ValidateName(name); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", fmt.Errorf("marketplace name: %w", err)
 	}
 
 	finalDest := filepath.Join(mktDir, name)
@@ -149,6 +161,9 @@ func RemoveMarketplace(name string) error {
 // MarketplaceCloneDir returns the on-disk path of a registered marketplace's
 // clone. Returns an error if the marketplace isn't registered.
 func MarketplaceCloneDir(name string) (string, error) {
+	if err := ValidateName(name); err != nil {
+		return "", fmt.Errorf("marketplace name: %w", err)
+	}
 	reg, err := LoadRegistry()
 	if err != nil {
 		return "", err
@@ -163,8 +178,19 @@ func MarketplaceCloneDir(name string) (string, error) {
 	return filepath.Join(mktDir, name), nil
 }
 
-// CachePluginDir returns the shared-cache path for a plugin install.
+// CachePluginDir returns the shared-cache path for a plugin install. All
+// three segments originate in marketplace JSON (version via plugin.json), so
+// each is validated before joining.
 func CachePluginDir(marketplace, pluginName, version string) (string, error) {
+	if err := ValidateName(marketplace); err != nil {
+		return "", fmt.Errorf("marketplace name: %w", err)
+	}
+	if err := ValidateName(pluginName); err != nil {
+		return "", fmt.Errorf("plugin name: %w", err)
+	}
+	if err := ValidateVersion(version); err != nil {
+		return "", err
+	}
 	c, err := CacheDir()
 	if err != nil {
 		return "", err
@@ -175,26 +201,28 @@ func CachePluginDir(marketplace, pluginName, version string) (string, error) {
 // FetchPluginIntoCache resolves a marketplace plugin entry's source and
 // materializes its files into the shared cache. The cache dir is created if
 // missing; an existing cache dir is reused (FetchPluginIntoCache is
-// idempotent). Returns the version string read from the resulting plugin.json.
-func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bool) (string, error) {
+// idempotent). Returns the version string read from the resulting plugin.json
+// and the git commit the plugin content came from (empty when unresolvable),
+// so the caller can pin the exact installed commit.
+func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bool) (version, commitSHA string, err error) {
 	src, err := spec.ResolveSource()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	mktDir, err := MarketplaceCloneDir(marketplace)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// Stage the plugin contents into a temp directory, read its plugin.json
 	// for the version, then atomic-rename into the cache dir.
 	c, err := CacheDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	stage, err := os.MkdirTemp(c, ".incoming-")
 	if err != nil {
-		return "", fmt.Errorf("staging dir: %w", err)
+		return "", "", fmt.Errorf("staging dir: %w", err)
 	}
 	stageContent := filepath.Join(stage, "content")
 
@@ -203,57 +231,62 @@ func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bo
 		from := filepath.Join(mktDir, src.Path)
 		if err := copyTree(from, stageContent); err != nil {
 			_ = os.RemoveAll(stage)
-			return "", fmt.Errorf("copying local plugin %q: %w", src.Path, err)
+			return "", "", fmt.Errorf("copying local plugin %q: %w", src.Path, err)
 		}
+		// Content came straight out of the marketplace clone.
+		commitSHA, _ = HeadSHA(mktDir)
 	case "git-subdir":
 		repoStage := filepath.Join(stage, "repo")
 		if err := CloneRepo(src.URL, repoStage, src.Ref, ssh); err != nil {
 			_ = os.RemoveAll(stage)
-			return "", err
+			return "", "", err
 		}
 		if src.SHA != "" {
 			if err := CheckoutSHA(repoStage, src.SHA); err != nil {
 				_ = os.RemoveAll(stage)
-				return "", err
+				return "", "", err
 			}
 		}
+		commitSHA, _ = HeadSHA(repoStage)
 		from := filepath.Join(repoStage, src.Path)
 		if err := copyTree(from, stageContent); err != nil {
 			_ = os.RemoveAll(stage)
-			return "", fmt.Errorf("copying subdir %q: %w", src.Path, err)
+			return "", "", fmt.Errorf("copying subdir %q: %w", src.Path, err)
 		}
 	case "url":
 		if err := CloneRepo(src.URL, stageContent, "", ssh); err != nil {
 			_ = os.RemoveAll(stage)
-			return "", err
+			return "", "", err
 		}
 		if src.SHA != "" {
 			if err := CheckoutSHA(stageContent, src.SHA); err != nil {
 				_ = os.RemoveAll(stage)
-				return "", err
+				return "", "", err
 			}
 		}
+		commitSHA, _ = HeadSHA(stageContent)
 	case "github":
 		url := GitHubRepoURL(src.Repo, ssh)
 		if err := CloneRepo(url, stageContent, src.Ref, ssh); err != nil {
 			_ = os.RemoveAll(stage)
-			return "", err
+			return "", "", err
 		}
 		if src.SHA != "" {
 			if err := CheckoutSHA(stageContent, src.SHA); err != nil {
 				_ = os.RemoveAll(stage)
-				return "", err
+				return "", "", err
 			}
 		}
+		commitSHA, _ = HeadSHA(stageContent)
 	default:
 		_ = os.RemoveAll(stage)
-		return "", fmt.Errorf("unsupported source kind %q", src.Kind)
+		return "", "", fmt.Errorf("unsupported source kind %q", src.Kind)
 	}
 
-	version, err := readPluginVersion(stageContent)
+	version, err = readPluginVersion(stageContent)
 	if err != nil {
 		_ = os.RemoveAll(stage)
-		return "", err
+		return "", "", err
 	}
 	if version == "" {
 		version = "0.0.0"
@@ -262,23 +295,23 @@ func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bo
 	finalDest, err := CachePluginDir(marketplace, spec.Name, version)
 	if err != nil {
 		_ = os.RemoveAll(stage)
-		return "", err
+		return "", "", err
 	}
 	if _, err := os.Stat(finalDest); err == nil {
 		// Already cached at this version — discard the staging clone.
 		_ = os.RemoveAll(stage)
-		return version, nil
+		return version, commitSHA, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(finalDest), config.DirPerm); err != nil {
 		_ = os.RemoveAll(stage)
-		return "", fmt.Errorf("creating cache dir: %w", err)
+		return "", "", fmt.Errorf("creating cache dir: %w", err)
 	}
 	if err := os.Rename(stageContent, finalDest); err != nil {
 		_ = os.RemoveAll(stage)
-		return "", fmt.Errorf("installing plugin into cache: %w", err)
+		return "", "", fmt.Errorf("installing plugin into cache: %w", err)
 	}
 	_ = os.RemoveAll(stage)
-	return version, nil
+	return version, commitSHA, nil
 }
 
 func readPluginVersion(pluginRoot string) (string, error) {
@@ -306,7 +339,10 @@ func readPluginVersion(pluginRoot string) (string, error) {
 //
 // The four file/symlink mutations go through a single atomicwrite transaction
 // so a failure mid-link can't leave the profile half-installed.
-func LinkIntoProfile(profileDir, marketplace, pluginName, version string) error {
+//
+// commitSHA pins the exact git commit the plugin content came from (may be
+// empty for sources where it could not be resolved).
+func LinkIntoProfile(profileDir, marketplace, pluginName, version, commitSHA string) error {
 	cachePath, err := CachePluginDir(marketplace, pluginName, version)
 	if err != nil {
 		return err
@@ -338,6 +374,7 @@ func LinkIntoProfile(profileDir, marketplace, pluginName, version string) error 
 		Version:      version,
 		InstalledAt:  now,
 		LastUpdated:  now,
+		GitCommitSha: commitSHA,
 	}
 	installedDoc.Plugins[id] = []installedV2Entry{entry}
 
@@ -439,19 +476,12 @@ func UnlinkFromProfile(profileDir, marketplace, pluginName string) error {
 
 // ----- on-disk helper types -----
 
-type installedV2Entry struct {
-	Scope        string `json:"scope"`
-	InstallPath  string `json:"installPath"`
-	Version      string `json:"version"`
-	InstalledAt  string `json:"installedAt"`
-	LastUpdated  string `json:"lastUpdated"`
-	GitCommitSha string `json:"gitCommitSha,omitempty"`
-}
-
-type installedV2Doc struct {
-	Version int                            `json:"version"`
-	Plugins map[string][]installedV2Entry `json:"plugins"`
-}
+// The on-disk shapes are owned by internal/pluginschema (shared with the
+// host-plugin scanner in internal/sync).
+type (
+	installedV2Entry = pluginschema.InstalledEntry
+	installedV2Doc   = pluginschema.InstalledDoc
+)
 
 func loadV2Installed(path string) (*installedV2Doc, error) {
 	data, err := os.ReadFile(path)
