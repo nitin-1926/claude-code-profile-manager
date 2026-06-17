@@ -55,7 +55,11 @@ func (s MarketplacePluginSpec) ResolveSource() (PluginSource, error) {
 	// String form: "./plugins/<name>" — local path inside marketplace repo.
 	var asString string
 	if err := json.Unmarshal(s.RawSource, &asString); err == nil {
-		return PluginSource{Kind: "local", Path: strings.TrimPrefix(asString, "./")}, nil
+		src := PluginSource{Kind: "local", Path: strings.TrimPrefix(asString, "./")}
+		if err := src.validate(); err != nil {
+			return PluginSource{}, fmt.Errorf("plugin %q: %w", s.Name, err)
+		}
+		return src, nil
 	}
 	// Object form.
 	var obj struct {
@@ -69,16 +73,49 @@ func (s MarketplacePluginSpec) ResolveSource() (PluginSource, error) {
 	if err := json.Unmarshal(s.RawSource, &obj); err != nil {
 		return PluginSource{}, fmt.Errorf("plugin %q: parsing source: %w", s.Name, err)
 	}
+	var src PluginSource
 	switch obj.Source {
 	case "github":
-		return PluginSource{Kind: "github", Repo: obj.Repo, Ref: obj.Ref, SHA: obj.SHA}, nil
+		src = PluginSource{Kind: "github", Repo: obj.Repo, Ref: obj.Ref, SHA: obj.SHA}
 	case "git-subdir":
-		return PluginSource{Kind: "git-subdir", URL: obj.URL, Path: obj.Path, Ref: obj.Ref, SHA: obj.SHA}, nil
+		src = PluginSource{Kind: "git-subdir", URL: obj.URL, Path: obj.Path, Ref: obj.Ref, SHA: obj.SHA}
 	case "url":
-		return PluginSource{Kind: "url", URL: obj.URL, SHA: obj.SHA}, nil
+		src = PluginSource{Kind: "url", URL: obj.URL, SHA: obj.SHA}
 	default:
 		return PluginSource{}, fmt.Errorf("plugin %q: unknown source kind %q", s.Name, obj.Source)
 	}
+	if err := src.validate(); err != nil {
+		return PluginSource{}, fmt.Errorf("plugin %q: %w", s.Name, err)
+	}
+	return src, nil
+}
+
+// validate enforces the manifest trust boundary on a resolved source. Every
+// field here came from remote JSON and ends up in a path join or git argv.
+func (s PluginSource) validate() error {
+	switch s.Kind {
+	case "local":
+		return ValidateLocalPath(s.Path)
+	case "github":
+		if err := ValidateRepo(s.Repo); err != nil {
+			return err
+		}
+	case "git-subdir":
+		if err := ValidateGitURL(s.URL); err != nil {
+			return err
+		}
+		if err := ValidateLocalPath(s.Path); err != nil {
+			return err
+		}
+	case "url":
+		if err := ValidateGitURL(s.URL); err != nil {
+			return err
+		}
+	}
+	if err := ValidateRef(s.Ref); err != nil {
+		return err
+	}
+	return ValidateSHA(s.SHA)
 }
 
 // LoadMarketplaceManifest reads <marketplaceDir>/.claude-plugin/marketplace.json.
@@ -105,12 +142,38 @@ func (m *MarketplaceManifest) FindPlugin(name string) *MarketplacePluginSpec {
 	return nil
 }
 
+// gitCmd builds a hardened git invocation. Marketplace URLs/refs come from
+// remote JSON, so every git child runs with prompts disabled, remote helpers
+// and the ext/file transports off, repo-local hooks neutralized, and
+// credential helpers disabled — a hostile remote must not be able to trigger
+// local command execution or credential prompts through git.
+func gitCmd(args ...string) *exec.Cmd {
+	hardened := []string{
+		"-c", "protocol.ext.allow=never",
+		"-c", "protocol.file.allow=never",
+		"-c", "core.hooksPath=" + os.DevNull,
+		"-c", "credential.helper=",
+	}
+	cmd := exec.Command("git", append(hardened, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+	)
+	return cmd
+}
+
 // CloneRepo runs `git clone --depth 1 <url> <dest>`, optionally checking out
 // ref. ssh controls whether to clone via SSH (true) or HTTPS (false). HTTPS
 // avoids the SSH-keys-required failure mode that bit ccpm during the notion
 // plugin marketplace install on 2026-05-02.
 func CloneRepo(url, dest, ref string, ssh bool) error {
 	url = normalizeGitURL(url, ssh)
+	if err := ValidateGitURL(url); err != nil {
+		return err
+	}
+	if err := ValidateRef(ref); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return fmt.Errorf("mkdir parent: %w", err)
 	}
@@ -118,9 +181,8 @@ func CloneRepo(url, dest, ref string, ssh bool) error {
 	if ref != "" {
 		args = append(args, "--branch", ref)
 	}
-	args = append(args, "--depth", "1", url, dest)
-	cmd := exec.Command("git", args...)
-	out, err := cmd.CombinedOutput()
+	args = append(args, "--depth", "1", "--", url, dest)
+	out, err := gitCmd(args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone %s: %w\n%s", url, err, string(out))
 	}
@@ -134,14 +196,27 @@ func CheckoutSHA(dest, sha string) error {
 	if sha == "" {
 		return nil
 	}
+	if err := ValidateSHA(sha); err != nil {
+		return err
+	}
 	// Fetch the specific commit so a shallow clone can resolve it.
-	if out, err := exec.Command("git", "-C", dest, "fetch", "--depth", "1", "origin", sha).CombinedOutput(); err != nil {
+	if out, err := gitCmd("-C", dest, "fetch", "--depth", "1", "origin", sha).CombinedOutput(); err != nil {
 		return fmt.Errorf("git fetch %s: %w\n%s", sha, err, string(out))
 	}
-	if out, err := exec.Command("git", "-C", dest, "checkout", sha).CombinedOutput(); err != nil {
+	if out, err := gitCmd("-C", dest, "checkout", sha).CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout %s: %w\n%s", sha, err, string(out))
 	}
 	return nil
+}
+
+// HeadSHA returns the full commit hash a clone is checked out at. Used to pin
+// the exact installed commit into installed_plugins.json.
+func HeadSHA(repoDir string) (string, error) {
+	out, err := gitCmd("-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", repoDir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // normalizeGitURL rewrites between SSH (git@github.com:...) and HTTPS
