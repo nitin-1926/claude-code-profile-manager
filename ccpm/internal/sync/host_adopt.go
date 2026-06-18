@@ -14,18 +14,11 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
 
-// hostKindSpec maps a dedupable AssetKind to the subdirectory name under
-// ~/.claude/ that holds entries of that kind. This is intentionally a copy
-// of the (kind → subdir) shape used by kindDirs in sync.go rather than a
-// shared map, because the scanner walks the host (~/.claude) and the linker
-// walks the share store; mixing them would couple two unrelated paths.
-var hostKindSpec = map[manifest.AssetKind]string{
-	manifest.KindSkill:   "skills",
-	manifest.KindAgent:   "agents",
-	manifest.KindCommand: "commands",
-	manifest.KindRule:    "rules",
-	manifest.KindHook:    "hooks",
-}
+// hostKindSpec is the canonical kind→subdirectory mapping, owned by the
+// manifest package (the same names apply under ~/.claude/ and profile dirs).
+// kindDirs in sync.go stays separate because it additionally resolves the
+// share-store root — only the subdir names are shared.
+var hostKindSpec = manifest.KindPlural
 
 // hostEntry is one item discovered in ~/.claude/<asset>/ that is not yet
 // represented in the ccpm manifest. The scanner returns these so callers can
@@ -69,7 +62,11 @@ func scanHostUnadopted(m *manifest.Manifest) ([]hostEntry, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("scanning %s: %w", dir, err)
+			// A single unreadable host dir (EACCES after a stray sudo, a
+			// mount hiccup) must not abort the whole cascade — warn and keep
+			// scanning the other kinds.
+			fmt.Fprintf(os.Stderr, "Warning: skipping host scan of %s: %v\n", dir, err)
+			continue
 		}
 		for _, e := range entries {
 			name := e.Name()
@@ -107,11 +104,14 @@ func scanHostUnadopted(m *manifest.Manifest) ([]hostEntry, error) {
 // The manifest write happens once at the end after every link succeeds, so
 // a partial failure does not leave the manifest claiming entries that were
 // never linked.
-func adoptHostEntries(profileDir, profileName string, entries []hostEntry, m *manifest.Manifest) error {
+//
+// Returns whether the manifest was mutated (new entry added OR an existing
+// entry's Profiles list appended). Callers must persist when mutated is true —
+// deciding from len(entries) alone loses Profiles-list appends (M16).
+func adoptHostEntries(profileDir, profileName string, entries []hostEntry, m *manifest.Manifest) (mutated bool, err error) {
 	if len(entries) == 0 {
-		return nil
+		return false, nil
 	}
-	added := 0
 	for _, e := range entries {
 		subdir, ok := hostKindSpec[e.Kind]
 		if !ok {
@@ -119,7 +119,7 @@ func adoptHostEntries(profileDir, profileName string, entries []hostEntry, m *ma
 		}
 		dst := filepath.Join(profileDir, subdir, e.Name)
 		if err := share.Link(e.Src, dst); err != nil {
-			return fmt.Errorf("linking host %s %q into %q: %w", e.Kind, e.Name, profileName, err)
+			return mutated, fmt.Errorf("linking host %s %q into %q: %w", e.Kind, e.Name, profileName, err)
 		}
 
 		// Only register on first adopt — subsequent profiles re-link the
@@ -132,18 +132,15 @@ func adoptHostEntries(profileDir, profileName string, entries []hostEntry, m *ma
 				Source:   "host:" + e.Src,
 				Profiles: []string{profileName},
 			})
-			added++
+			mutated = true
 		} else {
 			if !containsProfile(existing.Profiles, profileName) {
 				existing.Profiles = append(existing.Profiles, profileName)
+				mutated = true
 			}
 		}
 	}
-	if added == 0 {
-		// No new manifest entries to persist; the link work already happened.
-		return nil
-	}
-	return nil
+	return mutated, nil
 }
 
 // linkHostEntry re-links a single host-scoped manifest entry into a profile.
