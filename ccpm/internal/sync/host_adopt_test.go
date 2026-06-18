@@ -276,3 +276,80 @@ func TestApplyGlobals_ProfileLocalWinsOverHost(t *testing.T) {
 		t.Errorf("profile-local symlink was clobbered: target=%s, want %s", target, localSkillSrc)
 	}
 }
+
+// TestAdoptHostEntriesReportsProfileAppendAsMutation pins the M16 fix: when an
+// already-registered host entry gains a new profile in its Profiles list, the
+// function must report the manifest as mutated so callers persist it.
+func TestAdoptHostEntriesReportsProfileAppendAsMutation(t *testing.T) {
+	_, claudeRoot := seedHostAssets(t)
+	profileDir := filepath.Join(t.TempDir(), "profile")
+	if err := os.MkdirAll(profileDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(claudeRoot, "skills", "matt-skills")
+	entry := hostEntry{Kind: manifest.KindSkill, Name: "matt-skills", Src: src}
+
+	m := &manifest.Manifest{}
+	m.Add(manifest.Install{
+		ID:       "matt-skills",
+		Kind:     manifest.KindSkill,
+		Scope:    manifest.ScopeHost,
+		Source:   "host:" + src,
+		Profiles: []string{"other-profile"},
+	})
+
+	mutated, err := adoptHostEntries(profileDir, "new-profile", []hostEntry{entry}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mutated {
+		t.Error("Profiles-list append not reported as mutation — Save would be skipped (M16)")
+	}
+	inst := m.Find("matt-skills", manifest.KindSkill)
+	if inst == nil || !containsProfile(inst.Profiles, "new-profile") {
+		t.Errorf("profile not appended: %+v", inst)
+	}
+
+	// Re-running for the same profile must be a no-op (no spurious mutation).
+	mutated, err = adoptHostEntries(profileDir, "new-profile", []hostEntry{entry}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutated {
+		t.Error("idempotent re-adopt reported a mutation")
+	}
+}
+
+// TestScanHostUnadoptedSkipsUnreadableDir pins the M16 EACCES fix: one
+// unreadable kind directory must not abort the scan of the others.
+func TestScanHostUnadoptedSkipsUnreadableDir(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root — chmod 0 is not an access barrier")
+	}
+	_, claudeRoot := seedHostAssets(t)
+
+	locked := filepath.Join(claudeRoot, "skills")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+	m := &manifest.Manifest{}
+	entries, err := scanHostUnadopted(m)
+	if err != nil {
+		t.Fatalf("scan aborted on unreadable dir: %v", err)
+	}
+	kinds := map[manifest.AssetKind]bool{}
+	for _, e := range entries {
+		kinds[e.Kind] = true
+	}
+	if kinds[manifest.KindSkill] {
+		t.Error("unreadable skills dir still yielded entries")
+	}
+	for _, k := range []manifest.AssetKind{manifest.KindAgent, manifest.KindCommand, manifest.KindRule, manifest.KindHook} {
+		if !kinds[k] {
+			t.Errorf("kind %s missing — scan stopped early on the unreadable dir", k)
+		}
+	}
+}
