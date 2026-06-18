@@ -2,6 +2,7 @@ package sync
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,8 +17,8 @@ import (
 // the per-profile subdirectory name. Kinds that materialize via settings (MCP,
 // setting, plugin) are intentionally absent and handled below.
 var kindDirs = map[manifest.AssetKind]struct {
-	storeDir       func() (string, error)
-	profileSubdir  string
+	storeDir      func() (string, error)
+	profileSubdir string
 }{
 	manifest.KindSkill:   {share.SkillsDir, "skills"},
 	manifest.KindAgent:   {share.AgentsDir, "agents"},
@@ -84,7 +85,7 @@ func ApplyGlobalsWithOptions(profileDir, profileName string, opts Options) error
 		newDirEntries, err := scanHostUnadopted(m)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: scanning host assets failed: %v\n", err)
-		} else if err := adoptHostEntries(profileDir, profileName, newDirEntries, m); err != nil {
+		} else if _, err := adoptHostEntries(profileDir, profileName, newDirEntries, m); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: adopting host assets failed: %v\n", err)
 		} else if !opts.QuietAdoption {
 			reportAdoption(profileName, newDirEntries)
@@ -113,6 +114,37 @@ func ApplyGlobalsWithOptions(profileDir, profileName string, opts Options) error
 	return nil
 }
 
+// PreviewApplyGlobals reports what ApplyGlobalsWithOptions would do for one
+// profile without mutating anything: the cascade manifest entries that would
+// be (re-)linked and the host entries not yet adopted. Used by
+// `ccpm sync --dry-run`.
+func PreviewApplyGlobals(profileName string) (cascade []string, adoptable []string, err error) {
+	m, err := manifest.Load()
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading manifest: %w", err)
+	}
+	for _, inst := range m.CascadeInstalls() {
+		cascade = append(cascade, fmt.Sprintf("%s %q (%s)", inst.Kind, inst.ID, inst.Scope))
+	}
+	if cascadeAutoAdoptEnabled() {
+		entries, scanErr := scanHostUnadopted(m)
+		if scanErr != nil {
+			return cascade, nil, scanErr
+		}
+		for _, e := range entries {
+			adoptable = append(adoptable, fmt.Sprintf("%s %q (from ~/.claude)", e.Kind, e.Name))
+		}
+		plugins, perr := scanHostPlugins(m)
+		if perr == nil {
+			for _, pl := range plugins {
+				adoptable = append(adoptable, fmt.Sprintf("plugin %q (from ~/.claude)", pl.ID))
+			}
+		}
+	}
+	_ = profileName // per-profile linking is identical across profiles today
+	return cascade, adoptable, nil
+}
+
 // EnsureHostAdoption runs only the host scan + adopt step (and the cascade
 // link pass) without re-running MaterializeAll. Called from `ccpm run`
 // before the materialize step so a newly-installed host skill becomes
@@ -130,7 +162,9 @@ func EnsureHostAdoption(profileDir, profileName string, skip bool) error {
 	if scanErr != nil {
 		return fmt.Errorf("scanning host assets: %w", scanErr)
 	}
-	if err := adoptHostEntries(profileDir, profileName, newDirEntries, m); err != nil {
+	slog.Debug("host adoption scan", "profile", profileName, "unadopted", len(newDirEntries))
+	dirMutated, err := adoptHostEntries(profileDir, profileName, newDirEntries, m)
+	if err != nil {
 		return fmt.Errorf("adopting host assets: %w", err)
 	}
 	if len(newDirEntries) > 0 {
@@ -161,7 +195,9 @@ func EnsureHostAdoption(profileDir, profileName string, skip bool) error {
 		}
 	}
 
-	if len(newDirEntries) == 0 && len(newPlugins) == 0 {
+	// Persist on actual manifest mutation, not entry counts — a Profiles-list
+	// append with zero new entries was previously lost here (M16).
+	if !dirMutated && len(newPlugins) == 0 {
 		return nil
 	}
 	return manifest.Save(m)
