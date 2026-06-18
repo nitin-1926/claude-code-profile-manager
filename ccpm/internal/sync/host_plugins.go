@@ -13,26 +13,15 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/pluginschema"
 )
 
-// hostPluginEntry mirrors the v2 shape Claude Code writes into
-// ~/.claude/plugins/installed_plugins.json. We deliberately keep this in a
-// local type rather than importing internal/plugins to avoid a build cycle
-// (internal/plugins reaches for atomicwrite already; pulling sync in via
-// re-export would invert the dependency).
-type hostPluginEntry struct {
-	Scope        string `json:"scope"`
-	InstallPath  string `json:"installPath"`
-	Version      string `json:"version"`
-	InstalledAt  string `json:"installedAt"`
-	LastUpdated  string `json:"lastUpdated"`
-	GitCommitSha string `json:"gitCommitSha,omitempty"`
-}
-
-type hostPluginDoc struct {
-	Version int                          `json:"version"`
-	Plugins map[string][]hostPluginEntry `json:"plugins"`
-}
+// The installed_plugins.json shapes are owned by internal/pluginschema —
+// shared with internal/plugins without creating a build cycle.
+type (
+	hostPluginEntry = pluginschema.InstalledEntry
+	hostPluginDoc   = pluginschema.InstalledDoc
+)
 
 // hostKnownMarketplace mirrors the marketplace shape in
 // ~/.claude/plugins/known_marketplaces.json. The exact schema has been
