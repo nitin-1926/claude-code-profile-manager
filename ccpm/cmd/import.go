@@ -126,46 +126,74 @@ func init() {
 	rootCmd.AddCommand(newImportCmd())
 }
 
+// importPlan is the fully-resolved outcome of flag validation and every
+// interactive prompt in `ccpm import default`: which targets to import, the
+// per-item selections, where MCP servers land, and which profiles receive the
+// import. Resolution (prompts, no writes) and execution (writes, no prompts)
+// are split so execution can run under the advisory lock and the resolution
+// logic is unit-testable in non-interactive mode.
+type importPlan struct {
+	targets    []defaultclaude.Target
+	itemFilter map[defaultclaude.Target]map[string]bool
+	mcpScope   string
+	profiles   []string
+}
+
 func runImportDefault(state *importDefaultState) error {
-	if state.profile != "" && state.all {
-		return fmt.Errorf("use either --profile or --all, not both")
-	}
-	if state.liveSymlinks && state.noShare {
-		return fmt.Errorf("--live-symlinks only applies with deduped import; omit --no-share")
-	}
-	if state.liveSymlinks && state.noLiveSymlink {
-		return fmt.Errorf("--live-symlinks and --no-live-symlinks are mutually exclusive")
-	}
-	if state.mcpScope != "" && state.mcpScope != defaultclaude.MCPImportScopeGlobal && state.mcpScope != defaultclaude.MCPImportScopeProfile {
-		return fmt.Errorf("--mcp-scope must be %q or %q", defaultclaude.MCPImportScopeGlobal, defaultclaude.MCPImportScopeProfile)
-	}
-
-	if !defaultclaude.Exists() {
-		src, _ := defaultclaude.DefaultDir()
-		return fmt.Errorf("no default Claude config found at %s", src)
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	plan, err := resolveImportPlan(state, cfg)
+	if err != nil {
+		return err
+	}
+	if state.dryRun {
+		// Dry-run never mutates — skip the lock so previews don't contend
+		// with real work.
+		return executeImportPlan(state, cfg, plan)
+	}
+	return withConfigLock(func() error { return executeImportPlan(state, cfg, plan) })
+}
+
+// resolveImportPlan validates flags and walks the user through every prompt
+// (target profile, targets, live-symlink strategy, per-item selection, MCP
+// scope). It performs no writes.
+func resolveImportPlan(state *importDefaultState, cfg *config.Config) (*importPlan, error) {
+	if state.profile != "" && state.all {
+		return nil, fmt.Errorf("use either --profile or --all, not both")
+	}
+	if state.liveSymlinks && state.noShare {
+		return nil, fmt.Errorf("--live-symlinks only applies with deduped import; omit --no-share")
+	}
+	if state.liveSymlinks && state.noLiveSymlink {
+		return nil, fmt.Errorf("--live-symlinks and --no-live-symlinks are mutually exclusive")
+	}
+	if state.mcpScope != "" && state.mcpScope != defaultclaude.MCPImportScopeGlobal && state.mcpScope != defaultclaude.MCPImportScopeProfile {
+		return nil, fmt.Errorf("--mcp-scope must be %q or %q", defaultclaude.MCPImportScopeGlobal, defaultclaude.MCPImportScopeProfile)
+	}
+
+	if !defaultclaude.Exists() {
+		src, _ := defaultclaude.DefaultDir()
+		return nil, fmt.Errorf("no default Claude config found at %s", src)
+	}
 
 	if state.profile == "" && !state.all {
 		if err := pickImportTarget(state, cfg); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	targets, err := defaultclaude.ParseTargets(state.only)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(state.only) == 0 {
 		picked, err := pickImportTargets(state.includeRunnable)
 		if err == nil {
 			targets = picked
 		} else if !errors.Is(err, picker.ErrNonInteractive) {
-			return err
+			return nil, err
 		}
 	}
 
@@ -199,7 +227,7 @@ func runImportDefault(state *importDefaultState) error {
 			if err == nil {
 				state.liveSymlinks = choice == "symlink"
 			} else if !errors.Is(err, picker.ErrNonInteractive) {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -211,13 +239,13 @@ func runImportDefault(state *importDefaultState) error {
 		case defaultclaude.TargetHooks:
 			picked, err := pickHooksWithPreview(state)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			itemFilter[t] = picked
 		case defaultclaude.TargetMCP:
 			picked, err := pickMCPWithPreview(state)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			itemFilter[t] = picked
 		default:
@@ -229,7 +257,7 @@ func runImportDefault(state *importDefaultState) error {
 				if errors.Is(err, picker.ErrNonInteractive) {
 					continue
 				}
-				return err
+				return nil, err
 			}
 			if picked != nil {
 				itemFilter[t] = picked
@@ -260,7 +288,7 @@ func runImportDefault(state *importDefaultState) error {
 			} else if errors.Is(err, picker.ErrNonInteractive) {
 				mcpScope = defaultclaude.MCPImportScopeGlobal
 			} else {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -269,20 +297,38 @@ func runImportDefault(state *importDefaultState) error {
 	if state.all {
 		names = config.ProfileNames(cfg)
 		if len(names) == 0 {
-			return fmt.Errorf("no profiles found — create one with 'ccpm add'")
+			return nil, fmt.Errorf("no profiles found — create one with 'ccpm add'")
 		}
 	} else {
 		if _, ok := cfg.Profiles[state.profile]; !ok {
-			return fmt.Errorf("profile %q not found", state.profile)
+			return nil, fmt.Errorf("profile %q not found", state.profile)
 		}
 		names = []string{state.profile}
 	}
+
+	return &importPlan{
+		targets:    targets,
+		itemFilter: itemFilter,
+		mcpScope:   mcpScope,
+		profiles:   names,
+	}, nil
+}
+
+// executeImportPlan applies a resolved plan to every target profile and
+// renders the per-action report. No prompts — safe to run under the lock.
+func executeImportPlan(state *importDefaultState, cfg *config.Config, plan *importPlan) error {
+	targets := plan.targets
+	itemFilter := plan.itemFilter
+	mcpScope := plan.mcpScope
 
 	green := color.New(color.FgGreen, color.Bold)
 	cyan := color.New(color.FgCyan)
 	dim := color.New(color.Faint)
 
-	for idx, name := range names {
+	// Steps that failed after some work already landed — drives exit code 3.
+	var failedSteps []string
+
+	for idx, name := range plan.profiles {
 		p := cfg.Profiles[name]
 
 		perProfileTargets := targets
@@ -290,7 +336,10 @@ func runImportDefault(state *importDefaultState) error {
 			perProfileTargets = filterOutTarget(targets, defaultclaude.TargetMCP)
 		}
 
-		plan, err := defaultclaude.Import(p.Dir, defaultclaude.ImportOptions{
+		// Named importResult (not plan) to avoid shadowing the *importPlan
+		// parameter: a future edit that reaches for plan.* after this loop would
+		// otherwise silently bind to the wrong type.
+		importResult, err := defaultclaude.Import(p.Dir, defaultclaude.ImportOptions{
 			Targets:      perProfileTargets,
 			DryRun:       state.dryRun,
 			Force:        state.force,
@@ -310,7 +359,7 @@ func runImportDefault(state *importDefaultState) error {
 		}
 		cyan.Println(header)
 
-		for _, action := range plan.Actions {
+		for _, action := range importResult.Actions {
 			switch action.Kind {
 			case "skip-missing":
 				dim.Printf("  - %-9s skipped (%s)\n", action.Target, fallback(action.Note, "source missing"))
@@ -329,11 +378,13 @@ func runImportDefault(state *importDefaultState) error {
 
 		if !state.dryRun {
 			if err := mergeImportedSettings(p.Dir); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: settings merge failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  Error: settings merge failed: %v\n", err)
+				failedSteps = append(failedSteps, fmt.Sprintf("settings merge (%s)", name))
 			}
 
 			if err := settingsmerge.MaterializeAll(p.Dir, name, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: re-materializing profile: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  Error: re-materializing profile: %v\n", err)
+				failedSteps = append(failedSteps, fmt.Sprintf("materialize (%s)", name))
 			}
 		}
 	}
@@ -349,6 +400,11 @@ func runImportDefault(state *importDefaultState) error {
 		}
 	}
 
+	if len(failedSteps) > 0 {
+		// Some targets imported, some didn't — exit 3 so CI/scripts can tell
+		// partial success apart from total failure (M15).
+		return partialFailure("import completed with %d failed step(s): %s", len(failedSteps), strings.Join(failedSteps, ", "))
+	}
 	return nil
 }
 
