@@ -17,6 +17,7 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
+	"golang.org/x/mod/semver"
 )
 
 var doctorCmd = &cobra.Command{
@@ -85,7 +86,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		red.Printf("  ✗ %v\n", binErr)
 		issues++
 	}
-	fmt.Printf("  ccpm version: %s\n", rootVersion())
+	fmt.Printf("  ccpm version: %s\n", rootCmd.Version)
 	fmt.Printf("  platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Println()
 
@@ -237,6 +238,53 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// -----------------------------------------------------------------
+	// Section 5.5: housekeeping (orphans, stale staging, Windows fallback)
+	// -----------------------------------------------------------------
+	bold.Println("Housekeeping")
+	houseFindings := 0
+	if base, err := config.BaseDir(); err == nil {
+		// Profile dirs on disk with no config entry (e.g. an interrupted add
+		// or remove) — invisible to every other command.
+		profilesRoot := filepath.Join(base, "profiles")
+		if entries, err := os.ReadDir(profilesRoot); err == nil {
+			known := map[string]bool{}
+			for _, p := range cfg.Profiles {
+				known[filepath.Base(p.Dir)] = true
+			}
+			for _, e := range entries {
+				if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+					continue
+				}
+				if !known[e.Name()] {
+					yellow.Printf("  ! orphaned profile directory (not in config.json): %s\n", filepath.Join(profilesRoot, e.Name()))
+					warnings++
+					houseFindings++
+				}
+			}
+		}
+
+		// Stale atomicwrite staging files — leftovers from a crashed write.
+		stale := findStaleStagedFiles(append([]string{base}, profileDirValues(profileDirs)...))
+		for _, s := range stale {
+			yellow.Printf("  ! stale staging file (crashed write?): %s\n", s)
+			warnings++
+			houseFindings++
+		}
+
+		// Windows copy-fallback breadcrumb: dedup is silently degraded.
+		if _, err := os.Stat(filepath.Join(base, ".windows-copy-fallback")); err == nil {
+			yellow.Println("  ! shared assets are COPIED, not symlinked (Windows without Developer Mode)")
+			dim.Println("    Enable Developer Mode and re-run `ccpm sync` to restore deduplication.")
+			warnings++
+			houseFindings++
+		}
+	}
+	if houseFindings == 0 {
+		green.Println("  ✓ no orphaned profile dirs, stale staging files, or degraded-dedup markers")
+	}
+	fmt.Println()
+
+	// -----------------------------------------------------------------
 	// Section 6: manifest + drift fingerprint
 	// -----------------------------------------------------------------
 	bold.Println("Shared asset manifest")
@@ -275,7 +323,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		dim.Println("  cascade_auto_adopt is ON (default)")
 	}
 	if defaultclaude.Exists() && len(profileDirs) > 0 {
-		summary, shadows := computeHostCascadeSummary(profileDirs, m)
+		summary, shadows := defaultclaude.HostCascadeSummary(profileDirs, m)
 		if summary == "" {
 			green.Println("  ✓ no host assets discovered yet")
 		} else {
@@ -361,7 +409,9 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// -----------------------------------------------------------------
 	if issues > 0 {
 		red.Printf("✗ %d issue(s), %d warning(s)\n", issues, warnings)
-		return fmt.Errorf("%d issue(s), %d warning(s)", issues, warnings)
+		// exitUnhealthy (4) distinguishes "health check found problems" from
+		// "the doctor command itself failed" (1) for scripts.
+		return exitWithCode(exitUnhealthy, fmt.Errorf("%d issue(s), %d warning(s)", issues, warnings))
 	}
 	if warnings > 0 {
 		yellow.Printf("! %d warning(s), 0 issues\n", warnings)
@@ -446,69 +496,82 @@ func fixBrokenSymlinks(profileDirs map[string]string) (removed, failed []string)
 	return removed, failed
 }
 
-// compareSemver returns -1 / 0 / +1 comparing dotted numeric versions a vs b.
-// Non-numeric segments and version prefixes like "v" or Claude's quirky
-// "1.0.123 (claude-code)" suffix are tolerated.
+// compareSemver returns -1 / 0 / +1 comparing version strings via
+// golang.org/x/mod/semver. Claude's quirky output forms ("v2.1.56",
+// "2.1.56 (claude-code)") are normalized first; anything unparseable
+// canonicalizes to "v0" (sorts lowest), matching the old lenient behavior.
 func compareSemver(a, b string) int {
-	sa := extractNumericPrefix(a)
-	sb := extractNumericPrefix(b)
-	partsA := strings.Split(sa, ".")
-	partsB := strings.Split(sb, ".")
-	n := len(partsA)
-	if len(partsB) > n {
-		n = len(partsB)
-	}
-	for i := 0; i < n; i++ {
-		ai := atoiSafe(getOr(partsA, i, "0"))
-		bi := atoiSafe(getOr(partsB, i, "0"))
-		if ai < bi {
-			return -1
-		}
-		if ai > bi {
-			return 1
-		}
-	}
-	return 0
+	return semver.Compare(normalizeSemver(a), normalizeSemver(b))
 }
 
-func extractNumericPrefix(s string) string {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
-	var out strings.Builder
-	for _, r := range s {
-		if (r >= '0' && r <= '9') || r == '.' {
-			out.WriteRune(r)
-			continue
+// normalizeSemver reduces a raw version string to a canonical "vX.Y.Z" form
+// that x/mod/semver accepts: first whitespace-delimited token, "v" prefix
+// ensured, missing minor/patch filled with zeros.
+func normalizeSemver(raw string) string {
+	tok := strings.TrimSpace(raw)
+	if i := strings.IndexByte(tok, ' '); i >= 0 {
+		tok = tok[:i]
+	}
+	tok = "v" + strings.TrimPrefix(tok, "v")
+	if !semver.IsValid(tok) {
+		// Fill missing components ("v2.1" → "v2.1.0") before giving up.
+		for range 2 {
+			tok += ".0"
+			if semver.IsValid(tok) {
+				return tok
+			}
 		}
-		break
+		return "v0.0.0"
 	}
-	return out.String()
+	return tok
 }
 
-func atoiSafe(s string) int {
-	n := 0
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			break
+// profileDirValues flattens the profile→dir map for path scans.
+func profileDirValues(profileDirs map[string]string) []string {
+	out := make([]string, 0, len(profileDirs))
+	for _, d := range profileDirs {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// findStaleStagedFiles scans the given roots (shallowly, plus one level of
+// subdirs) for `.ccpm-staged-*` files — leftovers from a write that crashed
+// between stage and rename. atomicwrite normally removes them.
+func findStaleStagedFiles(roots []string) []string {
+	var stale []string
+	seen := map[string]bool{}
+	scan := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
 		}
-		n = n*10 + int(r-'0')
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if strings.Contains(e.Name(), ".ccpm-staged-") {
+				p := filepath.Join(dir, e.Name())
+				if !seen[p] {
+					seen[p] = true
+					stale = append(stale, p)
+				}
+			}
+		}
 	}
-	return n
-}
-
-func getOr(parts []string, i int, fallback string) string {
-	if i < len(parts) {
-		return parts[i]
+	for _, root := range roots {
+		scan(root)
+		if entries, err := os.ReadDir(root); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					scan(filepath.Join(root, e.Name()))
+				}
+			}
+		}
 	}
-	return fallback
-}
-
-// rootVersion is a best-effort lookup of ccpm's own version string. The root
-// command already exposes this via rootCmd.Version.
-func rootVersion() string {
-	if rootCmd.Version != "" {
-		return rootCmd.Version
-	}
-	return "dev"
+	sort.Strings(stale)
+	return stale
 }
 
 func manifestDisplayPath() string {
@@ -517,115 +580,4 @@ func manifestDisplayPath() string {
 		return "~/.ccpm/installs.json"
 	}
 	return filepath.Join(base, "installs.json")
-}
-
-// shadowedAsset describes one (kind, name) that exists in both ~/.claude and
-// a profile-local override. The cascade always lets profile-local win, but
-// the doctor surfaces these so users aren't surprised when a host update
-// silently fails to take effect inside a profile.
-type shadowedAsset struct {
-	Kind    string
-	Name    string
-	Profile string
-}
-
-// computeHostCascadeSummary walks ~/.claude/<asset>/ and every profile's
-// matching subdir, returning (a) a one-line summary string of host vs. adopted
-// counts per kind, and (b) a list of shadow entries.
-func computeHostCascadeSummary(profileDirs map[string]string, m *manifest.Manifest) (string, []shadowedAsset) {
-	plurals := []struct {
-		kind   manifest.AssetKind
-		plural string
-	}{
-		{manifest.KindSkill, "skills"},
-		{manifest.KindAgent, "agents"},
-		{manifest.KindCommand, "commands"},
-		{manifest.KindRule, "rules"},
-		{manifest.KindHook, "hooks"},
-	}
-	hostRoot, err := defaultclaude.DefaultDir()
-	if err != nil {
-		return "", nil
-	}
-
-	// Index the manifest by (kind, id) so we can tell adopted from
-	// not-yet-adopted host entries.
-	adopted := map[string]bool{}
-	if m != nil {
-		for _, inst := range m.Installs {
-			if inst.Scope == manifest.ScopeHost {
-				adopted[string(inst.Kind)+"/"+inst.ID] = true
-			}
-		}
-	}
-
-	type counts struct {
-		host    int
-		adopted int
-	}
-	totals := map[manifest.AssetKind]counts{}
-	var shadows []shadowedAsset
-
-	for _, p := range plurals {
-		hostDir := filepath.Join(hostRoot, p.plural)
-		hostNames := listDirNames(hostDir)
-		hostSet := map[string]bool{}
-		for _, n := range hostNames {
-			if strings.HasPrefix(n, ".") {
-				continue
-			}
-			hostSet[n] = true
-			c := totals[p.kind]
-			c.host++
-			if adopted[string(p.kind)+"/"+n] {
-				c.adopted++
-			}
-			totals[p.kind] = c
-		}
-
-		// Per-profile shadowing: a profile entry with the same name as a
-		// host entry, but the profile entry was added directly (not via
-		// adoption) — we detect this by looking at the manifest scope.
-		for prof, profDir := range profileDirs {
-			profNames := listDirNames(filepath.Join(profDir, p.plural))
-			for _, n := range profNames {
-				if !hostSet[n] {
-					continue
-				}
-				// Same name in host and profile. If the manifest entry
-				// for (kind, name) is profile-scoped, it's a shadow.
-				if inst := m.Find(n, p.kind); inst != nil && inst.Scope == manifest.ScopeProfile {
-					shadows = append(shadows, shadowedAsset{
-						Kind: string(p.kind), Name: n, Profile: prof,
-					})
-				}
-			}
-		}
-	}
-
-	var summary []string
-	for _, p := range plurals {
-		c := totals[p.kind]
-		if c.host == 0 {
-			continue
-		}
-		summary = append(summary, fmt.Sprintf("%s %d/%d adopted", p.plural, c.adopted, c.host))
-	}
-	if len(summary) == 0 {
-		return "", shadows
-	}
-	return strings.Join(summary, ", "), shadows
-}
-
-func listDirNames(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, e.Name())
-	}
-	sort.Strings(out)
-	return out
 }
