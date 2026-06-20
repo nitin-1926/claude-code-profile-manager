@@ -25,18 +25,21 @@ func TestCompareSemver(t *testing.T) {
 	}
 }
 
-func TestExtractNumericPrefix(t *testing.T) {
+func TestNormalizeSemver(t *testing.T) {
 	cases := map[string]string{
-		"v2.1.56":              "2.1.56",
-		"2.1.56 (claude-code)": "2.1.56",
-		"   v0.3.2  ":          "0.3.2",
-		"abc":                  "",
-		"":                     "",
-		"1.2.3-beta":           "1.2.3",
+		"v2.1.56":              "v2.1.56",
+		"2.1.56 (claude-code)": "v2.1.56",
+		"   v0.3.2  ":          "v0.3.2",
+		"abc":                  "v0.0.0",
+		"":                     "v0.0.0",
+		"1.2.3-beta":           "v1.2.3-beta",
+		// x/mod/semver accepts and canonicalizes short forms itself.
+		"2.1": "v2.1",
+		"2":   "v2",
 	}
 	for in, want := range cases {
-		if got := extractNumericPrefix(in); got != want {
-			t.Errorf("extractNumericPrefix(%q) = %q, want %q", in, got, want)
+		if got := normalizeSemver(in); got != want {
+			t.Errorf("normalizeSemver(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
