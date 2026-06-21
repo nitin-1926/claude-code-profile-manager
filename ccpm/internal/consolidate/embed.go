@@ -32,9 +32,18 @@ func InstallSkill() error {
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("refusing to overwrite existing install at %s — remove it first", dest)
 	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return fmt.Errorf("create dest: %w", err)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("create skills dir: %w", err)
 	}
+
+	// Stage the whole skill into a sibling temp dir and rename into place on
+	// success, so an extraction failure can't leave a half-written install
+	// that the existing-install guard above would then refuse to repair.
+	stage, err := os.MkdirTemp(filepath.Dir(dest), "."+skillName+"-stage-")
+	if err != nil {
+		return fmt.Errorf("create staging dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
 
 	if err := fs.WalkDir(embeddedSkill, embedRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -42,36 +51,49 @@ func InstallSkill() error {
 		}
 		rel := strings.TrimPrefix(p, embedRoot)
 		rel = strings.TrimPrefix(rel, "/")
-		target := filepath.Join(dest, rel)
+		target := filepath.Join(stage, rel)
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		f, err := embeddedSkill.Open(p)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		out, err := os.Create(target)
-		if err != nil {
-			return err
-		}
-		defer out.Close()
-		if _, err := io.Copy(out, f); err != nil {
-			return err
-		}
-		// Bundled scripts need exec bit.
-		if isExecutable(rel) {
-			if err := os.Chmod(target, 0o755); err != nil {
-				return err
-			}
-		}
-		return nil
+		return extractEmbeddedFile(p, target, isExecutable(rel))
 	}); err != nil {
 		return fmt.Errorf("extract skill: %w", err)
 	}
 
+	if err := os.Rename(stage, dest); err != nil {
+		return fmt.Errorf("activating skill install: %w", err)
+	}
+
 	fmt.Printf("Installed: %s\n", dest)
 	fmt.Println("Run `ccpm sync` to cascade into all profiles, then invoke /consolidate-claude-assets in Claude Code.")
+	return nil
+}
+
+// extractEmbeddedFile copies one embedded file to target with explicit Close
+// error checks — a swallowed Close on a full disk would report success for a
+// truncated file.
+func extractEmbeddedFile(embedPath, target string, exec bool) error {
+	f, err := embeddedSkill.Open(embedPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	out, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, f); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", target, err)
+	}
+	if exec {
+		if err := os.Chmod(target, 0o755); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

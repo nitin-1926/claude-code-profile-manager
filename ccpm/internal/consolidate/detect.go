@@ -125,7 +125,7 @@ func detectRealDirDuplicates(snap Snapshot) []Issue {
 		out = append(out, Issue{
 			Category: "duplicate",
 			Severity: SevWarn,
-			Scope:    joinScopes(scopeList),
+			Scope:    strings.Join(scopeList, "+"),
 			Asset:    name,
 			Detail:   detail,
 		})
@@ -461,13 +461,3 @@ func stringSet(in []string) map[string]struct{} {
 	return out
 }
 
-func joinScopes(scopes []string) string {
-	var b strings.Builder
-	for i, s := range scopes {
-		if i > 0 {
-			b.WriteByte('+')
-		}
-		b.WriteString(s)
-	}
-	return b.String()
-}
