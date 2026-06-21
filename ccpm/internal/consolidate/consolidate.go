@@ -108,10 +108,11 @@ func Run(opts Options) error {
 		return nil
 	}
 
-	if err := applyAutoFixes(opts.Out, autoFixable); err != nil {
-		return err
-	}
+	applied, failed := applyAutoFixes(opts.Out, autoFixable)
 	printGuidance(opts.Out, filterRemaining(issues))
+	if failed > 0 {
+		return fmt.Errorf("applied %d fix(es), %d failed — re-run `ccpm consolidate` to see what remains", applied, failed)
+	}
 	return nil
 }
 
@@ -225,7 +226,9 @@ func skillInstalled() bool {
 	return err == nil
 }
 
-func applyAutoFixes(out io.Writer, autoFixable []Issue) error {
+// applyAutoFixes runs every auto-fixable issue's fix and reports how many
+// applied vs failed; individual failures are printed but never abort the run.
+func applyAutoFixes(out io.Writer, autoFixable []Issue) (applied, failed int) {
 	bold := color.New(color.Bold)
 	green := color.New(color.FgGreen, color.Bold)
 	red := color.New(color.FgRed, color.Bold)
@@ -235,10 +238,12 @@ func applyAutoFixes(out io.Writer, autoFixable []Issue) error {
 		fmt.Fprintf(out, "  applying: %s | %s | %s\n", i.Category, i.Asset, i.Detail)
 		if err := i.AutoFix(); err != nil {
 			red.Fprintf(out, "    ✗ %v\n", err)
+			failed++
 			continue
 		}
 		green.Fprintln(out, "    ✓ applied")
+		applied++
 	}
 	fmt.Fprintln(out)
-	return nil
+	return applied, failed
 }
