@@ -118,6 +118,12 @@ Pass a command to set it; pass an empty string to remove the statusLine key.
 ccpm writes the native shape:
   { "statusLine": { "type": "command", "command": "<cmd>" } }
 
+Note: 'ccpm run' auto-injects a default statusLine ('ccpm statusline', which
+shows the active profile + usage/limits) into profiles that have none. Setting
+your own here takes precedence; clearing it with "" both removes a custom one
+and an auto-injected default. Disable the auto-injection entirely with
+'ccpm config set statusline false'.
+
 Examples:
   ccpm settings statusline "~/.claude/statusline.sh" --profile work
   ccpm settings statusline "" --profile work       # remove`,
