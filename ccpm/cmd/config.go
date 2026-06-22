@@ -23,7 +23,12 @@ var configSetCmd = &cobra.Command{
   cascade_auto_adopt    true|false — auto-link ~/.claude/<asset>/ entries into every
                                      profile at launch (default: true). Disable for
                                      strict reproducibility — only manifest-tracked
-                                     assets will appear in profiles.`,
+                                     assets will appear in profiles.
+  statusline            true|false — auto-inject a default statusLine (` + "`ccpm statusline`" + `)
+                                     into launched profiles that have none, so the TUI
+                                     shows the active profile + usage/limit windows
+                                     (default: true). Never overwrites your own
+                                     statusLine.`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -34,6 +39,7 @@ var configGetCmd = &cobra.Command{
 	Long: `Supported keys:
   check_default_drift   bool — drift-warning setting
   cascade_auto_adopt    bool — host-asset auto-link setting
+  statusline            bool — default-statusLine auto-injection setting
   default_dir           string — absolute path of the current default profile's
                         directory, or empty if no default is set. Used by
                         ccpm shell-init's claude() wrapper to set
@@ -70,6 +76,12 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("expected true/false, got %q", value)
 		}
 		cfg.Settings.CascadeAutoAdopt = &b
+	case "statusline":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("expected true/false, got %q", value)
+		}
+		cfg.Settings.DefaultStatusLine = &b
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}
@@ -92,6 +104,8 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		fmt.Println(cfg.Settings.CheckDefaultDrift)
 	case "cascade_auto_adopt":
 		fmt.Println(cfg.Settings.CascadeAutoAdoptEnabled())
+	case "statusline":
+		fmt.Println(cfg.Settings.StatusLineEnabled())
 	case "default_dir":
 		// Print the default profile's directory, or empty when unset.
 		// Designed for shell scripts (notably the claude() wrapper in
