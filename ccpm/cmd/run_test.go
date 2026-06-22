@@ -10,14 +10,15 @@ import (
 // --help, --version, and the -- separator) are intercepted here.
 func TestExtractCCPMRunFlags(t *testing.T) {
 	cases := []struct {
-		name         string
-		input        []string
-		wantForward  []string
-		wantEnv      []string
-		wantSkip     bool
-		wantHelp     bool
-		wantVersion  bool
-		wantErr      bool
+		name           string
+		input          []string
+		wantForward    []string
+		wantEnv        []string
+		wantSkip       bool
+		wantSkipStatus bool
+		wantHelp       bool
+		wantVersion    bool
+		wantErr        bool
 	}{
 		{
 			name:        "single unknown flag forwards",
@@ -79,11 +80,28 @@ func TestExtractCCPMRunFlags(t *testing.T) {
 			wantForward: []string{"work", "--no-auto-adopt"},
 			wantSkip:    false,
 		},
+		{
+			name:           "--no-statusline is intercepted",
+			input:          []string{"--no-statusline", "work"},
+			wantForward:    []string{"work"},
+			wantSkipStatus: true,
+		},
+		{
+			name:           "--no-statusline after profile is still intercepted",
+			input:          []string{"work", "--no-statusline", "--model", "x"},
+			wantForward:    []string{"work", "--model", "x"},
+			wantSkipStatus: true,
+		},
+		{
+			name:        "--no-statusline after -- is forwarded verbatim",
+			input:       []string{"work", "--", "--no-statusline"},
+			wantForward: []string{"work", "--no-statusline"},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			forward, env, skipAdopt, help, ver, err := extractCCPMRunFlags(tc.input)
+			forward, env, skipAdopt, skipStatus, help, ver, err := extractCCPMRunFlags(tc.input)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -101,6 +119,9 @@ func TestExtractCCPMRunFlags(t *testing.T) {
 			}
 			if skipAdopt != tc.wantSkip {
 				t.Fatalf("skipAdopt: got %v, want %v", skipAdopt, tc.wantSkip)
+			}
+			if skipStatus != tc.wantSkipStatus {
+				t.Fatalf("skipStatusLine: got %v, want %v", skipStatus, tc.wantSkipStatus)
 			}
 			if help != tc.wantHelp {
 				t.Fatalf("help: got %v, want %v", help, tc.wantHelp)
