@@ -25,10 +25,12 @@ ccpm doesn't know about:
   ccpm run work --dangerously-skip-permissions
   ccpm run work --model claude-sonnet-4-6
 
-Four flags are intercepted by ccpm before they reach claude:
+Five flags are intercepted by ccpm before they reach claude:
   --ccpm-env KEY=VALUE  — one-shot env override (repeatable)
   --no-auto-adopt       — skip the host-asset cascade scan for this launch
                           (does not change the persistent cascade_auto_adopt setting)
+  --no-statusline       — skip injecting the default statusLine for this launch
+                          (does not change the persistent statusline setting)
   --help / -h           — show this help
   --version             — show ccpm version
 
@@ -48,7 +50,7 @@ func init() {
 func runRun(cmd *cobra.Command, args []string) error {
 	// With DisableFlagParsing the first arg after "run" is still the profile
 	// name, but we own the parsing of anything ccpm-specific before it.
-	claudeArgs, envOverrides, skipAdopt, helpRequested, versionRequested, err := extractCCPMRunFlags(args)
+	claudeArgs, envOverrides, skipAdopt, skipStatusLine, helpRequested, versionRequested, err := extractCCPMRunFlags(args)
 	if err != nil {
 		return err
 	}
@@ -89,12 +91,47 @@ func runRun(cmd *cobra.Command, args []string) error {
 		projectRoot = settingsmerge.FindProjectRoot(cwd)
 	}
 
-	// Cascade: scan ~/.claude/<asset>/ for entries the profile hasn't picked
-	// up yet (skills/agents/commands/rules/hooks/plugins) and link them in.
-	// Idempotent — entries already in the manifest are skipped. Failures are
-	// non-fatal so a launch is never blocked by a transient host-disk issue.
-	if err := profilesync.EnsureHostAdoption(p.Dir, name, skipAdopt); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: host-asset cascade: %v\n", err)
+	// Pre-launch mutations are split by lock policy so a launch is never both
+	// blocked AND allowed to corrupt shared state:
+	//
+	//   - Host adoption appends to the SHARED manifest (read-modify-write) and
+	//     statusLine injection writes the profile fragment; both must be
+	//     serialized so two `ccpm run`s in parallel terminals don't lose each
+	//     other's updates (H7). If the lock is unavailable we SKIP this step
+	//     with a warning — a missed adoption/injection is retried next launch —
+	//     rather than run it unlocked and reintroduce the race.
+	//   - Materialize only rewrites THIS profile's own settings.json/.claude.json
+	//     via a single atomicwrite transaction, so it is safe to run unlocked
+	//     and must NEVER be skipped: the launch needs an up-to-date settings.json.
+	prelaunchLocked := func() error {
+		// Idempotent — entries already in the manifest are skipped. Failures
+		// are non-fatal so a launch is never blocked by a transient host-disk
+		// issue.
+		if err := profilesync.EnsureHostAdoption(p.Dir, name, skipAdopt); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: host-asset cascade: %v\n", err)
+		}
+
+		// Inject the default statusLine so the launched TUI shows which profile
+		// is active (and, for subscription accounts, usage/limit windows).
+		// Idempotent and skipped when the user opted out or already has one.
+		if !skipStatusLine && cfg.Settings.StatusLineEnabled() {
+			if wrote, err := settingsmerge.EnsureDefaultStatusLine(name, settingsmerge.DefaultStatusLineCommand); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not set default statusLine: %v\n", err)
+			} else if wrote {
+				fmt.Fprintf(os.Stderr, "ccpm: enabled status line for profile %q — disable with `ccpm config set statusline false`\n", name)
+			}
+		}
+		return nil
+	}
+	if lockErr := withConfigLock(prelaunchLocked); lockErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping host cascade + statusline this launch (lock unavailable): %v\n", lockErr)
+	}
+
+	// Materialize shared settings + MCP into the profile dir before launch.
+	// Profile-local and atomic, so it runs unlocked and always — even when the
+	// lock above was unavailable — so the launch never uses stale settings.
+	if err := settingsmerge.MaterializeAll(p.Dir, name, projectRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not materialize profile settings: %v\n", err)
 	}
 
 	// Surface project-local assets so the user knows what's active in this
@@ -102,15 +139,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// scan; printing one line beats showing nothing when a repo has its own
 	// .claude/skills tree.
 	maybeReportProjectAssets()
-
-	// Materialize shared settings + MCP into the profile dir before launch.
-	// MaterializeAll wraps both writes in a single atomicwrite transaction so
-	// a crash, disk-full, or permissions error in the middle of the merge
-	// can't leave the profile half-written (settings updated, .claude.json
-	// stale, or vice versa).
-	if err := settingsmerge.MaterializeAll(p.Dir, name, projectRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not materialize profile settings: %v\n", err)
-	}
 
 	// Get API key if needed
 	var apiKey string
@@ -166,23 +194,24 @@ func parseEnvKVs(pairs []string) (map[string]string, error) {
 //	--ccpm-env KEY=VAL        two-token form
 //	--ccpm-env=KEY=VAL        single-token form
 //	--no-auto-adopt           boolean flag — skip host cascade for this run
+//	--no-statusline           boolean flag — skip statusLine injection for this run
 //	--help / -h / --version   boolean flags
 //	--                        stop processing, pass the rest through verbatim
 //
 // Anything after a bare "--" is copied verbatim (including further --help or
 // --ccpm-env occurrences), matching native shell convention.
-func extractCCPMRunFlags(args []string) (forwarded []string, envOverrides []string, skipAdopt, help, ver bool, err error) {
+func extractCCPMRunFlags(args []string) (forwarded []string, envOverrides []string, skipAdopt, skipStatusLine, help, ver bool, err error) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
 		if a == "--" {
 			forwarded = append(forwarded, args[i+1:]...)
-			return forwarded, envOverrides, skipAdopt, help, ver, nil
+			return forwarded, envOverrides, skipAdopt, skipStatusLine, help, ver, nil
 		}
 		switch {
 		case a == "--ccpm-env":
 			if i+1 >= len(args) {
-				return nil, nil, false, false, false, fmt.Errorf("--ccpm-env requires a KEY=VALUE argument")
+				return nil, nil, false, false, false, false, fmt.Errorf("--ccpm-env requires a KEY=VALUE argument")
 			}
 			envOverrides = append(envOverrides, args[i+1])
 			i += 2
@@ -193,6 +222,10 @@ func extractCCPMRunFlags(args []string) (forwarded []string, envOverrides []stri
 			continue
 		case a == "--no-auto-adopt":
 			skipAdopt = true
+			i++
+			continue
+		case a == "--no-statusline":
+			skipStatusLine = true
 			i++
 			continue
 		case a == "--help" || a == "-h":
@@ -207,7 +240,7 @@ func extractCCPMRunFlags(args []string) (forwarded []string, envOverrides []stri
 		forwarded = append(forwarded, a)
 		i++
 	}
-	return forwarded, envOverrides, skipAdopt, help, ver, nil
+	return forwarded, envOverrides, skipAdopt, skipStatusLine, help, ver, nil
 }
 
 // maybeReportProjectAssets prints a one-line stderr summary when CWD is
