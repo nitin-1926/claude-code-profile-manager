@@ -216,6 +216,15 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 		return err
 	}
 
+	// Locked from here down (after all interactive prompts): the store seed +
+	// manifest read-modify-write must not interleave with another ccpm
+	// invocation or entries get lost (H7).
+	return withConfigLock(func() error {
+		return applyAssetAdd(spec, state, cfg, abs, assetID, storeEntry, sharedDst, live)
+	})
+}
+
+func applyAssetAdd(spec AssetSpec, state *assetState, cfg *config.Config, abs, assetID, storeEntry, sharedDst string, live bool) error {
 	if _, err := filetree.SeedStoreEntry(abs, sharedDst, live); err != nil {
 		return fmt.Errorf("populating shared store: %w", err)
 	}
@@ -320,37 +329,41 @@ func runAssetRemove(spec AssetSpec, state *assetState, assetID string) error {
 		}
 	}
 
-	m, err := manifest.Load()
-	if err != nil {
-		return fmt.Errorf("loading manifest: %w", err)
-	}
+	// Locked after the interactive scope prompt: unlink + manifest
+	// read-modify-write must be serialized against concurrent invocations.
+	return withConfigLock(func() error {
+		m, err := manifest.Load()
+		if err != nil {
+			return fmt.Errorf("loading manifest: %w", err)
+		}
 
-	// Resolve the on-disk entry name. The manifest stores the logical ID
-	// (no extension for file-based assets); the store uses the full basename.
-	storeEntry := findStoreEntry(spec, assetID)
+		// Resolve the on-disk entry name. The manifest stores the logical ID
+		// (no extension for file-based assets); the store uses the full basename.
+		storeEntry := findStoreEntry(spec, assetID)
 
-	if state.global {
-		for _, name := range config.ProfileNames(cfg) {
-			p := cfg.Profiles[name]
+		if state.global {
+			for _, name := range config.ProfileNames(cfg) {
+				p := cfg.Profiles[name]
+				unlinkAssetFromProfile(spec, p.Dir, storeEntry)
+			}
+			storeRoot, _ := spec.SharedDir()
+			os.RemoveAll(filepath.Join(storeRoot, storeEntry))
+		} else {
+			p, exists := cfg.Profiles[state.profile]
+			if !exists {
+				return fmt.Errorf("profile %q not found", state.profile)
+			}
 			unlinkAssetFromProfile(spec, p.Dir, storeEntry)
 		}
-		storeRoot, _ := spec.SharedDir()
-		os.RemoveAll(filepath.Join(storeRoot, storeEntry))
-	} else {
-		p, exists := cfg.Profiles[state.profile]
-		if !exists {
-			return fmt.Errorf("profile %q not found", state.profile)
+
+		m.Remove(assetID, spec.Kind)
+		if err := saveManifestAtomic(m); err != nil {
+			return fmt.Errorf("saving manifest: %w", err)
 		}
-		unlinkAssetFromProfile(spec, p.Dir, storeEntry)
-	}
 
-	m.Remove(assetID, spec.Kind)
-	if err := saveManifestAtomic(m); err != nil {
-		return fmt.Errorf("saving manifest: %w", err)
-	}
-
-	color.New(color.FgGreen, color.Bold).Printf("✓ %s %q removed\n", titleCase(spec.Name), assetID)
-	return nil
+		color.New(color.FgGreen, color.Bold).Printf("✓ %s %q removed\n", titleCase(spec.Name), assetID)
+		return nil
+	})
 }
 
 func runAssetList(spec AssetSpec) error {
