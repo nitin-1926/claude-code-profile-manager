@@ -144,7 +144,17 @@ func runAuthRefresh(cmd *cobra.Command, args []string) error {
 		if err := claudepkg.Spawn(p.Dir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: claude exited with error: %v\n", err)
 		}
-		green.Printf("✓ Profile %q re-authenticated\n", name)
+		// claude exits 0 even if the user typed /exit without running /login,
+		// so verify the credential actually became valid before claiming
+		// success (H6) — a false green check here misleads users into running
+		// with a stale or absent token.
+		status := credentials.NewChecker(keystore.New()).Check(p.Dir, name, p.AuthMethod)
+		if status.Valid {
+			green.Printf("✓ Profile %q re-authenticated (%s)\n", name, status.Detail)
+		} else {
+			color.New(color.FgYellow, color.Bold).Printf("⚠ Could not verify re-authentication for %q: %s\n", name, status.Detail)
+			fmt.Println("  Run `ccpm auth status` to check, or retry and complete /login before exiting.")
+		}
 
 	case "api_key":
 		fmt.Print("Enter new API key: ")
