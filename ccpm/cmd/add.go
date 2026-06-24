@@ -13,6 +13,7 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/claude"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
@@ -63,6 +64,16 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// rollback undoes completed steps in reverse when a later step fails, so
+	// an aborted add never leaves an orphan profile dir or a ghost keychain
+	// entry behind. Cleared once config.Save commits the profile.
+	rollback := []func(){func() { _ = profile.Remove(name) }}
+	runRollback := func() {
+		for i := len(rollback) - 1; i >= 0; i-- {
+			rollback[i]()
+		}
+	}
+
 	bold := color.New(color.Bold)
 	green := color.New(color.FgGreen, color.Bold)
 
@@ -103,6 +114,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		} else {
 			green.Printf("✓ Profile %q authenticated via OAuth\n", name)
 		}
+		// claude's login may have written a dir-namespaced keychain entry; if
+		// the add later aborts, clean it up alongside the dir (best-effort).
+		rollback = append(rollback, func() { _ = credentials.DeleteMacKeychainOAuth(dir) })
 
 	case "api_key":
 		fmt.Println()
@@ -114,7 +128,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 			fmt.Println()
 			if err != nil {
-				profile.Remove(name)
+				runRollback()
 				return fmt.Errorf("reading API key: %w", err)
 			}
 			key = strings.TrimSpace(string(keyBytes))
@@ -125,21 +139,22 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				// Surface real I/O errors (broken pipe, EOF mid-read) instead
 				// of collapsing them into the generic "API key cannot be
 				// empty" path below.
-				profile.Remove(name)
+				runRollback()
 				return fmt.Errorf("reading API key: %w", err)
 			}
 		}
 
 		if err := validateAPIKey(key); err != nil {
-			profile.Remove(name)
+			runRollback()
 			return err
 		}
 
 		store := keystore.New()
 		if err := store.SetAPIKey(name, key); err != nil {
-			profile.Remove(name)
+			runRollback()
 			return fmt.Errorf("storing API key: %w", err)
 		}
+		rollback = append(rollback, func() { _ = store.DeleteAPIKey(name) })
 
 		green.Printf("✓ Profile %q authenticated via API key\n", name)
 	}
@@ -161,6 +176,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 		return config.Save(freshCfg)
 	}); err != nil {
+		// The profile never made it into config.json — undo the dir and any
+		// keychain entries so nothing orphaned lingers (a ghost dir here used
+		// to survive until the next `ccpm add` with the same name).
+		runRollback()
 		return fmt.Errorf("saving config: %w", err)
 	}
 
