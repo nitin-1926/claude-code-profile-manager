@@ -42,6 +42,8 @@ type mcpState struct {
 	env        []string
 }
 
+var mcpListJSON bool
+
 func newMCPCmd() *cobra.Command {
 	state := &mcpState{}
 
@@ -74,7 +76,9 @@ Examples:
 			return mcpPreRun(state)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPAdd(state, args)
+			// Locked: fragment write + manifest record is a read-modify-write
+			// that loses entries when two ccpm invocations interleave.
+			return withConfigLock(func() error { return runMCPAdd(state, args) })
 		},
 	}
 	addCmd.Flags().StringVar(&state.scope, "scope", "", "scope: global | profile | project")
@@ -97,7 +101,7 @@ Examples:
 			return mcpPreRun(state)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPRemove(state, args)
+			return withConfigLock(func() error { return runMCPRemove(state, args) })
 		},
 	}
 	removeCmd.Flags().StringVar(&state.scope, "scope", "", "scope: global | profile | project")
@@ -113,6 +117,7 @@ Examples:
 			return runMCPList()
 		},
 	}
+	listCmd.Flags().BoolVar(&mcpListJSON, "json", false, "machine-readable JSON output")
 
 	importCmd := &cobra.Command{
 		Use:   "import <file.json>",
@@ -130,7 +135,7 @@ whose keys are server names:
 			return mcpPreRun(state)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPImport(state, args)
+			return withConfigLock(func() error { return runMCPImport(state, args) })
 		},
 	}
 	importCmd.Flags().StringVar(&state.scope, "scope", "", "scope: global | profile | project")
@@ -473,16 +478,36 @@ func runMCPList() error {
 		}
 	}
 
-	if len(rows) == 0 {
-		fmt.Println("No MCP servers found. Add one with: ccpm mcp add <name> --command <cmd> --scope global")
-		return nil
-	}
-
 	names := make([]string, 0, len(rows))
 	for name := range rows {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+
+	if mcpListJSON {
+		type mcpRowJSON struct {
+			Name     string   `json:"name"`
+			Type     string   `json:"type,omitempty"`
+			Sources  []string `json:"sources"`
+			Profiles []string `json:"profiles,omitempty"`
+		}
+		out := make([]mcpRowJSON, 0, len(names))
+		for _, name := range names {
+			row := rows[name]
+			out = append(out, mcpRowJSON{Name: row.Name, Type: row.Type, Sources: row.Sources, Profiles: row.Profiles})
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if len(rows) == 0 {
+		fmt.Println("No MCP servers found. Add one with: ccpm mcp add <name> --command <cmd> --scope global")
+		return nil
+	}
 
 	bold := color.New(color.Bold).SprintFunc()
 	fmt.Printf("  %-20s %-6s %-25s %s\n", bold("SERVER"), bold("TYPE"), bold("SOURCE"), bold("PROFILES"))
