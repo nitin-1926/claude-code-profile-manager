@@ -88,14 +88,15 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 | `ccpm run <name> [...]`       | Launch Claude Code with a profile. Unknown flags forward to claude.                      |
 | `ccpm use <name>`             | Set the profile for the current shell session (requires `ccpm shell-init`)               |
 | `ccpm list` / `ls`            | List profiles with auth status (`--json` for machine-readable output)                    |
-| `ccpm status [name]`          | System overview, or auth health for one profile                                          |
+| `ccpm status [name]`          | System overview, or auth health for one profile (`--json`)                               |
 | `ccpm rename <old> <new>`     | Rename a profile (migrates keychain entries and plugin paths)                            |
 | `ccpm remove <name>` / `rm`   | Delete a profile (`--force` to skip confirm)                                             |
 | `ccpm clone <src> <new>`      | Duplicate a profile (assets + settings + auth; `--no-auth` for assets only)              |
 | `ccpm set-default [name]`     | Pin the default profile for direct `claude` launches; macOS sets it system-wide          |
 | `ccpm unset-default`          | Clear the default                                                                        |
 | `ccpm prompt`                 | Print the active profile name for a shell prompt (PS1 / starship / p10k)                 |
-| `ccpm sync`                   | Re-apply global installs into one or all profiles                                        |
+| `ccpm statusline`             | Render the in-TUI status line (active profile + usage/limits); Claude Code calls it      |
+| `ccpm sync`                   | Re-apply global installs into one or all profiles (`--dry-run` to preview)               |
 | `ccpm doctor`                 | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes dangling symlinks)     |
 | `ccpm consolidate`            | Audit (and optionally `--fix`) asset drift across host, share, and profile scopes        |
 | `ccpm export <name>`          | Export a profile to a portable `.tar.gz` (credentials excluded by default)               |
@@ -103,8 +104,12 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 | `ccpm shell-init`             | Print the shell hook (auto-detects zsh / bash / fish / powershell)                       |
 | `ccpm completion <shell>`     | Generate a shell completion script (bash / zsh / fish / powershell)                      |
 | `ccpm uninstall`              | Remove all profiles, keychain entries, vault backups, and `~/.ccpm/`                     |
+| `ccpm version`                | Print the version; `--check-latest` checks GitHub for a newer release (opt-in, 24h cache)|
+| `ccpm diff <a> <b>`           | Compare two profiles (assets, settings keys, env names, MCP servers, plugins)           |
 
-`ccpm run` intercepts four flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan for this launch), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
+Every command also accepts the global `--log-level debug|info|warn|error` flag (default `warn`); `debug` traces cascade adoption and lock activity to stderr.
+
+`ccpm run` intercepts five flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan for this launch), `--no-statusline` (skip injecting the default status line for this launch), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
 
 ### Assets: skills, agents, commands, rules
 
@@ -161,7 +166,7 @@ Events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Sessio
 | `ccpm mcp auth <name> --profile <p>`                                   | Complete OAuth in the profile's scope                |
 | `ccpm mcp remove <name> --scope <global\|profile\|project>`            | Remove a server                                      |
 | `ccpm mcp import <file.json> --scope ...`                              | Import from a JSON file (`{mcpServers:{...}}`)       |
-| `ccpm mcp list`                                                        | List MCPs with source (global / profile / project)   |
+| `ccpm mcp list`                                                        | List MCPs with source (`--json` supported)            |
 
 `--global` and `--profile <name>` are accepted as aliases for `--scope global` / `--scope profile`. For `--scope project`, ccpm discovers the project root by walking up from CWD looking for `.claude/settings.json`, `.claude/settings.local.json`, or `.mcp.json`, or pass `--project-dir <path>` explicitly.
 
@@ -205,7 +210,7 @@ A new repo's `.claude/settings.json` (hooks, permissions, MCP) is ignored until 
 
 | Command                              | Description                                                                |
 | ------------------------------------ | -------------------------------------------------------------------------- |
-| `ccpm sessions list <profile>`       | Sessions scoped to the current working directory (matches `claude --resume`) |
+| `ccpm sessions list <profile>`       | Sessions scoped to the current working directory (`--limit N`, `--json`)    |
 | `ccpm sessions list <profile> --all` | Sessions from every project the profile has worked on                      |
 
 ### Import
@@ -264,6 +269,24 @@ PS1='$(ccpm prompt --format "[ccpm:%s] ")'"$PS1"
 command = "ccpm prompt"
 ```
 
+### Status line (which profile is running, plus usage/limits)
+
+Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — a line pinned to the bottom of the session window showing which profile is active and how much you've used:
+
+```
+⬢ work · Sonnet 4.6 · ctx 34% · 5h 58% ↺16:15 · 7d 88% · $1.23
+```
+
+The `5h` / `7d` segments are the **remaining** percentage of your rolling subscription usage windows (Claude Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles, which show just `⬢ work · Opus 4.8 · $0.12`).
+
+`ccpm run` wires this in automatically: when a profile has no `statusLine` of its own, it injects `ccpm statusline` as the profile's status line. It **never** overwrites a status line you set in `~/.claude/settings.json`, a profile, or a trusted project. To opt out:
+
+```bash
+ccpm config set statusline false          # persistently, all profiles
+ccpm run work --no-statusline             # just this launch
+ccpm settings statusline "" --profile work  # remove one ccpm already injected
+```
+
 ### Settings
 
 ccpm does not maintain its own global settings layer. The cross-profile baseline is `~/.claude/settings.json` (the file native Claude Code reads); ccpm merges it into every profile at launch. Use `--profile` for per-account overrides, and per-repo `.claude/settings.json` for project overrides.
@@ -302,7 +325,14 @@ ccpm does not maintain its own global settings layer. The cross-profile baseline
 | -------------------------------------------------- | -------------------------------------------- |
 | `ccpm config set cascade_auto_adopt false`         | Disable the host-asset cascade               |
 | `ccpm config set check_default_drift true`        | Enable drift notifications on run/use        |
+| `ccpm config set statusline false`                 | Disable default status-line auto-injection   |
 | `ccpm config get default_dir`                      | Print the default profile's absolute path    |
+
+### Exit codes
+
+For scripting: `0` success (warnings may print to stderr but never change the
+exit code), `1` command failed, `3` partial failure (`ccpm import` landed some
+targets but at least one step failed), `4` `ccpm doctor` found health issues.
 
 ## How it works
 

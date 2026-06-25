@@ -25,32 +25,35 @@ Use this block as the authoritative **user-facing** summary. Do not infer beyond
 
 These are the exact commands the CLI registers. Do not invent flags or commands beyond this list.
 
-- **Profile lifecycle**: `ccpm add`, `ccpm remove` (alias `rm`), `ccpm rename`, `ccpm clone`, `ccpm list` (alias `ls`, `--json` for machine-readable output), `ccpm status`, `ccpm use`, `ccpm run`, `ccpm sync`.
+- **Profile lifecycle**: `ccpm add`, `ccpm remove` (alias `rm`), `ccpm rename`, `ccpm clone`, `ccpm list` (alias `ls`, `--json` for machine-readable output), `ccpm status` (`--json`), `ccpm use`, `ccpm run`, `ccpm sync` (`--dry-run` previews what would link/adopt).
 - **Defaults / IDE**: `ccpm set-default`, `ccpm unset-default`.
 - **Shell prompt**: `ccpm prompt` (prints the active profile name for PS1/starship/p10k; supports `--format` and `--show-default`).
 - **Backup / migrate**: `ccpm export <profile>` (writes a `.tar.gz`; `-o`/`--output`, `--include-credentials`) and `ccpm import-bundle <file.tar.gz>` (`--profile` to rename the restored profile).
 - **Health / drift**: `ccpm doctor` (`--fix` prunes dangling shared-asset symlinks), `ccpm consolidate`, `ccpm default fingerprint update`, `ccpm default fingerprint check`.
+- **Exit codes (for scripting)**: 0 = success (stderr warnings never change the exit code), 1 = command failed, 3 = partial failure (`ccpm import` or `ccpm sync` did some work but at least one profile/step failed), 4 = `ccpm doctor` found health issues. (Code 2 is reserved for usage errors but not yet wired — flag/arg errors currently exit 1.)
 - **Auth**: `ccpm auth status`, `ccpm auth refresh`, `ccpm auth backup`, `ccpm auth restore`.
 - **Asset trees** (each has `add`, `remove`/`rm`, `list`/`ls`, `link`): `ccpm skill`, `ccpm agent`, `ccpm command`, `ccpm rule`.
-- **MCP**: `ccpm mcp add|remove|list|import|auth` with `--scope global|profile|project`, transports `stdio|http|sse`.
+- **MCP**: `ccpm mcp add|remove|list|import|auth` (`list --json` supported) with `--scope global|profile|project`, transports `stdio|http|sse`.
 - **Plugins**: `ccpm plugin list|enable|disable|install|remove|gc` and `ccpm plugin marketplace add|remove|list`.
 - **Hooks**: `ccpm hooks add|remove|list`.
 - **Permissions**: `ccpm permissions allow|ask|deny|remove|list|mode`.
 - **Env**: `ccpm env set|unset|list`.
 - **Settings**: `ccpm settings set|get|apply|show|statusline|outputstyle`.
-- **Sessions**: `ccpm sessions list <profile>` (with `--all`).
+- **Sessions**: `ccpm sessions list <profile>` (with `--all`, `--limit N` — default 20 most recent, `--json`).
 - **Import**: `ccpm import default` (with `--only skills,commands,rules,hooks,agents,settings,mcp,plugins`) and `ccpm import from-profile`.
 - **Trust**: `ccpm trust add|remove|list` (manages which project dirs are allowed to contribute `.claude/settings.json` hooks/permissions/MCP).
-- **Config**: `ccpm config set <key> <value>` and `ccpm config get <key>`. Keys: `cascade_auto_adopt` (bool), `check_default_drift` (bool), `default_dir` (read-only).
+- **Config**: `ccpm config set <key> <value>` and `ccpm config get <key>`. Keys: `cascade_auto_adopt` (bool), `check_default_drift` (bool), `statusline` (bool — auto-inject a default statusLine on `ccpm run`; default true), `default_dir` (read-only).
 - **Shell**: `ccpm shell-init` (zsh, bash, fish, powershell) prints the `ccpm use` shell hook; `ccpm completion bash|zsh|fish|powershell` prints a Cobra completion script (with profile-name completion for run/use/remove/rename/set-default/clone/export).
+- **Diff**: `ccpm diff <profile-a> <profile-b>` compares profile-scoped assets, settings-fragment keys, env var names (values never shown), MCP servers, and installed plugins.
+- **Global flags**: `--log-level debug|info|warn|error` (default warn) on every command; `debug` traces cascade and lock activity.
 - **Lifecycle**: `ccpm uninstall`.
-- **Version**: `ccpm --version` (the cobra root flag; there is no `ccpm version` subcommand).
+- **Version**: `ccpm --version` (root flag) or `ccpm version`; `ccpm version --check-latest` makes an explicit opt-in request to the GitHub releases API (cached 24h) to report whether a newer release exists — this is the only network call in the CLI and never happens without the flag.
 
 There is **no** `ccpm copy`, `ccpm drift`, `ccpm vault`, or `ccpm update` subcommand. Profile duplication is `ccpm clone`; portable export/restore is `ccpm export` / `ccpm import-bundle`. Vault backup/restore (encrypted credential backup) is exposed via `ccpm auth backup|restore`. Drift detection is `ccpm default fingerprint`.
 
 ## Run flags intercepted by ccpm
 
-`ccpm run <profile> [args...]` forwards unknown flags to claude without a `--` separator. Four flags are intercepted before they reach claude: `--ccpm-env KEY=VALUE` (repeatable, one-shot env override), `--no-auto-adopt` (skip the host-asset cascade scan), `--help`, `--version`. To forward `--help` or `--version` to claude, use `ccpm run <profile> -- --help`.
+`ccpm run <profile> [args...]` forwards unknown flags to claude without a `--` separator. Five flags are intercepted before they reach claude: `--ccpm-env KEY=VALUE` (repeatable, one-shot env override), `--no-auto-adopt` (skip the host-asset cascade scan), `--no-statusline` (skip injecting the default statusLine for this launch), `--help`, `--version`. To forward `--help` or `--version` to claude, use `ccpm run <profile> -- --help`.
 
 ## Default profile (IDE / GUI)
 
@@ -77,6 +80,8 @@ Already-running IDE windows need one restart to pick up the new env; future laun
 ## Shell prompt integration
 
 `ccpm prompt` prints the active profile name so a shell prompt (PS1, starship, powerlevel10k) can show which Claude Code account a terminal is bound to. Resolution order: `$CCPM_ACTIVE_PROFILE` (set by `ccpm use`) → `$CLAUDE_CONFIG_DIR` (matched back to a known profile dir) → the configured default, **only** with `--show-default`. It prints nothing (exit 0) when no profile is active. `--format '%s'` wraps the name (must contain a single `%s`).
+
+`ccpm statusline` is the in-TUI status line for a launched session — it shows **which profile is running** plus usage/limits at the bottom of the Claude Code window. It reads Claude Code's status JSON on stdin and renders a line like `⬢ work · Sonnet 4.6 · ctx 34% · 5h 58% ↺16:15 · 7d 88% · $1.23`, where the `5h`/`7d` segments are the **remaining** percentage of the rolling subscription usage windows (Pro/Max accounts only; they appear after the first API response and are absent for API-key profiles, which collapse to `⬢ work · Opus 4.8 · $0.12`). `ccpm run` injects this automatically as the profile's `statusLine` when the profile has none of its own — it never overwrites a statusLine you set in `~/.claude/settings.json`, a profile, or a trusted project. Turn the auto-injection off persistently with `ccpm config set statusline false`, per-launch with `ccpm run <profile> --no-statusline`, and remove an already-injected one with `ccpm settings statusline "" --profile <name>`. You don't normally call `ccpm statusline` yourself; Claude Code invokes it.
 
 ## MCP
 

@@ -34,8 +34,18 @@ export const CHANGELOG: ChangelogSeries[] = [
   {
     series: "0.5.x",
     summary:
-      "Profile backup & cloning, shell completions, prompt integration, and concurrency-safe credential handling.",
+      "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
+      {
+        date: "2026-06-25",
+        title: "In-TUI status line: see which profile is running, plus usage and limits",
+        categories: ["Added"],
+        bullets: [
+          "`ccpm run` now shows which profile a session is using right inside the Claude Code window — a status line pinned to the bottom that reads e.g. `⬢ work · Sonnet 4.6 · ctx 34% · 5h 58% ↺16:15 · 7d 88% · $1.23`.",
+          "For Claude Pro/Max accounts it surfaces how much of your rolling **5-hour and 7-day usage windows** is left (remaining %, with the reset time), plus current context fill and session cost. API-key profiles show profile, model, and cost.",
+          "It's wired in automatically when a profile has no status line of its own, and never overwrites one you set in `~/.claude/settings.json`, a profile, or a trusted project. Opt out with `ccpm config set statusline false`, per-launch with `ccpm run <profile> --no-statusline`, or remove an injected one with `ccpm settings statusline \"\" --profile <name>`.",
+        ],
+      },
       {
         date: "2026-06-03",
         version: "0.5.0",
