@@ -50,6 +50,10 @@ function isSameOrigin(req: NextRequest): boolean {
 // Cap output so a single completion can't run away on tokens (and cost).
 const MAX_OUTPUT_TOKENS = 1024;
 
+// Cap the request body explicitly (the question is ≤500 chars; 8 KiB leaves
+// generous JSON overhead) instead of relying on framework defaults.
+const MAX_BODY_BYTES = 8 * 1024;
+
 export async function POST(req: NextRequest) {
   // The same-origin and rate-limit checks below are best-effort
   // defense-in-depth — both are spoofable/evadable. The real backstop against
@@ -61,9 +65,26 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_BODY_BYTES) {
+    return new Response(JSON.stringify({ error: "Request too large" }), {
+      status: 413,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   let body: unknown;
   try {
-    body = await req.json();
+    const text = await req.text();
+    // content-length can lie (or be absent on chunked bodies) — enforce on
+    // the actual bytes read too.
+    if (Buffer.byteLength(text, "utf-8") > MAX_BODY_BYTES) {
+      return new Response(JSON.stringify({ error: "Request too large" }), {
+        status: 413,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    body = JSON.parse(text);
   } catch {
     return new Response(JSON.stringify({ error: "Invalid JSON" }), {
       status: 400,

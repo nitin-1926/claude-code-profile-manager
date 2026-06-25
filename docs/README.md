@@ -16,6 +16,21 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Local setup (Ask Me)
+
+The Ask Me assistant (`POST /api/ask`) needs Portkey credentials:
+
+```bash
+cp .env.example .env.local
+# fill in PORTKEY_API_KEY and PORTKEY_VIRTUAL_KEY
+```
+
+Without them the endpoint returns 503 and the rest of the site works normally.
+Set a **spend cap on the Portkey virtual key** — the route's rate limiting is
+best-effort (in-memory, spoofable client key), so the provider-side cap is the
+real control against cost abuse. Grounding context lives in
+`lib/ai/ccpm-context.md`; Portkey setup notes in `lib/ai/PORTKEY_PROMPT.md`.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
