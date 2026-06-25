@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
 )
 
 func TestParseKVSlice(t *testing.T) {
@@ -128,5 +131,40 @@ func TestStringSliceContains(t *testing.T) {
 	}
 	if stringSliceContains(nil, "a") {
 		t.Error("nil slice must not match")
+	}
+}
+
+// TestConcurrentManifestMutationsUnderLock pins the H7 fix: two concurrent
+// mutators that follow the command pattern (withConfigLock around
+// Load→mutate→Save) must not lose each other's manifest entries.
+func TestConcurrentManifestMutationsUnderLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	const n = 8
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			errs <- withConfigLock(func() error {
+				return recordMCPInstall(fmt.Sprintf("server-%d", i), manifest.ScopeGlobal, nil)
+			})
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("locked mutation failed: %v", err)
+		}
+	}
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("server-%d", i)
+		if m.Find(id, manifest.KindMCP) == nil {
+			t.Errorf("entry %q lost — read-modify-write race not serialized", id)
+		}
 	}
 }

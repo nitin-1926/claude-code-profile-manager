@@ -17,7 +17,11 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
-var sessionsAll bool
+var (
+	sessionsAll   bool
+	sessionsJSON  bool
+	sessionsLimit int
+)
 
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
@@ -41,6 +45,8 @@ same files native Claude Code writes; ccpm does not mutate them.`,
 
 func init() {
 	sessionsListCmd.Flags().BoolVar(&sessionsAll, "all", false, "list sessions across every project in this profile")
+	sessionsListCmd.Flags().BoolVar(&sessionsJSON, "json", false, "machine-readable JSON output")
+	sessionsListCmd.Flags().IntVar(&sessionsLimit, "limit", 20, "show at most N most-recent sessions (0 = no limit)")
 
 	sessionsCmd.AddCommand(sessionsListCmd)
 	rootCmd.AddCommand(sessionsCmd)
@@ -103,6 +109,10 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(sessions) == 0 {
+		if sessionsJSON {
+			fmt.Println("[]")
+			return nil
+		}
 		if sessionsAll {
 			fmt.Printf("No sessions found for profile %q.\n", profileName)
 		} else {
@@ -112,6 +122,34 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 	}
 
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ModTime.After(sessions[j].ModTime) })
+	total := len(sessions)
+	if sessionsLimit > 0 && total > sessionsLimit {
+		sessions = sessions[:sessionsLimit]
+	}
+
+	if sessionsJSON {
+		type sessionJSON struct {
+			SessionID   string `json:"session_id"`
+			Started     string `json:"started"`
+			Cwd         string `json:"cwd,omitempty"`
+			FirstPrompt string `json:"first_prompt,omitempty"`
+		}
+		out := make([]sessionJSON, 0, len(sessions))
+		for _, s := range sessions {
+			out = append(out, sessionJSON{
+				SessionID:   s.SessionID,
+				Started:     s.ModTime.UTC().Format(time.RFC3339),
+				Cwd:         s.Cwd,
+				FirstPrompt: s.FirstPrompt,
+			})
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
 
 	bold := color.New(color.Bold).SprintFunc()
 	fmt.Printf("  %-36s %-19s %-40s %s\n", bold("SESSION ID"), bold("STARTED"), bold("PROJECT"), bold("FIRST PROMPT"))
@@ -121,6 +159,9 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		project := truncate(s.Cwd, 40)
 		firstPrompt := truncate(s.FirstPrompt, 60)
 		fmt.Printf("  %-36s %-19s %-40s %s\n", s.SessionID, started, project, firstPrompt)
+	}
+	if shown := len(sessions); shown < total {
+		color.New(color.Faint).Printf("  (showing %d of %d — use --limit 0 for all)\n", shown, total)
 	}
 	return nil
 }

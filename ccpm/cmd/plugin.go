@@ -69,7 +69,9 @@ The plugin must already be installed via Claude Code's /plugin install.
 Use the full "<name>@<marketplace>" identifier shown in ccpm plugin list.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginSetEnabled(state, args[0], true)
+			// Locked: settings-fragment + owned-keys writes are read-modify-
+			// write sequences that lose entries under concurrent invocations.
+			return withConfigLock(func() error { return runPluginSetEnabled(state, args[0], true) })
 		},
 	}
 	enableCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
@@ -80,7 +82,7 @@ Use the full "<name>@<marketplace>" identifier shown in ccpm plugin list.`,
 		Short: "Disable a plugin for a profile (overrides global activation)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginSetEnabled(state, args[0], false)
+			return withConfigLock(func() error { return runPluginSetEnabled(state, args[0], false) })
 		},
 	}
 	disableCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
@@ -102,7 +104,7 @@ Use --global to install into every profile, or --profile <name> for one
 profile.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginInstall(state, args[0])
+			return withConfigLock(func() error { return runPluginInstall(state, args[0]) })
 		},
 	}
 	installCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (mutually exclusive with --global)")
@@ -115,7 +117,7 @@ profile.`,
 		Short: "Remove an installed plugin from one or every profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginRemove(state, args[0])
+			return withConfigLock(func() error { return runPluginRemove(state, args[0]) })
 		},
 	}
 	removeCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (mutually exclusive with --global)")
@@ -125,7 +127,10 @@ profile.`,
 		Use:   "gc",
 		Short: "Garbage-collect plugin cache entries no profile references",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginGC()
+			// Lock here at the command boundary, NOT inside runPluginGC —
+			// runSync calls runPluginGC while already holding the lock and
+			// the advisory lock is not reentrant.
+			return withConfigLock(runPluginGC)
 		},
 	}
 
@@ -148,7 +153,7 @@ Defaults to HTTPS so the clone works without a configured SSH key — pass
 --ssh to opt back into git@ URLs.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMarketplaceAdd(state, args[0])
+			return withConfigLock(func() error { return runMarketplaceAdd(state, args[0]) })
 		},
 	}
 	addCmd.Flags().BoolVar(&state.ssh, "ssh", false, "clone via SSH instead of HTTPS")
@@ -159,7 +164,7 @@ Defaults to HTTPS so the clone works without a configured SSH key — pass
 		Short:   "Remove a registered marketplace from the shared store",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMarketplaceRemove(args[0])
+			return withConfigLock(func() error { return runMarketplaceRemove(args[0]) })
 		},
 	}
 
@@ -566,7 +571,7 @@ func runPluginInstall(state *pluginState, ref string) error {
 		return fmt.Errorf("plugin %q not found in marketplace %q", pluginName, marketplace)
 	}
 
-	version, err := plugins.FetchPluginIntoCache(marketplace, *spec, state.ssh)
+	version, commitSHA, err := plugins.FetchPluginIntoCache(marketplace, *spec, state.ssh)
 	if err != nil {
 		return fmt.Errorf("fetching plugin: %w", err)
 	}
@@ -577,7 +582,7 @@ func runPluginInstall(state *pluginState, ref string) error {
 
 	for _, profileName := range targets {
 		p := cfg.Profiles[profileName]
-		if err := plugins.LinkIntoProfile(p.Dir, marketplace, pluginName, version); err != nil {
+		if err := plugins.LinkIntoProfile(p.Dir, marketplace, pluginName, version, commitSHA); err != nil {
 			return fmt.Errorf("linking into profile %q: %w", profileName, err)
 		}
 		if !state.installOnly {
