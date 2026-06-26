@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,7 +41,8 @@ func TestRenderStatusLine(t *testing.T) {
 			name:    "subscription full line",
 			in:      subscription(),
 			profile: "work",
-			want:    "⬢ work · Sonnet 4.6 · ctx 34% · 5h 58% ↺" + wantReset + " · 7d 88% · $1.23",
+			// Windows show percent USED (matching Claude's /usage), not remaining.
+			want: "⬢ work · Sonnet 4.6 · ctx 34% · 5h 42% ↺" + wantReset + " · 7d 12% · $1.23",
 		},
 		{
 			name: "api key profile drops rate-limit segments",
@@ -83,7 +85,9 @@ func TestRenderStatusLine(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := renderStatusLine(tc.in, tc.profile, fixedNow)
+			// color=false keeps the assertions on plain text; coloring is
+			// covered separately in TestRenderStatusLineColorized.
+			got := renderStatusLine(tc.in, tc.profile, fixedNow, false)
 			if got != tc.want {
 				t.Fatalf("renderStatusLine:\n got %q\nwant %q", got, tc.want)
 			}
@@ -91,12 +95,34 @@ func TestRenderStatusLine(t *testing.T) {
 	}
 }
 
+// TestRenderStatusLineColorized verifies that enabling color wraps segments in
+// ANSI codes (profile, orange window label, headroom-coloured percent) and
+// always resets, while plain mode emits none of it.
+func TestRenderStatusLineColorized(t *testing.T) {
+	var in statusLineInput
+	in.Model.DisplayName = "Opus 4.8"
+	in.RateLimits = &struct {
+		FiveHour *rateWindow `json:"five_hour"`
+		SevenDay *rateWindow `json:"seven_day"`
+	}{FiveHour: &rateWindow{UsedPercentage: 90}} // 10% left → red percent
+
+	got := renderStatusLine(in, "work", fixedNow, true)
+	for _, want := range []string{cProfile, cOrange, cRed, cReset} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("colored output missing %q\n got %q", want, got)
+		}
+	}
+	if plain := renderStatusLine(in, "work", fixedNow, false); strings.Contains(plain, "\033") {
+		t.Fatalf("plain output unexpectedly contains ANSI: %q", plain)
+	}
+}
+
 // TestFormatWindowPastResetDropsClock verifies a window whose reset is already
 // in the past renders the percent without a stale clock.
 func TestFormatWindowPastResetDropsClock(t *testing.T) {
 	w := &rateWindow{UsedPercentage: 90, ResetsAt: fixedNow.Add(-time.Hour).Unix()}
-	got := formatWindow("5h", w, fixedNow)
-	if got != "5h 10%" {
-		t.Fatalf("got %q, want %q", got, "5h 10%")
+	got := formatWindow("5h", w, fixedNow, false)
+	if got != "5h 90%" { // percent USED, no stale clock
+		t.Fatalf("got %q, want %q", got, "5h 90%")
 	}
 }
