@@ -38,6 +38,15 @@ export const CHANGELOG: ChangelogSeries[] = [
     releases: [
       {
         date: "2026-06-25",
+        title: "Status line now matches /usage and is colour-coded",
+        categories: ["Improved"],
+        bullets: [
+          "The `5h`/`7d` usage segments now show the percentage **used**, matching Claude's own `/usage` panel, so the numbers line up instead of reading as the inverse.",
+          "The line is now colour-coded: the usage percentage shades green → amber → red as your remaining headroom shrinks, with orange window labels and a yellow reset clock. Set `NO_COLOR` for plain text.",
+        ],
+      },
+      {
+        date: "2026-06-25",
         title: "In-TUI status line: see which profile is running, plus usage and limits",
         categories: ["Added"],
         bullets: [
