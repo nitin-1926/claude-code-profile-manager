@@ -72,3 +72,89 @@ func init() {
 	rootCmd.AddCommand(usageCmd)
 }
 
+// usageProfileName resolves the single target profile: explicit arg, then the
+// active session's profile, then the configured default.
+func usageProfileName(cfg *config.Config, args []string) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	if n := statusLineProfileName(); n != "" {
+		return n, nil
+	}
+	if cfg.DefaultProfile != "" {
+		return cfg.DefaultProfile, nil
+	}
+	return "", fmt.Errorf("no profile given and none active — pass a profile name or set a default with `ccpm set-default`")
+}
+
+func runUsage(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var names []string
+	if usageAll {
+		for n := range cfg.Profiles {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		if len(names) == 0 {
+			return fmt.Errorf("no profiles exist yet")
+		}
+	} else {
+		name, err := usageProfileName(cfg, args)
+		if err != nil {
+			return err
+		}
+		names = []string{name}
+	}
+
+	sinceDate, err := usage.ParseSince(usageSince, time.Now())
+	if err != nil {
+		return err
+	}
+
+	if usageJSON {
+		return emitUsageJSON(cmd, cfg, names, sinceDate)
+	}
+
+	// Interactive dashboard by default on a real terminal — unless a flag asks
+	// for a specific static view, output is piped, or --plain is set.
+	if !usagePlain && !usageByModel && !usageByProject && !usageSessions && !usageAll &&
+		usageSince == "" && term.IsTerminal(int(os.Stdout.Fd())) {
+		return runUsageTUI(cfg, sortedProfileNames(cfg), names[0])
+	}
+
+	for i, name := range names {
+		p, ok := cfg.Profiles[name]
+		if !ok {
+			return fmt.Errorf("profile %q not found", name)
+		}
+		sess, day, serr := usage.Sync(p.Dir)
+		if serr != nil {
+			// Sync may be contended or the dir unwritable; fall back to whatever
+			// is already on disk so the report still renders.
+			if sess, day, err = usage.Load(p.Dir); err != nil {
+				return fmt.Errorf("reading usage for %q: %w", name, err)
+			}
+		}
+		if i > 0 {
+			fmt.Fprintln(cmd.OutOrStdout())
+		}
+		renderUsage(cmd.OutOrStdout(), name, usage.BuildView(sess, day, sinceDate), day, sinceDate)
+	}
+	return nil
+}
+
+// sortedProfileNames returns every profile name, sorted — the profile axis the
+// interactive dashboard cycles through.
+func sortedProfileNames(cfg *config.Config) []string {
+	names := make([]string, 0, len(cfg.Profiles))
+	for n := range cfg.Profiles {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
