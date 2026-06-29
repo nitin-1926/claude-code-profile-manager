@@ -335,3 +335,97 @@ func humanInt(n int64) string {
 
 // ── JSON contract ───────────────────────────────────────────────────────────
 
+type tokensJSON struct {
+	Input         int64 `json:"input"`
+	Output        int64 `json:"output"`
+	CacheCreation int64 `json:"cache_creation"`
+	CacheRead     int64 `json:"cache_read"`
+	Total         int64 `json:"total"`
+}
+
+func toTokensJSON(t usage.Tokens) tokensJSON {
+	return tokensJSON{t.Input, t.Output, t.CacheCreation, t.CacheRead, t.Total()}
+}
+
+type namedJSON struct {
+	Name   string     `json:"name"`
+	Tokens tokensJSON `json:"tokens"`
+}
+
+type dayJSON struct {
+	Date     string     `json:"date"`
+	Tokens   tokensJSON `json:"tokens"`
+	Messages int64      `json:"messages"`
+}
+
+type usageSessionJSON struct {
+	SessionID string     `json:"session_id"`
+	Cwd       string     `json:"cwd,omitempty"`
+	GitBranch string     `json:"git_branch,omitempty"`
+	Slug      string     `json:"slug,omitempty"`
+	FirstTS   string     `json:"first_ts,omitempty"`
+	LastTS    string     `json:"last_ts,omitempty"`
+	Tokens    tokensJSON `json:"tokens"`
+	Messages  int64      `json:"messages"`
+}
+
+type usageJSONOut struct {
+	Profile   string             `json:"profile"`
+	Since     string             `json:"since,omitempty"`
+	Totals    tokensJSON         `json:"totals"`
+	Messages  int64              `json:"messages"`
+	ByModel   []namedJSON        `json:"by_model"`
+	ByProject []namedJSON        `json:"by_project"`
+	ByDay     []dayJSON          `json:"by_day"`
+	Sessions  []usageSessionJSON `json:"sessions"`
+}
+
+func buildUsageJSON(name string, view usage.View, sinceDate string) usageJSONOut {
+	o := usageJSONOut{
+		Profile:  name,
+		Since:    sinceDate,
+		Totals:   toTokensJSON(view.Totals),
+		Messages: view.Messages,
+	}
+	for _, m := range view.ByModel {
+		o.ByModel = append(o.ByModel, namedJSON{m.Name, toTokensJSON(m.Tokens)})
+	}
+	for _, p := range view.ByProject {
+		o.ByProject = append(o.ByProject, namedJSON{p.Name, toTokensJSON(p.Tokens)})
+	}
+	for _, d := range view.ByDay {
+		o.ByDay = append(o.ByDay, dayJSON{d.Date, toTokensJSON(d.Tokens), d.Messages})
+	}
+	for _, s := range view.Sessions {
+		o.Sessions = append(o.Sessions, usageSessionJSON{
+			SessionID: s.SessionID, Cwd: s.Cwd, GitBranch: s.GitBranch, Slug: s.Slug,
+			FirstTS: s.FirstTS, LastTS: s.LastTS, Tokens: toTokensJSON(s.Tokens), Messages: s.Messages,
+		})
+	}
+	return o
+}
+
+func emitUsageJSON(cmd *cobra.Command, cfg *config.Config, names []string, sinceDate string) error {
+	out := make([]usageJSONOut, 0, len(names))
+	for _, name := range names {
+		p, ok := cfg.Profiles[name]
+		if !ok {
+			return fmt.Errorf("profile %q not found", name)
+		}
+		sess, day, serr := usage.Sync(p.Dir)
+		if serr != nil {
+			var lerr error
+			if sess, day, lerr = usage.Load(p.Dir); lerr != nil {
+				return fmt.Errorf("reading usage for %q: %w", name, lerr)
+			}
+		}
+		out = append(out, buildUsageJSON(name, usage.BuildView(sess, day, sinceDate), sinceDate))
+	}
+
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	if usageAll {
+		return enc.Encode(out)
+	}
+	return enc.Encode(out[0])
+}
