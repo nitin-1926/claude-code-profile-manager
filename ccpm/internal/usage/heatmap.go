@@ -47,3 +47,32 @@ func cellColor(bucket int) int {
 	return purpleRamp[bucket-1]
 }
 
+// cell renders one day as a 2-wide block (color) or shaded glyphs (plain).
+func cell(bucket int, color bool) string {
+	if color {
+		return fmt.Sprintf("\033[38;5;%dm██\033[0m", cellColor(bucket))
+	}
+	if bucket < 0 {
+		bucket = 0
+	}
+	if bucket >= len(plainGlyphs) {
+		bucket = len(plainGlyphs) - 1
+	}
+	return plainGlyphs[bucket] + plainGlyphs[bucket]
+}
+
+// legendCell renders one 1-wide legend swatch.
+func legendCell(bucket int, color bool) string {
+	if color {
+		return fmt.Sprintf("\033[38;5;%dm█\033[0m", cellColor(bucket))
+	}
+	return plainGlyphs[bucket]
+}
+
+// startOfWeek returns the Sunday (00:00) of t's week, matching GitHub's layout.
+func startOfWeek(t time.Time) time.Time {
+	y, m, d := t.Date()
+	base := time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+	return base.AddDate(0, 0, -int(base.Weekday()))
+}
+
