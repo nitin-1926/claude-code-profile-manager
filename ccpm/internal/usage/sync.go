@@ -79,3 +79,73 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 	return outSess, outDaily, nil
 }
 
+// ingestFile folds the new (post-offset) complete lines of one transcript into
+// the indexes and returns the updated cursor. It never advances past an
+// incomplete trailing line (still being written), and resets to the top if the
+// file shrank below the stored offset (rotation/truncation — rare, since
+// Claude's transcripts are append-only UUID files; dedup by message.id keeps a
+// re-read from double-counting within the same pass).
+func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileState, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return prev, err
+	}
+	start := prev.Offset
+	if info.Size() < prev.Offset {
+		start = 0
+	}
+	// Unchanged and fully consumed: nothing to do, keep the cursor.
+	if start == info.Size() && info.Size() == prev.Size && info.ModTime().Unix() == prev.ModTime {
+		return prev, nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return prev, err
+	}
+	defer f.Close()
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return prev, err
+	}
+
+	// Seed dedup with the last message id counted from this file so a request
+	// whose duplicate lines straddle the offset boundary isn't recounted.
+	seen := map[string]bool{}
+	lastMsgID := prev.LastMsgID
+	if start == 0 {
+		lastMsgID = "" // re-reading from the top; the stale cursor id is gone
+	} else if lastMsgID != "" {
+		seen[lastMsgID] = true
+	}
+
+	reader := bufio.NewReaderSize(f, 1024*1024)
+	consumed := start
+	for {
+		lineBytes, rerr := reader.ReadBytes('\n')
+		if rerr != nil {
+			if errors.Is(rerr, io.EOF) {
+				// Trailing bytes without '\n' = an incomplete line still being
+				// written; stop before it and pick it up once it's complete.
+				break
+			}
+			return prev, rerr
+		}
+		var l transcriptLine
+		if jerr := json.Unmarshal(lineBytes, &l); jerr == nil {
+			if foldLine(l, sess, day, seen) {
+				if k := l.dedupKey(); k != "" {
+					lastMsgID = k
+				}
+			}
+		}
+		// A complete line (even malformed JSON) is permanently consumed.
+		consumed += int64(len(lineBytes))
+	}
+
+	return FileState{
+		Offset:    consumed,
+		Size:      info.Size(),
+		ModTime:   info.ModTime().Unix(),
+		LastMsgID: lastMsgID,
+	}, nil
+}
