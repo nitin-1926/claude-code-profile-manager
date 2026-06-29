@@ -76,3 +76,81 @@ func startOfWeek(t time.Time) time.Time {
 	return base.AddDate(0, 0, -int(base.Weekday()))
 }
 
+// RenderHeatmap draws a GitHub-style contribution graph — weeks as columns, 7
+// day-rows (Sun..Sat) — for the `weeks` weeks ending at `end`, using the purple
+// ramp. Pure: the clock is injected via end and color toggles ANSI.
+func RenderHeatmap(days map[string]*DailyRecord, end time.Time, weeks int, color bool) string {
+	if weeks <= 0 {
+		weeks = 26
+	}
+	end = end.In(bucketLocation)
+	startSunday := startOfWeek(end).AddDate(0, 0, -7*(weeks-1))
+
+	totalFor := func(d time.Time) int64 {
+		if dr := days[d.Format("2006-01-02")]; dr != nil {
+			return dr.Tokens.Total()
+		}
+		return 0
+	}
+
+	var maxDay int64
+	for i := 0; i < weeks*7; i++ {
+		d := startSunday.AddDate(0, 0, i)
+		if d.After(end) {
+			continue
+		}
+		if t := totalFor(d); t > maxDay {
+			maxDay = t
+		}
+	}
+
+	const gutter = "     " // 5 chars, aligns month header with day rows
+	var b strings.Builder
+
+	// Month label header — 2 chars per week column; print the month's first two
+	// letters above the column where a new month begins.
+	b.WriteString(gutter)
+	prevMonth := ""
+	for w := 0; w < weeks; w++ {
+		mon := startSunday.AddDate(0, 0, w*7).Format("Jan")
+		if mon != prevMonth {
+			b.WriteString(mon[:2])
+			prevMonth = mon
+		} else {
+			b.WriteString("  ")
+		}
+	}
+	b.WriteByte('\n')
+
+	// Seven day-rows.
+	for dow := 0; dow < 7; dow++ {
+		label := ""
+		switch dow {
+		case 1:
+			label = "Mon"
+		case 3:
+			label = "Wed"
+		case 5:
+			label = "Fri"
+		}
+		b.WriteString(fmt.Sprintf("%-5s", label))
+		for w := 0; w < weeks; w++ {
+			d := startSunday.AddDate(0, 0, w*7+dow)
+			if d.After(end) {
+				b.WriteString("  ")
+				continue
+			}
+			b.WriteString(cell(pickBucket(totalFor(d), maxDay), color))
+		}
+		b.WriteByte('\n')
+	}
+
+	// Legend.
+	b.WriteString("\n" + gutter + "Less ")
+	for bucket := 0; bucket <= 5; bucket++ {
+		b.WriteString(legendCell(bucket, color))
+	}
+	b.WriteString(" More\n")
+
+	return b.String()
+}
