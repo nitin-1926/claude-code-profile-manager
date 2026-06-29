@@ -47,3 +47,59 @@ func (t Tokens) Total() int64 {
 	return t.Input + t.Output + t.CacheCreation + t.CacheRead
 }
 
+// FileState is the ingest cursor for one transcript file. Offset is the number
+// of bytes already folded (always the end of a complete line). LastMsgID is the
+// last message.id counted from this file, used to dedupe a request whose
+// duplicate lines straddle the offset boundary between two ingest runs.
+type FileState struct {
+	Offset    int64  `json:"offset"`
+	Size      int64  `json:"size"`
+	ModTime   int64  `json:"mtime"`
+	LastMsgID string `json:"last_msg_id,omitempty"`
+}
+
+// State is the persisted ingest cursor set, keyed by transcript path relative
+// to the profile's projects/ root.
+type State struct {
+	Version int                  `json:"version"`
+	Files   map[string]FileState `json:"files"`
+}
+
+// SessionRecord is one row per Claude Code session. Its cwd is the project (the
+// transcript dir is per-cwd), so the by-project view is derived by grouping
+// these — no per-day project map is stored. The id list doubles as the
+// `claude --resume` set.
+type SessionRecord struct {
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd,omitempty"`
+	GitBranch string `json:"git_branch,omitempty"`
+	Slug      string `json:"slug,omitempty"`
+	FirstTS   string `json:"first_ts,omitempty"`
+	LastTS    string `json:"last_ts,omitempty"`
+	Tokens    Tokens `json:"tokens"`
+	Messages  int64  `json:"messages"`
+}
+
+// Sessions is the session index, keyed by sessionId.
+type Sessions struct {
+	Version int                       `json:"version"`
+	Records map[string]*SessionRecord `json:"records"`
+}
+
+// DailyRecord is the token tally for a single local calendar day, split by
+// model (kept 4-way — the one grain where the input/output/cache split feeds any
+// future cost math). Folding the days in a window yields totals, by-model, and
+// the time series; by-project comes from the session index instead.
+type DailyRecord struct {
+	Tokens   Tokens            `json:"tokens"`
+	Messages int64             `json:"messages"`
+	ByModel  map[string]Tokens `json:"by_model,omitempty"`
+}
+
+// Daily is the canonical time-bucketed ledger: date "YYYY-MM-DD" (local day of
+// each message) -> per-day tallies.
+type Daily struct {
+	Version int                     `json:"version"`
+	Days    map[string]*DailyRecord `json:"days"`
+}
+
