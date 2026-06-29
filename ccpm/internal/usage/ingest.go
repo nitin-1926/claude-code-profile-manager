@@ -33,3 +33,32 @@ type rawUsage struct {
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
+// dedupKey returns the identity used to count a usage-bearing line exactly once,
+// or "" when the line carries no countable usage. A single API response is
+// written as several assistant lines that repeat the same message.id and the
+// same usage; counting each unique message.id once is what keeps totals correct
+// (without it, totals run ~3x high). Falls back to model+timestamp for the rare
+// transcript variant that carries usage but no message.id.
+func (l transcriptLine) dedupKey() string {
+	if l.Type != "assistant" || l.Message.Usage == nil {
+		return ""
+	}
+	if l.Message.ID != "" {
+		return l.Message.ID
+	}
+	return l.Message.Model + "|" + l.Timestamp
+}
+
+func (l transcriptLine) tokens() Tokens {
+	u := l.Message.Usage
+	if u == nil {
+		return Tokens{}
+	}
+	return Tokens{
+		Input:         u.InputTokens,
+		Output:        u.OutputTokens,
+		CacheCreation: u.CacheCreationInputTokens,
+		CacheRead:     u.CacheReadInputTokens,
+	}
+}
+
