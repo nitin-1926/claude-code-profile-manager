@@ -100,3 +100,24 @@ func sortedTotals(m map[string]Tokens) []NamedTotal {
 	return out
 }
 
+// ParseSince converts a --since value (a Go duration "168h", an "Nd" day count
+// "30d", or a "YYYY-MM-DD" date) into a since-date string relative to now.
+// Empty input yields "" (all time).
+func ParseSince(s string, now time.Time) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.Format("2006-01-02"), nil
+	}
+	if strings.HasSuffix(s, "d") {
+		if n, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && n >= 0 {
+			return now.AddDate(0, 0, -n).In(bucketLocation).Format("2006-01-02"), nil
+		}
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return now.Add(-d).In(bucketLocation).Format("2006-01-02"), nil
+	}
+	return "", fmt.Errorf("invalid --since %q: use a duration (168h), days (30d), or date (2026-06-01)", s)
+}
