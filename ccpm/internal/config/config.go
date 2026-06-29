@@ -51,6 +51,15 @@ type Settings struct {
 	// disabled" (false) from "not set" (nil), since the default is on.
 	// Use Settings.StatusLineEnabled() to read the resolved value.
 	DefaultStatusLine *bool `json:"default_statusline,omitempty"`
+	// UsageTracking controls whether `ccpm run` injects a SessionEnd hook
+	// (`ccpm usage sync`) into a launched profile so its per-profile token
+	// usage store stays warm after every session. Pointer to distinguish
+	// "explicitly disabled" (false) from "not set" (nil). Unlike the statusline,
+	// the default is OFF (opt-in): the hook mutates the profile's Claude Code
+	// settings and spawns a process per session, and `ccpm usage` already does a
+	// lazy catch-up on demand, so warming is an optimization, not a requirement.
+	// Use Settings.UsageTrackingEnabled() to read the resolved value.
+	UsageTracking *bool `json:"usage_tracking,omitempty"`
 }
 
 // StatusLineEnabled returns the resolved value of the default-statusLine
@@ -63,6 +72,17 @@ func (s Settings) StatusLineEnabled() bool {
 		return true
 	}
 	return *s.DefaultStatusLine
+}
+
+// UsageTrackingEnabled returns the resolved value of the usage-tracking
+// setting. Defaults to false when unset (opt-in): enable it with
+// `ccpm config set usage_tracking true` to have `ccpm run` install the
+// SessionEnd hook that keeps each profile's usage store warm.
+func (s Settings) UsageTrackingEnabled() bool {
+	if s.UsageTracking == nil {
+		return false
+	}
+	return *s.UsageTracking
 }
 
 // CascadeAutoAdoptEnabled returns the resolved value of the cascade auto-adopt
