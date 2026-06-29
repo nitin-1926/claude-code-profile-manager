@@ -181,3 +181,27 @@ func Load(profileDir string) (*Sessions, *Daily, error) {
 	return sess, day, nil
 }
 
+// commit writes state, sessions, and daily together in a single atomic
+// transaction so the ingest cursor only advances when the folded data lands.
+func commit(profileDir string, st *State, sess *Sessions, day *Daily) error {
+	if err := os.MkdirAll(Dir(profileDir), config.DirPerm); err != nil {
+		return err
+	}
+	sd, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	ss, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		return err
+	}
+	dd, err := json.MarshalIndent(day, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(statePath(profileDir), sd, config.FilePerm),
+		atomicwrite.WriteFile(sessionsPath(profileDir), ss, config.FilePerm),
+		atomicwrite.WriteFile(dailyPath(profileDir), dd, config.FilePerm),
+	})
+}
