@@ -37,6 +37,17 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
       {
+        date: "2026-06-29",
+        title: "`ccpm usage` — per-profile token usage with a contribution heatmap",
+        categories: ["Added"],
+        bullets: [
+          "New `ccpm usage [profile]` reports token usage (input, output, cache-write, cache-read) read straight from a profile's Claude Code session transcripts — fully retroactive over your existing history, with no dollar cost computed.",
+          "On a terminal it opens an interactive dashboard — tabbed Overview/Days/Models/Projects/Sessions, switch profile with `[`/`]`, cycle the time window with `w`, scroll with arrows. The Overview shows totals and a GitHub-style contribution heatmap rendered in purple. Use `--plain`, `--json`, or `--by-model`/`--by-project`/`--sessions`/`--all`/`--since` for static, scriptable output.",
+          "Counts are correct by construction: Claude Code writes each response as several transcript lines sharing one message id, so totals are deduplicated by message id (a naive sum over-counts ~3x).",
+          "Data is maintained incrementally in a local per-profile store (`<profileDir>/usage/`) — each run reads only new transcript bytes. Opt in to `ccpm config set usage_tracking true` to keep it warm via a SessionEnd hook; `ccpm usage` works without it.",
+        ],
+      },
+      {
         date: "2026-06-25",
         title: "Status line now matches /usage and is colour-coded",
         categories: ["Improved"],
