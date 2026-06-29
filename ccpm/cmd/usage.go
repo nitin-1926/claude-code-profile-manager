@@ -247,3 +247,55 @@ func renderSessions(out io.Writer, view usage.View) {
 	}
 }
 
+// heatmapWeeks picks the heatmap window: ~26 weeks by default, widened to cover
+// a --since window (capped at one year).
+func heatmapWeeks(sinceDate string) int {
+	if sinceDate == "" {
+		return 26
+	}
+	t, err := time.Parse("2006-01-02", sinceDate)
+	if err != nil {
+		return 26
+	}
+	weeks := int(time.Since(t).Hours()/(24*7)) + 1
+	if weeks < 4 {
+		weeks = 4
+	}
+	if weeks > 53 {
+		weeks = 53
+	}
+	return weeks
+}
+
+func miniBar(v, max int64, width int) string {
+	if max <= 0 {
+		return ""
+	}
+	filled := int(float64(v)/float64(max)*float64(width) + 0.5)
+	if filled > width {
+		filled = width
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("·", width-filled)
+}
+
+func topN(rows []usage.NamedTotal, n int) []usage.NamedTotal {
+	if len(rows) > n {
+		return rows[:n]
+	}
+	return rows
+}
+
+func baseName(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = strings.TrimRight(p, "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
