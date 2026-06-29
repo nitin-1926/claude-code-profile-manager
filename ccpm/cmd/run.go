@@ -121,6 +121,16 @@ func runRun(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "ccpm: enabled status line for profile %q — disable with `ccpm config set statusline false`\n", name)
 			}
 		}
+
+		// Inject a SessionEnd hook that keeps the per-profile usage store warm.
+		// Opt-in (default off) and idempotent; `ccpm usage` works without it.
+		if cfg.Settings.UsageTrackingEnabled() {
+			if wrote, err := settingsmerge.EnsureUsageHook(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not install usage tracking hook: %v\n", err)
+			} else if wrote {
+				fmt.Fprintf(os.Stderr, "ccpm: usage tracking enabled for profile %q — disable with `ccpm config set usage_tracking false`\n", name)
+			}
+		}
 		return nil
 	}
 	if lockErr := withConfigLock(prelaunchLocked); lockErr != nil {
