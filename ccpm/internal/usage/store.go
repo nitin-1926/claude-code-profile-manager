@@ -103,3 +103,81 @@ type Daily struct {
 	Days    map[string]*DailyRecord `json:"days"`
 }
 
+// Dir is the per-profile usage store directory, <profileDir>/usage.
+func Dir(profileDir string) string { return filepath.Join(profileDir, "usage") }
+
+func statePath(profileDir string) string    { return filepath.Join(Dir(profileDir), "state.json") }
+func sessionsPath(profileDir string) string { return filepath.Join(Dir(profileDir), "sessions.json") }
+func dailyPath(profileDir string) string    { return filepath.Join(Dir(profileDir), "daily.json") }
+func lockPath(profileDir string) string     { return filepath.Join(Dir(profileDir), ".lock") }
+
+func newState() *State { return &State{Version: storeVersion, Files: map[string]FileState{}} }
+func newSessions() *Sessions {
+	return &Sessions{Version: storeVersion, Records: map[string]*SessionRecord{}}
+}
+func newDaily() *Daily {
+	return &Daily{Version: storeVersion, Days: map[string]*DailyRecord{}}
+}
+
+// loadJSON reads path into v. A missing file is not an error (returns false).
+func loadJSON(path string, v interface{}) (bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func loadState(profileDir string) (*State, error) {
+	st := newState()
+	if _, err := loadJSON(statePath(profileDir), st); err != nil {
+		return nil, err
+	}
+	if st.Files == nil {
+		st.Files = map[string]FileState{}
+	}
+	return st, nil
+}
+
+func loadSessions(profileDir string) (*Sessions, error) {
+	s := newSessions()
+	if _, err := loadJSON(sessionsPath(profileDir), s); err != nil {
+		return nil, err
+	}
+	if s.Records == nil {
+		s.Records = map[string]*SessionRecord{}
+	}
+	return s, nil
+}
+
+func loadDaily(profileDir string) (*Daily, error) {
+	d := newDaily()
+	if _, err := loadJSON(dailyPath(profileDir), d); err != nil {
+		return nil, err
+	}
+	if d.Days == nil {
+		d.Days = map[string]*DailyRecord{}
+	}
+	return d, nil
+}
+
+// Load reads the session and daily indexes for a profile without ingesting —
+// used by read paths that only need to render what is already on disk.
+func Load(profileDir string) (*Sessions, *Daily, error) {
+	sess, err := loadSessions(profileDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	day, err := loadDaily(profileDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sess, day, nil
+}
+
