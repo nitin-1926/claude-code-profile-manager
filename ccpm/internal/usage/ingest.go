@@ -62,3 +62,81 @@ func (l transcriptLine) tokens() Tokens {
 	}
 }
 
+// foldLine applies one decoded line to the in-memory indexes, returning true if
+// it counted. seen is the per-ingest dedup set; a line whose key is already
+// present (or empty) is skipped. Pure given (sess, daily, seen) — the day bucket
+// comes from the line's own timestamp, so multi-day sessions split correctly.
+func foldLine(l transcriptLine, sess *Sessions, day *Daily, seen map[string]bool) bool {
+	key := l.dedupKey()
+	if key == "" || seen[key] {
+		return false
+	}
+	seen[key] = true
+
+	tok := l.tokens()
+	model := l.Message.Model
+
+	// Session record (created on first sight of the sessionId). cwd makes this
+	// the source for the by-project view; no per-day project map is kept.
+	rec := sess.Records[l.SessionID]
+	if rec == nil {
+		rec = &SessionRecord{SessionID: l.SessionID}
+		sess.Records[l.SessionID] = rec
+	}
+	if l.Cwd != "" {
+		rec.Cwd = l.Cwd
+	}
+	if l.GitBranch != "" {
+		rec.GitBranch = l.GitBranch
+	}
+	if l.Slug != "" {
+		rec.Slug = l.Slug
+	}
+	if l.Timestamp != "" {
+		if rec.FirstTS == "" || l.Timestamp < rec.FirstTS {
+			rec.FirstTS = l.Timestamp
+		}
+		if l.Timestamp > rec.LastTS {
+			rec.LastTS = l.Timestamp
+		}
+	}
+	rec.Tokens.Add(tok)
+	rec.Messages++
+
+	// Daily ledger — bucket by the message's own local calendar day, split by
+	// model so totals, by-model, and the time series fold from here.
+	if dayKey := dayBucket(l.Timestamp); dayKey != "" {
+		dr := day.Days[dayKey]
+		if dr == nil {
+			dr = &DailyRecord{ByModel: map[string]Tokens{}}
+			day.Days[dayKey] = dr
+		}
+		dr.Tokens.Add(tok)
+		dr.Messages++
+		addByModel(dr.ByModel, model, tok)
+	}
+	return true
+}
+
+// addByModel accumulates tok under key in m, normalising an empty key.
+func addByModel(m map[string]Tokens, key string, tok Tokens) {
+	if key == "" {
+		key = "unknown"
+	}
+	v := m[key]
+	v.Add(tok)
+	m[key] = v
+}
+
+// dayBucket parses an RFC3339 timestamp and returns the YYYY-MM-DD calendar day
+// in bucketLocation, or "" when the timestamp is missing or unparseable.
+func dayBucket(ts string) string {
+	if ts == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ""
+	}
+	return t.In(bucketLocation).Format("2006-01-02")
+}
