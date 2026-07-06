@@ -66,7 +66,7 @@ func TestRenderHeatmapColor(t *testing.T) {
 	end := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	days := map[string]*DailyRecord{"2026-06-25": {Tokens: Tokens{Input: 1000}}}
 	out := RenderHeatmap(days, end, 4, true)
-	if !strings.Contains(out, "\033[38;5;171m") { // top purple
-		t.Fatalf("expected top purple color code:\n%q", out)
+	if !strings.Contains(out, "\033[38;5;220m") { // top amber (darkmatter)
+		t.Fatalf("expected top amber color code:\n%q", out)
 	}
 }

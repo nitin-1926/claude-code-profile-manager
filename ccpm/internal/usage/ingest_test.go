@@ -23,8 +23,8 @@ func asst(id, model, sessID, cwd, ts string, in, out, cc, cr int64) transcriptLi
 	return l
 }
 
-func freshIndexes() (*Sessions, *Daily, map[string]bool) {
-	return newSessions(), newDaily(), map[string]bool{}
+func freshIndexes() (*Sessions, *Daily, map[string]Tokens) {
+	return newSessions(), newDaily(), map[string]Tokens{}
 }
 
 // TestFoldLineDedup is the load-bearing case: a single API response is written
@@ -63,6 +63,50 @@ func TestFoldLineDedup(t *testing.T) {
 	}
 	if modelTotal != 175 {
 		t.Fatalf("daily by-model total = %d, want 175", modelTotal)
+	}
+}
+
+// TestFoldLineLargestWins verifies that when the same request appears with
+// growing usage snapshots, the largest total wins (not first-seen) and is
+// counted exactly once — the ccusage #888-class undercount fix.
+func TestFoldLineLargestWins(t *testing.T) {
+	sess, day, counted := freshIndexes()
+	// Same message.id, increasing then a smaller trailing snapshot.
+	snaps := []int64{50, 200, 120} // input tokens; 200 is the largest
+	for _, in := range snaps {
+		foldLine(asst("msg_1", "opus", "sess_a", "/r", "2026-06-27T10:00:00Z", in, 0, 0, 0), sess, day, counted)
+	}
+	rec := sess.Records["sess_a"]
+	if rec == nil {
+		t.Fatal("no session record")
+	}
+	if rec.Messages != 1 {
+		t.Fatalf("messages = %d, want 1", rec.Messages)
+	}
+	if got := rec.Tokens.Input; got != 200 {
+		t.Fatalf("input tokens = %d, want 200 (largest snapshot)", got)
+	}
+	var dayTotal int64
+	for _, dr := range day.Days {
+		dayTotal += dr.Tokens.Input
+	}
+	if dayTotal != 200 {
+		t.Fatalf("daily input = %d, want 200", dayTotal)
+	}
+}
+
+// TestFoldLineRequestIDSeparates verifies two entries that share a message.id
+// but differ by requestId are counted separately (not collapsed).
+func TestFoldLineRequestIDSeparates(t *testing.T) {
+	sess, day, counted := freshIndexes()
+	a := asst("msg_1", "opus", "sess_a", "/r", "2026-06-27T10:00:00Z", 100, 0, 0, 0)
+	a.RequestID = "req_a"
+	b := asst("msg_1", "opus", "sess_a", "/r", "2026-06-27T10:00:01Z", 100, 0, 0, 0)
+	b.RequestID = "req_b"
+	foldLine(a, sess, day, counted)
+	foldLine(b, sess, day, counted)
+	if got := sess.Records["sess_a"].Tokens.Input; got != 200 {
+		t.Fatalf("input = %d, want 200 (two distinct requests counted)", got)
 	}
 }
 

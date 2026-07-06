@@ -108,14 +108,17 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		return prev, err
 	}
 
-	// Seed dedup with the last message id counted from this file so a request
-	// whose duplicate lines straddle the offset boundary isn't recounted.
-	seen := map[string]bool{}
+	// Seed dedup with the last key counted from this file so a request whose
+	// duplicate lines straddle the offset boundary isn't recounted. It's seeded
+	// with a max sentinel so no straddling duplicate can revise it upward across
+	// the boundary — largest-wins applies within a pass; existing data adopts the
+	// correction via the version-bump full re-ingest.
+	counted := map[string]Tokens{}
 	lastMsgID := prev.LastMsgID
 	if start == 0 {
 		lastMsgID = "" // re-reading from the top; the stale cursor id is gone
 	} else if lastMsgID != "" {
-		seen[lastMsgID] = true
+		counted[lastMsgID] = straddleSentinel
 	}
 
 	reader := bufio.NewReaderSize(f, 1024*1024)
@@ -132,7 +135,7 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		}
 		var l transcriptLine
 		if jerr := json.Unmarshal(lineBytes, &l); jerr == nil {
-			if foldLine(l, sess, day, seen) {
+			if foldLine(l, sess, day, counted) {
 				if k := l.dedupKey(); k != "" {
 					lastMsgID = k
 				}

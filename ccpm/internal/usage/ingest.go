@@ -7,6 +7,12 @@ import "time"
 // can pin it to UTC for deterministic day-boundary assertions.
 var bucketLocation = time.Local
 
+// straddleSentinel seeds the dedup map for a key counted in a prior ingest whose
+// duplicate lines straddle the offset boundary. Its huge Total means any real
+// duplicate line compares as "not larger" and is skipped (preserving the prior
+// count without knowing its exact tokens).
+var straddleSentinel = Tokens{Input: 1 << 62}
+
 // transcriptLine is the minimal decoded shape of one JSONL transcript line.
 // Claude Code writes many more fields per line; decoding only what usage needs
 // means added/unknown keys are ignored rather than breaking ingest.
@@ -18,6 +24,7 @@ type transcriptLine struct {
 	Version   string `json:"version"`
 	Slug      string `json:"slug"`
 	Timestamp string `json:"timestamp"`
+	RequestID string `json:"requestId"`
 	Message   struct {
 		ID    string    `json:"id"`
 		Model string    `json:"model"`
@@ -35,16 +42,18 @@ type rawUsage struct {
 
 // dedupKey returns the identity used to count a usage-bearing line exactly once,
 // or "" when the line carries no countable usage. A single API response is
-// written as several assistant lines that repeat the same message.id and the
-// same usage; counting each unique message.id once is what keeps totals correct
-// (without it, totals run ~3x high). Falls back to model+timestamp for the rare
-// transcript variant that carries usage but no message.id.
+// written as several assistant lines that repeat the same message.id; the key is
+// (message.id + requestId) so distinct requests that happen to reuse a message.id
+// (e.g. sidechain replays) are counted separately rather than collapsed. Falls
+// back to model+timestamp for the rare transcript variant that carries usage but
+// no message.id. Counting each unique key once (largest snapshot wins, see
+// foldLine) is what keeps totals correct.
 func (l transcriptLine) dedupKey() string {
 	if l.Type != "assistant" || l.Message.Usage == nil {
 		return ""
 	}
 	if l.Message.ID != "" {
-		return l.Message.ID
+		return l.Message.ID + "|" + l.RequestID
 	}
 	return l.Message.Model + "|" + l.Timestamp
 }
@@ -63,17 +72,26 @@ func (l transcriptLine) tokens() Tokens {
 }
 
 // foldLine applies one decoded line to the in-memory indexes, returning true if
-// it counted. seen is the per-ingest dedup set; a line whose key is already
-// present (or empty) is skipped. Pure given (sess, daily, seen) — the day bucket
-// comes from the line's own timestamp, so multi-day sessions split correctly.
-func foldLine(l transcriptLine, sess *Sessions, day *Daily, seen map[string]bool) bool {
+// it counted (or revised an earlier count). counted holds the tokens already
+// attributed to each dedup key this ingest. Claude appends several lines for one
+// request, sometimes with growing usage snapshots; the LARGEST-total snapshot
+// wins — a smaller/equal duplicate is skipped, and a larger one revises the
+// prior contribution by the delta (so no line is under- or double-counted). The
+// day bucket comes from the line's own timestamp, so multi-day sessions split
+// correctly.
+func foldLine(l transcriptLine, sess *Sessions, day *Daily, counted map[string]Tokens) bool {
 	key := l.dedupKey()
-	if key == "" || seen[key] {
+	if key == "" {
 		return false
 	}
-	seen[key] = true
-
 	tok := l.tokens()
+	prev, seen := counted[key]
+	if seen && tok.Total() <= prev.Total() {
+		return false // not a larger snapshot — ignore this duplicate
+	}
+	delta := tok.Minus(prev) // prev is zero when unseen → delta == tok
+	counted[key] = tok
+	first := !seen
 	model := l.Message.Model
 
 	// Session record (created on first sight of the sessionId). cwd makes this
@@ -100,8 +118,10 @@ func foldLine(l transcriptLine, sess *Sessions, day *Daily, seen map[string]bool
 			rec.LastTS = l.Timestamp
 		}
 	}
-	rec.Tokens.Add(tok)
-	rec.Messages++
+	rec.Tokens.Add(delta)
+	if first {
+		rec.Messages++
+	}
 
 	// Daily ledger — bucket by the message's own local calendar day, split by
 	// model so totals, by-model, and the time series fold from here.
@@ -111,9 +131,11 @@ func foldLine(l transcriptLine, sess *Sessions, day *Daily, seen map[string]bool
 			dr = &DailyRecord{ByModel: map[string]Tokens{}}
 			day.Days[dayKey] = dr
 		}
-		dr.Tokens.Add(tok)
-		dr.Messages++
-		addByModel(dr.ByModel, model, tok)
+		dr.Tokens.Add(delta)
+		if first {
+			dr.Messages++
+		}
+		addByModel(dr.ByModel, model, delta)
 	}
 	return true
 }

@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-// purpleRamp is the ascending-intensity xterm-256 purple ramp for heatmap
-// buckets 1..5 (instead of GitHub's green). Bucket 0 (no activity) uses
+// amberRamp is the ascending-intensity xterm-256 amber/gold ramp for heatmap
+// buckets 1..5 (matching the CCPM Desktop darkmatter theme — amber primary —
+// so the CLI and GUI heatmaps read as one product). Bucket 0 (no activity) uses
 // emptyColor. Kept as a var so the palette is easy to tweak.
-var purpleRamp = []int{53, 55, 91, 133, 171}
+var amberRamp = []int{94, 136, 172, 214, 220}
 
 const emptyColor = 238 // dim grey for days with no activity
 
@@ -41,10 +42,10 @@ func cellColor(bucket int) int {
 	if bucket <= 0 {
 		return emptyColor
 	}
-	if bucket > len(purpleRamp) {
-		bucket = len(purpleRamp)
+	if bucket > len(amberRamp) {
+		bucket = len(amberRamp)
 	}
-	return purpleRamp[bucket-1]
+	return amberRamp[bucket-1]
 }
 
 // cell renders one day as a 2-wide block (color) or shaded glyphs (plain).

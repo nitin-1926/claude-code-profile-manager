@@ -24,7 +24,11 @@ import (
 // (cheap and idempotent), so a schema change never serves stale-shaped data.
 // v2: dropped session.by_model/version and daily.by_project (project is derived
 // from each session's cwd).
-const storeVersion = 2
+// v3: dedup key is now (message.id + requestId) with largest-token-total wins
+// (Claude appends intermediate usage snapshots then a final larger one; first-
+// wins undercounted). Bumping forces a clean re-ingest so existing stores adopt
+// the corrected counts.
+const storeVersion = 3
 
 // Tokens is the four-way token tally Claude Code reports per assistant message.
 type Tokens struct {
@@ -45,6 +49,17 @@ func (t *Tokens) Add(o Tokens) {
 // Total is the sum of all four token kinds.
 func (t Tokens) Total() int64 {
 	return t.Input + t.Output + t.CacheCreation + t.CacheRead
+}
+
+// Minus returns t - o field-wise (used to revise a dedup entry when a larger
+// usage snapshot for the same request arrives).
+func (t Tokens) Minus(o Tokens) Tokens {
+	return Tokens{
+		Input:         t.Input - o.Input,
+		Output:        t.Output - o.Output,
+		CacheCreation: t.CacheCreation - o.CacheCreation,
+		CacheRead:     t.CacheRead - o.CacheRead,
+	}
 }
 
 // FileState is the ingest cursor for one transcript file. Offset is the number
