@@ -86,7 +86,7 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
 
 ### Download (macOS)
 
-**[Download the latest `.dmg` →](https://github.com/nitin-1926/claude-code-profile-manager/releases/latest)** — a universal build (Apple Silicon + Intel).
+Grab the build for your Mac from the **[latest release →](https://github.com/nitin-1926/claude-code-profile-manager/releases/latest)**: **Apple Silicon** (`CCPM-*-arm64.dmg`) or **Intel** (`CCPM-*-amd64.dmg`). Each is ~3 MB.
 
 Open the `.dmg` and drag **CCPM** into **Applications**. The app isn't notarized yet, so on first launch macOS Gatekeeper blocks it — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**), just once. It opens normally after that.
 
