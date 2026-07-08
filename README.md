@@ -78,6 +78,34 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 - **Shared store**: directory-based assets are symlinked from `~/.ccpm/share/` into profiles for deduplication.
 - **macOS is the verified platform** today. Linux and Windows builds compile and ship; OAuth `set-default`, `auth backup/restore`, and keychain-based `status` on those platforms are experimental until verified on real hardware.
 
+## Desktop app (optional)
+
+A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
+
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+
+### Download (macOS)
+
+**[Download the latest `.dmg` →](https://github.com/nitin-1926/claude-code-profile-manager/releases/latest)** — a universal build (Apple Silicon + Intel).
+
+Open the `.dmg` and drag **CCPM** into **Applications**. The app isn't notarized yet, so on first launch macOS Gatekeeper blocks it — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**), just once. It opens normally after that.
+
+The app uses the `ccpm` CLI for write actions — install it if you haven't:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh
+```
+
+### Build from source
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@latest   # one-time: the Wails CLI
+
+cd ccpm
+make desktop       # builds desktop/build/bin/CCPM.app
+make desktop-dev   # hot-reload dev window
+```
+
 ## Commands
 
 ### Profile lifecycle

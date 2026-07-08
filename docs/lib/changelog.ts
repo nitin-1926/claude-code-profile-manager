@@ -37,6 +37,45 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
       {
+        date: "2026-07-08",
+        title: "CCPM Desktop: download for macOS",
+        categories: ["Added"],
+        bullets: [
+          "The optional desktop app is now a downloadable universal .dmg (Apple Silicon + Intel) on GitHub Releases — open it and drag CCPM into Applications. No more building from source to try the GUI.",
+          "First launch needs a one-time Gatekeeper bypass (right-click → Open) because the app isn't notarized yet. The app uses the ccpm CLI for write actions, so keep the CLI installed.",
+        ],
+      },
+      {
+        date: "2026-07-01",
+        title: "Usage: more accurate counts, cost estimates, and 5-hour blocks",
+        categories: ["Improved", "Added", "Fixed"],
+        bullets: [
+          "Fixed a token undercount: usage is now deduplicated by (message id + request id) with the largest usage snapshot winning, matching how Claude Code appends growing snapshots for one response. This corrects both cross-request collisions and a first-seen under-count. Existing usage stores re-ingest once to adopt the corrected numbers.",
+          "The desktop app's Usage tab now shows an API-equivalent dollar-cost estimate per total, model, and project (estimated from public list prices — not subscription billing).",
+          "New live \"current 5-hour block\" card in the desktop Usage tab: cost so far, burn rate ($/hr), time left in the window, and projected end-of-block cost — inspired by ccusage.",
+          "The desktop app also gained a Settings editor tab and plugin install/remove.",
+        ],
+      },
+      {
+        date: "2026-06-30",
+        title: "CCPM Desktop — an optional native app for managing profiles",
+        categories: ["Added"],
+        bullets: [
+          "A new desktop GUI (in `ccpm/desktop/`, built with Wails) sits alongside the CLI: a sidebar of profiles plus per-profile tabs for Overview, Cascade, Assets, MCP & Plugins, Permissions, Usage, and Health. It reuses ccpm's own engine for reads and shells out to the CLI for writes, so it stays exactly in sync with what `ccpm` does.",
+          "The Cascade tab shows the effective host→global→profile config with provenance badges on every asset and setting, and flags overrides/shadowing — so you can finally see what actually resolves, and why.",
+          "Clone, rename, delete, open, and run profiles from the toolbar; add/remove assets and MCP servers, toggle plugins, and edit permissions/env without touching JSON. The view auto-refreshes when the CLI changes things underneath it.",
+          "Build it with `make desktop` (needs the Wails CLI). It's local-first, no signup, and unsigned for now (one-time Gatekeeper bypass on macOS). Creating a profile or importing `~/.claude` opens a Terminal to complete sign-in.",
+        ],
+      },
+      {
+        date: "2026-06-30",
+        title: "`ccpm usage` heatmap is now amber",
+        categories: ["Improved"],
+        bullets: [
+          "The contribution heatmap switched from purple to amber so the CLI matches the new CCPM Desktop theme. `NO_COLOR` still renders plain glyphs.",
+        ],
+      },
+      {
         date: "2026-06-29",
         title: "`ccpm usage` — per-profile token usage with a contribution heatmap",
         categories: ["Added"],

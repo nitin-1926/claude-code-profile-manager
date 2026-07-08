@@ -184,6 +184,15 @@ function Hero() {
               <ArrowUpRight size={14} strokeWidth={2.25} />
             </Button>
             <Button
+              href="https://github.com/nitin-1926/claude-code-profile-manager/releases/latest"
+              external
+              variant="secondary"
+              size="md"
+            >
+              Download for macOS
+              <ArrowUpRight size={14} strokeWidth={2.25} />
+            </Button>
+            <Button
               href="https://github.com/nitin-1926/claude-code-profile-manager"
               external
               variant="secondary"
