@@ -134,7 +134,7 @@ func RenderHeatmap(days map[string]*DailyRecord, end time.Time, weeks int, color
 		case 5:
 			label = "Fri"
 		}
-		b.WriteString(fmt.Sprintf("%-5s", label))
+		fmt.Fprintf(&b, "%-5s", label)
 		for w := 0; w < weeks; w++ {
 			d := startSunday.AddDate(0, 0, w*7+dow)
 			if d.After(end) {

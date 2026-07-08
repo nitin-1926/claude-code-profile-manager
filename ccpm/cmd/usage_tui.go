@@ -167,8 +167,8 @@ func (m *usageTUI) View() string {
 
 	// Totals header (always shown).
 	v := m.view
-	b.WriteString(fmt.Sprintf("  Total %s tokens · %s messages\n",
-		tuiHeader.Render(humanTokens(v.Totals.Total())), humanInt(v.Messages)))
+	fmt.Fprintf(&b, "  Total %s tokens · %s messages\n",
+		tuiHeader.Render(humanTokens(v.Totals.Total())), humanInt(v.Messages))
 	b.WriteString("  " + tuiDim.Render(fmt.Sprintf("input %s · output %s · cache-write %s · cache-read %s",
 		humanTokens(v.Totals.Input), humanTokens(v.Totals.Output),
 		humanTokens(v.Totals.CacheCreation), humanTokens(v.Totals.CacheRead))) + "\n\n")
