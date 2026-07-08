@@ -32,8 +32,12 @@ jobs:
 
       # -race catches the cross-process/goroutine hazards the manifest and
       # sync paths are prone to; -count=1 defeats stale cache hits in CI.
+      # The desktop (Wails) GUI is macOS-only and embeds a built frontend
+      # (desktop/frontend/dist — gitignored and not built here), so exclude it
+      # from CI tests; it is built and tested locally and at release time.
       - name: Test
-        run: go test -race -count=1 -coverprofile=cover.out ./...
+        shell: bash
+        run: go test -race -count=1 -coverprofile=cover.out $(go list ./... | grep -v '/desktop')
 
       # Floor set from the measured baseline (34.4% on 2026-06-10) minus a
       # small noise band. Ratchet upward as coverage improves — never down.
