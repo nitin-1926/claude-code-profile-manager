@@ -90,6 +90,8 @@ Grab the build for your Mac from the **[latest release →](https://github.com/n
 
 Open the `.dmg` and drag **CCPM** into **Applications**. The app isn't notarized yet, so on first launch macOS Gatekeeper blocks it — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**), just once. It opens normally after that.
 
+**Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
+
 The app uses the `ccpm` CLI for write actions — install it if you haven't:
 
 ```bash

@@ -43,6 +43,7 @@ export const CHANGELOG: ChangelogSeries[] = [
         bullets: [
           "The optional desktop app is now a downloadable .dmg on GitHub Releases — a ~3 MB build for your Mac's chip (Apple Silicon or Intel). Open it and drag CCPM into Applications. No more building from source to try the GUI.",
           "First launch needs a one-time Gatekeeper bypass (right-click → Open) because the app isn't notarized yet. The app uses the ccpm CLI for write actions, so keep the CLI installed.",
+          "The app now updates itself: it checks for new releases on launch and, on your click, downloads and swaps in the new version in place — no re-downloading or re-dragging to Applications. The desktop app versions independently of the CLI.",
         ],
       },
       {
