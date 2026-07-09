@@ -9,6 +9,7 @@
   "info": {
     "companyName": "CCPM",
     "productName": "CCPM",
+    "productVersion": "0.1.0",
     "productIdentifier": "dev.ccpm.desktop"
   },
   "author": {

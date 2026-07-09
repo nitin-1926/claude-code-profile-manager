@@ -1,0 +1,54 @@
+name: Desktop Release
+
+# The desktop app versions independently of the CLI: it ships on `desktop-v*`
+# tags (the CLI uses `v*`), so the two release pipelines never trigger each other.
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish CCPM Desktop
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25.12'
+          cache-dependency-path: ccpm/go.sum
+
+      # macos-latest ships Node, which Wails uses to build the frontend.
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build per-arch .dmg + .app.zip + checksums
+        run: bash scripts/build-desktop-dmg.sh "${GITHUB_REF_NAME}"
+
+      - name: Write release notes
+        run: |
+          cat > /tmp/desktop-notes.md <<'EOF'
+          Native desktop app for managing Claude Code profiles.
+
+          ### Install
+          Download the `.dmg` for your Mac — **Apple Silicon** (`arm64`) or **Intel** (`amd64`) — open it and drag **CCPM** into **Applications**. On first launch, because the app isn't notarized yet, right-click it → **Open** once. After that, updates install in place automatically — no re-dragging.
+
+          The app uses the `ccpm` CLI for write actions; install it from the [README](https://github.com/nitin-1926/claude-code-profile-manager#install) if you haven't.
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#desktop-v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            ccpm/desktop/dist/*.dmg \
+            ccpm/desktop/dist/*.app.zip \
+            ccpm/desktop/dist/checksums.txt \
+            --title "CCPM Desktop v${VER}" \
+            --notes-file /tmp/desktop-notes.md
