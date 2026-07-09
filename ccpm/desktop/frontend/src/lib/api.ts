@@ -30,9 +30,21 @@ import {
 } from '../../wailsjs/go/services/MutateService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
+import { Check as UpdaterCheck, Install as UpdaterInstall } from '../../wailsjs/go/services/Updater'
 import { PickDirectory } from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { Block, Cascade, CmdResult, Details, HealthResult, Profile, SettingKV, Usage } from '@/types'
+import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
+import type {
+  Block,
+  Cascade,
+  CmdResult,
+  Details,
+  HealthResult,
+  Profile,
+  SettingKV,
+  UpdateInfo,
+  UpdateProgress,
+  Usage,
+} from '@/types'
 
 export const api = {
   profiles: {
@@ -90,6 +102,14 @@ export const api = {
     setEnv: (kv: string, profile: string) => MSetEnv(kv, profile) as unknown as Promise<CmdResult>,
     unsetEnv: (key: string, profile: string) => MUnsetEnv(key, profile) as unknown as Promise<CmdResult>,
   },
+  updater: {
+    check: () => UpdaterCheck() as unknown as Promise<UpdateInfo>,
+    install: () => UpdaterInstall() as unknown as Promise<void>,
+  },
   // Subscribe to the Go watcher's debounced change signal. Returns an unsubscribe fn.
   onChanged: (cb: () => void): (() => void) => EventsOn('ccpm:changed', cb),
+  // Subscribe to updater download/install progress. Returns an unsubscribe fn.
+  onUpdateProgress: (cb: (p: UpdateProgress) => void): (() => void) =>
+    EventsOn('updater:progress', cb as (...args: unknown[]) => void),
+  openURL: (url: string) => BrowserOpenURL(url),
 }

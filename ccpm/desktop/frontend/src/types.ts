@@ -143,3 +143,18 @@ export interface SettingKV {
   key: string
   value: string
 }
+
+export interface UpdateInfo {
+  available: boolean
+  current: string
+  latest: string
+  notes: string
+  url: string
+  assetUrl: string
+  assetName: string
+}
+
+export interface UpdateProgress {
+  phase: string
+  percent: number
+}

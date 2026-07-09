@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar'
 import { ProfileView } from './components/ProfileView'
 import { EmptyState } from './components/EmptyState'
 import { TitleBar } from './components/TitleBar'
+import { UpdateToast } from './components/UpdateToast'
 import { RefreshCw } from 'lucide-react'
 import { cn } from './lib/utils'
 
@@ -55,6 +56,7 @@ export default function App() {
     <div className="flex h-full w-full flex-col overflow-hidden">
       <TitleBar right={state.status === 'ready' && state.profiles.length > 0 ? refreshButton : undefined} />
       <div className="flex min-h-0 flex-1">{renderBody()}</div>
+      <UpdateToast />
     </div>
   )
 
