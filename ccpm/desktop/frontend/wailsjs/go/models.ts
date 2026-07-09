@@ -294,6 +294,30 @@ export namespace services {
 	        this.value = source["value"];
 	    }
 	}
+	export class UpdateInfo {
+	    available: boolean;
+	    current: string;
+	    latest: string;
+	    notes: string;
+	    url: string;
+	    assetUrl: string;
+	    assetName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.current = source["current"];
+	        this.latest = source["latest"];
+	        this.notes = source["notes"];
+	        this.url = source["url"];
+	        this.assetUrl = source["assetUrl"];
+	        this.assetName = source["assetName"];
+	    }
+	}
 	export class UsageSession {
 	    id: string;
 	    cwd: string;

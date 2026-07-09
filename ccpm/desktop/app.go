@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/desktop/services"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -14,16 +15,19 @@ import (
 type App struct {
 	ctx     context.Context
 	watcher *fsnotify.Watcher
+	updater *services.Updater
 }
 
 // NewApp creates a new App application struct
-func NewApp() *App {
-	return &App{}
+func NewApp(updater *services.Updater) *App {
+	return &App{updater: updater}
 }
 
-// startup saves the runtime context and starts the freshness watcher.
+// startup saves the runtime context, hands it to the updater, and starts the
+// freshness watcher.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.updater.SetContext(ctx)
 	a.startWatcher()
 }
 

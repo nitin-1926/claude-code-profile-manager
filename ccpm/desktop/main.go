@@ -16,7 +16,8 @@ import (
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	updater := services.NewUpdater()
+	app := NewApp(updater)
 	profiles := services.NewProfiles()
 	cascade := services.NewCascade()
 	usage := services.NewUsage()
@@ -52,6 +53,7 @@ func main() {
 			mutate,
 			details,
 			settings,
+			updater,
 		},
 	})
 
