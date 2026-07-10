@@ -92,11 +92,7 @@ Open the `.dmg` and drag **CCPM** into **Applications**. The app isn't notarized
 
 **Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
 
-The app uses the `ccpm` CLI for write actions — install it if you haven't:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh
-```
+The app uses the `ccpm` CLI for write actions — install it first if you haven't (see [Install](#install) for the go / npm / curl options).
 
 ### Build from source
 
