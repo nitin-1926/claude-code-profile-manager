@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,8 +40,9 @@ const (
 // downloads it and swaps the running .app in place. Self-downloaded builds are
 // not Gatekeeper-quarantined, so the update installs without a re-prompt.
 type Updater struct {
-	ctx  context.Context
-	http *http.Client
+	ctx        context.Context
+	http       *http.Client
+	installing atomic.Bool // guards against concurrent Install() calls
 }
 
 func NewUpdater() *Updater {
@@ -104,7 +106,8 @@ func (u *Updater) Check() (UpdateInfo, error) {
 	var bestVer string
 	for i := range releases {
 		r := &releases[i]
-		if r.Draft || !strings.HasPrefix(r.TagName, tagPrefix) {
+		// Skip drafts and prereleases — only stable desktop-v* builds auto-update.
+		if r.Draft || r.Prerelease || !strings.HasPrefix(r.TagName, tagPrefix) {
 			continue
 		}
 		ver := strings.TrimPrefix(r.TagName, tagPrefix)
@@ -144,6 +147,17 @@ func (u *Updater) Check() (UpdateInfo, error) {
 // relaunching. It returns after spawning the detached swap helper; the app then
 // quits so the helper can replace the bundle.
 func (u *Updater) Install() error {
+	if !u.installing.CompareAndSwap(false, true) {
+		return fmt.Errorf("an update is already in progress")
+	}
+	// Release the guard on any failure; on success the app quits, so leave it set.
+	ok := false
+	defer func() {
+		if !ok {
+			u.installing.Store(false)
+		}
+	}()
+
 	info, err := u.Check()
 	if err != nil {
 		return err
@@ -161,6 +175,14 @@ func (u *Updater) Install() error {
 	if err != nil {
 		return err
 	}
+	// Remove the download/extract dir unless we hand it to the swap helper (which
+	// deletes it after replacing the bundle) — otherwise every update leaks it.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
 	u.emit("downloading", 0)
 
 	zipPath := filepath.Join(tmp, info.AssetName)
@@ -186,9 +208,11 @@ func (u *Updater) Install() error {
 	}
 
 	u.emit("installing", 98)
-	if err := u.spawnSwap(bundle, newApp); err != nil {
+	if err := u.spawnSwap(bundle, newApp, tmp); err != nil {
 		return err
 	}
+	handedOff = true
+	ok = true
 	u.emit("relaunching", 100)
 
 	// Give the helper a beat to start waiting on our PID, then quit so it can swap.
@@ -279,12 +303,12 @@ func (u *Updater) verifyChecksum(info UpdateInfo, gotSum string) error {
 
 // spawnSwap writes and launches a detached helper that waits for this process to
 // exit, replaces the bundle with the new one, and relaunches it.
-func (u *Updater) spawnSwap(oldBundle, newApp string) error {
-	script := fmt.Sprintf(`#!/bin/sh
+func (u *Updater) spawnSwap(oldBundle, newApp, tmp string) error {
+	// Paths are passed as positional args and never interpolated into the script
+	// body, so shell metacharacters ($, backticks) in them can't be expanded.
+	const script = `#!/bin/sh
 set -e
-PID=%d
-OLD=%q
-NEW=%q
+PID="$1"; OLD="$2"; NEW="$3"; TMP="$4"
 # wait for the running app to fully exit
 while kill -0 "$PID" 2>/dev/null; do sleep 0.3; done
 BAK="$OLD.bak-$$"
@@ -297,14 +321,15 @@ else
   rm -rf "$OLD"
   mv "$BAK" "$OLD"
 fi
+rm -rf "$TMP"
 /usr/bin/open "$OLD"
-`, os.Getpid(), oldBundle, newApp)
-
+rm -f "$0"
+`
 	sh := filepath.Join(os.TempDir(), fmt.Sprintf("ccpm-swap-%d.sh", os.Getpid()))
 	if err := os.WriteFile(sh, []byte(script), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.Command("/bin/sh", sh)
+	cmd := exec.Command("/bin/sh", sh, strconv.Itoa(os.Getpid()), oldBundle, newApp, tmp)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // survive our exit
 	return cmd.Start()
 }
