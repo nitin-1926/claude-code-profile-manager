@@ -143,8 +143,9 @@ export function ProfileView({
         onCancel={() => setDialog(null)}
         onConfirm={async (dst) => {
           setDialog(null)
-          report('Clone', await api.mutate.clone(profile.name, dst))
-          onSelect(dst)
+          const res = await api.mutate.clone(profile.name, dst)
+          report('Clone', res)
+          if (res.ok) onSelect(dst)
         }}
       />
       <PromptModal
@@ -157,8 +158,9 @@ export function ProfileView({
         onCancel={() => setDialog(null)}
         onConfirm={async (next) => {
           setDialog(null)
-          report('Rename', await api.mutate.rename(profile.name, next))
-          onSelect(next)
+          const res = await api.mutate.rename(profile.name, next)
+          report('Rename', res)
+          if (res.ok) onSelect(next)
         }}
       />
       <ConfirmModal

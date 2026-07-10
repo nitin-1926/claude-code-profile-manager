@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
 import type { Cascade, CascadeAsset, CmdResult } from '@/types'
 import { LayerBadge } from '@/components/LayerBadge'
+import { ConfirmModal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { cn } from '@/lib/utils'
 import { Plus, Trash2 } from 'lucide-react'
@@ -19,6 +20,7 @@ const LABEL: Record<string, string> = {
 export function AssetsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
   const [data, reload] = useLive<Cascade>(() => api.cascade.get(profile), [profile])
   const [busy, setBusy] = useState(false)
+  const [pendingRemove, setPendingRemove] = useState<{ kind: string; name: string } | null>(null)
   const toast = useToast()
 
   function report(action: string, r: CmdResult) {
@@ -79,13 +81,25 @@ export function AssetsTab({ profile, onMutated }: { profile: string; onMutated: 
                   asset={a}
                   last={i === items.length - 1}
                   busy={busy}
-                  onRemove={() => remove(kind, a.name)}
+                  onRemove={() => setPendingRemove({ kind, name: a.name })}
                 />
               ))}
             </div>
           </section>
         )
       })}
+      <ConfirmModal
+        open={pendingRemove !== null}
+        title={pendingRemove ? `Remove "${pendingRemove.name}"?` : ''}
+        message="This removes the asset from this profile. You can add it back later."
+        confirmLabel="Remove"
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={async () => {
+          const p = pendingRemove
+          setPendingRemove(null)
+          if (p) await remove(p.kind, p.name)
+        }}
+      />
     </div>
   )
 }

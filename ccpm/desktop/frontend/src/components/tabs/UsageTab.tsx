@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '@/lib/api'
 import type { Block, Usage, UsageNamed } from '@/types'
 import { humanMinutes, humanTokens, money } from '@/lib/format'
@@ -170,7 +170,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   )
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <h2 className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
       {children}
@@ -228,7 +228,9 @@ function Heatmap({ days }: { days: { date: string; total: number }[] }) {
     for (let d = 0; d < 7; d++) {
       const cur = new Date(start)
       cur.setDate(start.getDate() + w * 7 + d)
-      const key = cur.toISOString().slice(0, 10)
+      // Local date key — byDay is bucketed by local calendar day, so formatting
+      // in UTC (toISOString) would shift cells a day for non-UTC users.
+      const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
       const total = totals.get(key) ?? 0
       col.push({ date: key, total, bucket: bucketOf(total, max) })
     }

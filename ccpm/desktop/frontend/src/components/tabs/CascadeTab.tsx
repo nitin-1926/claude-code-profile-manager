@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '@/lib/api'
 import type { Cascade, CascadeAsset, CascadeSetting, Layer } from '@/types'
 import { LayerBadge } from '@/components/LayerBadge'
@@ -87,7 +87,7 @@ export function CascadeTab({ profile }: { profile: string }) {
   )
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <h2 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
       {children}
