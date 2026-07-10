@@ -3,10 +3,12 @@
 package services
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // envWithoutColor returns the current environment with color-forcing vars stripped.
@@ -41,13 +43,20 @@ func (s *HealthService) Doctor() (HealthResult, error) {
 	if bin == "" {
 		return HealthResult{Available: false, Error: "ccpm CLI not found on PATH"}, nil
 	}
-	cmd := exec.Command(bin, "doctor")
+	// Bound the call so a stalled `ccpm doctor` can't hang the Health tab forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "doctor")
 	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
 	out, err := cmd.CombinedOutput()
 	res := HealthResult{Available: true, CCPMPath: bin, Output: ansiRE.ReplaceAllString(string(out), "")}
 	if err != nil {
-		// doctor exits non-zero when it finds problems; that's not a tool failure
-		res.Error = strings.TrimSpace(err.Error())
+		if ctx.Err() == context.DeadlineExceeded {
+			res.Error = "ccpm doctor timed out after 30s"
+		} else {
+			// doctor exits non-zero when it finds problems; that's not a tool failure
+			res.Error = strings.TrimSpace(err.Error())
+		}
 	}
 	return res, nil
 }

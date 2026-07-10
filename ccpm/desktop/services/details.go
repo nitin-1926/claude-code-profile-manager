@@ -3,9 +3,11 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 	"sort"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
@@ -106,7 +108,9 @@ func readMCP() []McpView {
 	if bin == "" {
 		return nil
 	}
-	cmd := exec.Command(bin, "mcp", "list", "--json")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "mcp", "list", "--json")
 	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
 	out, err := cmd.Output()
 	if err != nil {

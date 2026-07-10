@@ -3,10 +3,12 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
@@ -32,12 +34,19 @@ func runCCPM(args ...string) CmdResult {
 	if bin == "" {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
 	}
-	cmd := exec.Command(bin, args...)
+	// Bound every mutating shell-out so a stuck ccpm can't wedge the UI.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
 	out, err := cmd.CombinedOutput()
 	r := CmdResult{OK: err == nil, Output: ansiRE.ReplaceAllString(string(out), ""), CCPMPath: bin}
 	if err != nil {
-		r.Error = strings.TrimSpace(err.Error())
+		if ctx.Err() == context.DeadlineExceeded {
+			r.Error = "ccpm timed out after 60s"
+		} else {
+			r.Error = strings.TrimSpace(err.Error())
+		}
 		if r.Output == "" {
 			r.Output = r.Error
 		}
