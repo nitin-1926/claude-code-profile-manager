@@ -16,12 +16,17 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Don't leave the GITHUB_TOKEN in git config for later steps (this job
+          # has contents: write, and `wails build` runs third-party build scripts).
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25.12'
-          cache-dependency-path: ccpm/go.sum
+          # No build cache on a contents:write release job — avoid cache poisoning.
+          cache: false
 
       # macos-latest ships Node, which Wails uses to build the frontend.
       - name: Install Wails CLI
