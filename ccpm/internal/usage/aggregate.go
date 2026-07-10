@@ -127,6 +127,9 @@ func ParseSince(s string, now time.Time) (string, error) {
 		}
 	}
 	if d, err := time.ParseDuration(s); err == nil {
+		if d < 0 {
+			return "", fmt.Errorf("invalid --since %q: duration must not be negative", s)
+		}
 		return now.Add(-d).In(bucketLocation).Format("2006-01-02"), nil
 	}
 	return "", fmt.Errorf("invalid --since %q: use a duration (168h), days (30d), or date (2026-06-01)", s)

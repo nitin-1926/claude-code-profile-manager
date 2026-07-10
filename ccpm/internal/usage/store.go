@@ -17,6 +17,7 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/lock"
 )
 
 // storeVersion is the on-disk schema version for every store file. A loaded
@@ -183,8 +184,26 @@ func loadDaily(profileDir string) (*Daily, error) {
 }
 
 // Load reads the session and daily indexes for a profile without ingesting —
-// used by read paths that only need to render what is already on disk.
+// used by read paths that only need to render what is already on disk. It takes
+// the same advisory lock commit uses so a concurrent Sync can't expose a
+// half-written (mixed-revision) set of index files.
 func Load(profileDir string) (*Sessions, *Daily, error) {
+	// No store dir → no writer to race with. Read directly rather than create
+	// the dir/lock as a side effect of a pure read.
+	if _, err := os.Stat(Dir(profileDir)); os.IsNotExist(err) {
+		return loadIndexes(profileDir)
+	}
+	var sess *Sessions
+	var day *Daily
+	err := lock.Guard(lockPath(profileDir), lock.DefaultTimeout, func() error {
+		var e error
+		sess, day, e = loadIndexes(profileDir)
+		return e
+	})
+	return sess, day, err
+}
+
+func loadIndexes(profileDir string) (*Sessions, *Daily, error) {
 	sess, err := loadSessions(profileDir)
 	if err != nil {
 		return nil, nil, err

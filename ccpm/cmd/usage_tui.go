@@ -193,8 +193,12 @@ func (m *usageTUI) body(maxRows int) string {
 		if s := usageWindows[m.winIdx].since; s != "" {
 			weeks = heatmapWeeks(mustSince(s))
 		}
-		out := usage.RenderHeatmap(m.cache[m.profiles[m.profIdx]].day.Days, time.Now(), weeks, true)
-		out += "\n"
+		var out string
+		// day is nil when both usage.Sync and usage.Load failed for this profile
+		// (resolve caches the nil) — skip the heatmap rather than panic.
+		if d := m.cache[m.profiles[m.profIdx]].day; d != nil {
+			out = usage.RenderHeatmap(d.Days, time.Now(), weeks, true) + "\n"
+		}
 		out += renderTUIRows(namedRows(topN(v.ByModel, 5), 26), -1, maxRows-12)
 		return out
 	case "Days":

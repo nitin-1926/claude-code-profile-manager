@@ -23,16 +23,18 @@ func (p ModelPrice) Cost(t Tokens) float64 {
 
 // priceTable maps a model-family keyword to its list price. Model strings look
 // like "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", so
-// we match by family substring. These are API-equivalent list prices (USD/1M)
-// and are a best-effort estimate — a subscription's real cost is unrelated. Keep
-// this current with anthropic.com/pricing.
+// we match by family substring. These are current-generation API list prices
+// (USD/1M) as of 2026-07 and are a best-effort estimate — a subscription's real
+// cost is unrelated. Sonnet 5 has temporary promo pricing ($2/$10) through
+// 2026-08-31; we use the standard Sonnet rate so the estimate stays stable.
+// Keep this current with anthropic.com/pricing.
 var priceTable = []struct {
 	keyword string
 	price   ModelPrice
 }{
-	{"opus", ModelPrice{Input: 15, Output: 75, CacheWrite: 18.75, CacheRead: 1.5}},
+	{"opus", ModelPrice{Input: 5, Output: 25, CacheWrite: 6.25, CacheRead: 0.5}},
 	{"sonnet", ModelPrice{Input: 3, Output: 15, CacheWrite: 3.75, CacheRead: 0.3}},
-	{"haiku", ModelPrice{Input: 0.8, Output: 4, CacheWrite: 1, CacheRead: 0.08}},
+	{"haiku", ModelPrice{Input: 1, Output: 5, CacheWrite: 1.25, CacheRead: 0.1}},
 }
 
 // PriceFor returns the list price for a model, and whether it was recognised.
