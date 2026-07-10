@@ -110,8 +110,10 @@ write_wails_version() {
 
 preflight() {
   step "Preflight checks"
-  for tool in git gh node; do command -v "$tool" >/dev/null 2>&1 || fatal "$tool is not installed"; done
-  ok "git, gh, node present"
+  local tools=(git gh node)
+  [[ "$SKIP_BUILD" == "1" ]] || tools+=(go) # run_build shells out to `go build`
+  for tool in "${tools[@]}"; do command -v "$tool" >/dev/null 2>&1 || fatal "$tool is not installed"; done
+  ok "required tools present (${tools[*]})"
   [[ -f "$WAILS_JSON" ]] || fatal "missing $WAILS_JSON"
 
   local branch; branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -175,8 +177,12 @@ main() {
 
   step "Waiting for the Desktop Release workflow"
   sleep 5
-  local run_id
-  run_id="$(gh run list --workflow="$RELEASE_WORKFLOW" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+  # Match the run to THIS tag's commit, not just the most recent run of the
+  # workflow (another queued/retried run could otherwise be watched by mistake).
+  local sha run_id
+  sha="$(git rev-parse "$tag^{commit}")"
+  run_id="$(gh run list --workflow="$RELEASE_WORKFLOW" --limit 20 --json databaseId,headSha \
+    --jq "[.[] | select(.headSha==\"$sha\")][0].databaseId" 2>/dev/null || true)"
   if [[ -n "$run_id" ]]; then
     info "watching workflow run $run_id..."
     gh run watch "$run_id" --exit-status || fatal "release workflow failed — 'gh run view $run_id --log-failed'"
