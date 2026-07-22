@@ -132,22 +132,6 @@ func DeleteMacKeychainOAuth(profileDir string) error {
 	return firstErr
 }
 
-func DeleteMacKeychainOAuthDefault(homeClaudeDir string) error {
-	service, err := KeychainService(homeClaudeDir)
-	if err != nil {
-		return err
-	}
-	var firstErr error
-	for _, account := range keychainAccounts() {
-		if err := keyring.Delete(service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-			if firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
-	return firstErr
-}
-
 func readKeychainAnyAccount(service string) (string, error) {
 	var lastErr error
 	for _, account := range keychainAccounts() {

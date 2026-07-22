@@ -475,7 +475,7 @@ func applyAPIKeyDefault(profileName string) error {
 	claudeDir := filepath.Join(home, ".claude")
 
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		if err := credentials.DeleteMacKeychainOAuthDefault(claudeDir); err != nil {
+		if err := credentials.DeleteMacKeychainOAuth(claudeDir); err != nil {
 			return fmt.Errorf("clearing default-slot OAuth: %w", err)
 		}
 	} else {
