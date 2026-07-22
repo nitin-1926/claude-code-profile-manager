@@ -3,9 +3,10 @@ package sync
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -62,11 +63,7 @@ func scanHostPlugins(m *manifest.Manifest) ([]hostPluginAdoption, error) {
 		}
 	}
 
-	ids := make([]string, 0, len(doc.Plugins))
-	for id := range doc.Plugins {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+	ids := slices.Sorted(maps.Keys(doc.Plugins))
 
 	var out []hostPluginAdoption
 	for _, id := range ids {
@@ -226,7 +223,7 @@ func adoptHostPlugins(profileDir, profileName string, plugs []hostPluginAdoption
 				Source:   "host:" + p.InstallPath,
 				Profiles: []string{profileName},
 			})
-		} else if !containsProfile(existing.Profiles, profileName) {
+		} else if !slices.Contains(existing.Profiles, profileName) {
 			existing.Profiles = append(existing.Profiles, profileName)
 		}
 	}
@@ -283,12 +280,12 @@ func linkHostPlugin(profileDir, profileName string, inst manifest.Install) error
 		ID:          inst.ID,
 		Marketplace: marketplace,
 		Plugin:      plugin,
-		Version:     versionFromCachePath(src),
+		Version:     filepath.Base(src),
 		InstallPath: src,
 		Entry: hostPluginEntry{
 			Scope:       "user",
 			InstallPath: src,
-			Version:     versionFromCachePath(src),
+			Version:     filepath.Base(src),
 		},
 	}}, &manifest.Manifest{}) // fresh manifest copy: we don't want re-registration here
 }
@@ -299,13 +296,6 @@ func parsePluginID(id string) (marketplace, plugin string) {
 		return "", ""
 	}
 	return id[at+1:], id[:at]
-}
-
-// versionFromCachePath extracts the trailing version segment from a cache
-// path like /Users/x/.claude/plugins/cache/m/p/0.40.0. Falls back to "" if
-// the path doesn't match the expected shape; callers tolerate empty.
-func versionFromCachePath(p string) string {
-	return filepath.Base(p)
 }
 
 func safeVersion(v string) string {

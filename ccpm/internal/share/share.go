@@ -158,7 +158,7 @@ func Link(src, dst string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return fmt.Errorf("removing existing path at %s: %w", dst, err)
 	}
-	return copyDir(src, dst)
+	return filetree.CopyTree(src, dst, false)
 }
 
 // isPrivilegeError recognizes the Windows error that is returned when the
@@ -257,8 +257,4 @@ func IsLinked(src, dst string) bool {
 		return false
 	}
 	return resolvedDst == resolvedSrc
-}
-
-func copyDir(src, dst string) error {
-	return filetree.CopyTree(src, dst, false)
 }

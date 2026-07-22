@@ -2,6 +2,7 @@ package settingsmerge
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 )
@@ -94,9 +95,7 @@ func LoadProjectMCP(projectRoot string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("loading project settings for mcpServers: %w", err)
 	}
 	if servers, ok := settings["mcpServers"].(map[string]interface{}); ok {
-		for k, v := range servers {
-			merged[k] = v
-		}
+		maps.Copy(merged, servers)
 	}
 
 	mcpJSONPath := filepath.Join(projectRoot, ".mcp.json")
@@ -108,9 +107,7 @@ func LoadProjectMCP(projectRoot string) (map[string]interface{}, error) {
 	// shape used elsewhere. Older/alternate forms that put servers at the
 	// top level are also accepted as a fallback.
 	if servers, ok := mcpJSON["mcpServers"].(map[string]interface{}); ok {
-		for k, v := range servers {
-			merged[k] = v
-		}
+		maps.Copy(merged, servers)
 	} else if len(mcpJSON) > 0 {
 		for k, v := range mcpJSON {
 			if _, isMap := v.(map[string]interface{}); isMap {

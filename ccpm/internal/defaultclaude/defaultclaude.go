@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -412,7 +413,7 @@ func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions
 					Source:   "default:" + srcPath,
 					Profiles: []string{opts.ProfileName},
 				})
-			} else if !containsString(inst.Profiles, opts.ProfileName) {
+			} else if !slices.Contains(inst.Profiles, opts.ProfileName) {
 				inst.Profiles = append(inst.Profiles, opts.ProfileName)
 			}
 		}
@@ -426,29 +427,14 @@ func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions
 	return nil
 }
 
-func containsString(xs []string, target string) bool {
-	for _, x := range xs {
-		if x == target {
-			return true
-		}
-	}
-	return false
-}
-
-// copyTreeMerging walks src and copies files into dst. Existing files are
-// preserved unless force=true.
-func copyTreeMerging(src, dst string, force bool) error {
-	return filetree.CopyTree(src, dst, !force)
-}
-
 // copyDirFiltered copies top-level entries of srcDir into dstDir. When allow
-// is nil every entry is copied (equivalent to copyTreeMerging). When allow is
+// is nil every entry is copied (equivalent to a full-tree merge). When allow is
 // set only matching top-level entry names are copied; each selected entry is
-// walked recursively with the same preserve-existing-unless-force semantics as
-// copyTreeMerging.
+// walked recursively with the same preserve-existing-unless-force semantics
+// (existing files preserved unless force=true).
 func copyDirFiltered(srcDir, dstDir string, force bool, allow map[string]bool) error {
 	if allow == nil {
-		return copyTreeMerging(srcDir, dstDir, force)
+		return filetree.CopyTree(srcDir, dstDir, !force)
 	}
 	if err := os.MkdirAll(dstDir, config.DirPerm); err != nil {
 		return err

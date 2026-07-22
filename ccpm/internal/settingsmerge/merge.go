@@ -3,6 +3,7 @@ package settingsmerge
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -435,17 +436,13 @@ func computeMergedMCPServers(profileName, projectRoot string, existing map[strin
 
 	mcpServers := make(map[string]interface{})
 	if v, ok := existing["mcpServers"].(map[string]interface{}); ok {
-		for k, v := range v {
-			mcpServers[k] = v
-		}
+		maps.Copy(mcpServers, v)
 	}
 
 	if hostMCP, err := loadHostClaudeJSONMCP(); err != nil {
 		return nil, fmt.Errorf("loading host ~/.claude.json mcpServers: %w", err)
 	} else {
-		for k, v := range hostMCP {
-			mcpServers[k] = v
-		}
+		maps.Copy(mcpServers, hostMCP)
 	}
 
 	if _, err := os.Stat(mcpDir); !os.IsNotExist(err) {
@@ -453,17 +450,13 @@ func computeMergedMCPServers(profileName, projectRoot string, existing map[strin
 		if err != nil {
 			return nil, fmt.Errorf("loading global MCP fragment: %w", err)
 		}
-		for k, v := range globalMCP {
-			mcpServers[k] = v
-		}
+		maps.Copy(mcpServers, globalMCP)
 
 		profileMCP, err := LoadJSON(filepath.Join(mcpDir, profileName+".json"))
 		if err != nil {
 			return nil, fmt.Errorf("loading profile MCP fragment: %w", err)
 		}
-		for k, v := range profileMCP {
-			mcpServers[k] = v
-		}
+		maps.Copy(mcpServers, profileMCP)
 	}
 
 	if trust.IsTrusted(projectRoot) {
@@ -471,9 +464,7 @@ func computeMergedMCPServers(profileName, projectRoot string, existing map[strin
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range projectMCP {
-			mcpServers[k] = v
-		}
+		maps.Copy(mcpServers, projectMCP)
 	} else if projectRoot != "" {
 		if projectMCP, err := LoadProjectMCP(projectRoot); err == nil && len(projectMCP) > 0 {
 			names := make([]string, 0, len(projectMCP))
@@ -488,9 +479,7 @@ func computeMergedMCPServers(profileName, projectRoot string, existing map[strin
 	if err != nil {
 		return nil, fmt.Errorf("loading managed settings: %w", err)
 	}
-	for k, v := range ManagedMCP(managed) {
-		mcpServers[k] = v
-	}
+	maps.Copy(mcpServers, ManagedMCP(managed))
 
 	return mcpServers, nil
 }
