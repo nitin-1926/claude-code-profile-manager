@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -362,7 +363,7 @@ func executeImportPlan(state *importDefaultState, cfg *config.Config, plan *impo
 		for _, action := range importResult.Actions {
 			switch action.Kind {
 			case "skip-missing":
-				dim.Printf("  - %-9s skipped (%s)\n", action.Target, fallback(action.Note, "source missing"))
+				dim.Printf("  - %-9s skipped (%s)\n", action.Target, cmp.Or(action.Note, "source missing"))
 			case "merge-settings":
 				cyan.Printf("  ~ %-9s merge into settings.json\n", action.Target)
 			case "copy":
@@ -926,13 +927,6 @@ func filterOutTarget(targets []defaultclaude.Target, drop defaultclaude.Target) 
 		out = append(out, t)
 	}
 	return out
-}
-
-func fallback(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
 }
 
 func noteSuffix(note string) string {

@@ -190,13 +190,11 @@ func parseEnvKVs(pairs []string) (map[string]string, error) {
 		if raw == "" {
 			continue
 		}
-		idx := strings.IndexByte(raw, '=')
-		if idx <= 0 {
+		k, v, ok := strings.Cut(raw, "=")
+		if !ok || k == "" {
 			return nil, fmt.Errorf("expected KEY=VALUE, got %q", raw)
 		}
-		key := raw[:idx]
-		value := raw[idx+1:]
-		out[key] = value
+		out[k] = v
 	}
 	return out, nil
 }

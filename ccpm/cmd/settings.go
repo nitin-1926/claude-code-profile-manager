@@ -10,7 +10,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
@@ -65,8 +64,7 @@ Examples:
 			return runSettingsSet(state, args)
 		},
 	}
-	setCmd.Flags().StringVar(&state.profile, "profile", "", "profile to modify (required)")
-	_ = setCmd.MarkFlagRequired("profile")
+	requireProfileFlag(setCmd, &state.profile, "profile to modify (required)")
 
 	getCmd := &cobra.Command{
 		Use:   "get <key>",
@@ -76,8 +74,7 @@ Examples:
 			return runSettingsGet(state, args)
 		},
 	}
-	getCmd.Flags().StringVar(&state.profile, "profile", "", "profile to read from (required)")
-	_ = getCmd.MarkFlagRequired("profile")
+	requireProfileFlag(getCmd, &state.profile, "profile to read from (required)")
 
 	var applyAllowDangerous bool
 	applyCmd := &cobra.Command{
@@ -95,9 +92,8 @@ acknowledges that the JSON grants shell access or can bypass safety rails.`,
 			return runSettingsApply(state, args, applyAllowDangerous)
 		},
 	}
-	applyCmd.Flags().StringVar(&state.profile, "profile", "", "profile to apply to (required)")
+	requireProfileFlag(applyCmd, &state.profile, "profile to apply to (required)")
 	applyCmd.Flags().BoolVar(&applyAllowDangerous, "i-know-what-this-does", false, "allow the patch to touch permissions/hooks/env/statusLine/mcpServers/enabledPlugins")
-	_ = applyCmd.MarkFlagRequired("profile")
 
 	showCmd := &cobra.Command{
 		Use:   "show",
@@ -106,8 +102,7 @@ acknowledges that the JSON grants shell access or can bypass safety rails.`,
 			return runSettingsShow(state)
 		},
 	}
-	showCmd.Flags().StringVar(&state.profile, "profile", "", "profile to show (required)")
-	_ = showCmd.MarkFlagRequired("profile")
+	requireProfileFlag(showCmd, &state.profile, "profile to show (required)")
 
 	statusLineCmd := &cobra.Command{
 		Use:   "statusline [command]",
@@ -132,8 +127,7 @@ Examples:
 			return runSettingsStatusLine(state, args)
 		},
 	}
-	statusLineCmd.Flags().StringVar(&state.profile, "profile", "", "profile to modify (required)")
-	_ = statusLineCmd.MarkFlagRequired("profile")
+	requireProfileFlag(statusLineCmd, &state.profile, "profile to modify (required)")
 
 	outputStyleCmd := &cobra.Command{
 		Use:   "outputstyle <style>",
@@ -147,8 +141,7 @@ allowed with a warning so ccpm doesn't block newer styles native claude adds.`,
 			return runSettingsOutputStyle(state, cmd, args)
 		},
 	}
-	outputStyleCmd.Flags().StringVar(&state.profile, "profile", "", "profile to modify (required)")
-	_ = outputStyleCmd.MarkFlagRequired("profile")
+	requireProfileFlag(outputStyleCmd, &state.profile, "profile to modify (required)")
 
 	root.AddCommand(setCmd, getCmd, applyCmd, showCmd, statusLineCmd, outputStyleCmd)
 	return root
@@ -245,14 +238,8 @@ func settingsFragmentPath(profileName string) (string, error) {
 }
 
 func ensureProfileExists(profileName string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	if _, exists := cfg.Profiles[profileName]; !exists {
-		return fmt.Errorf("profile %q not found", profileName)
-	}
-	return nil
+	_, _, err := loadProfile(profileName)
+	return err
 }
 
 func runSettingsSet(state *settingsState, args []string) error {
@@ -298,14 +285,9 @@ func runSettingsSet(state *settingsState, args []string) error {
 func runSettingsGet(state *settingsState, args []string) error {
 	key := args[0]
 
-	cfg, err := config.Load()
+	_, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 
 	merged, err := buildMergedSettings(p.Dir, state.profile)
@@ -376,14 +358,9 @@ func runSettingsApply(state *settingsState, args []string, allowDangerous bool) 
 }
 
 func runSettingsShow(state *settingsState) error {
-	cfg, err := config.Load()
+	_, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 
 	merged, err := buildMergedSettings(p.Dir, state.profile)

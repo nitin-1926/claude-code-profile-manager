@@ -74,8 +74,7 @@ Use the full "<name>@<marketplace>" identifier shown in ccpm plugin list.`,
 			return withConfigLock(func() error { return runPluginSetEnabled(state, args[0], true) })
 		},
 	}
-	enableCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
-	_ = enableCmd.MarkFlagRequired("profile")
+	requireProfileFlag(enableCmd, &state.profile, "target profile (required)")
 
 	disableCmd := &cobra.Command{
 		Use:   "disable <plugin>",
@@ -85,8 +84,7 @@ Use the full "<name>@<marketplace>" identifier shown in ccpm plugin list.`,
 			return withConfigLock(func() error { return runPluginSetEnabled(state, args[0], false) })
 		},
 	}
-	disableCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
-	_ = disableCmd.MarkFlagRequired("profile")
+	requireProfileFlag(disableCmd, &state.profile, "target profile (required)")
 
 	installCmd := &cobra.Command{
 		Use:   "install <plugin>@<marketplace>",

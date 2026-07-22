@@ -160,8 +160,7 @@ Example:
 			return runMCPAuth(state, args)
 		},
 	}
-	authCmd.Flags().StringVar(&state.profile, "profile", "", "profile to authenticate under (required)")
-	_ = authCmd.MarkFlagRequired("profile")
+	requireProfileFlag(authCmd, &state.profile, "profile to authenticate under (required)")
 
 	root.AddCommand(addCmd, removeCmd, listCmd, importCmd, authCmd)
 	return root
@@ -249,12 +248,8 @@ func runMCPAdd(state *mcpState, args []string) error {
 		green.Printf("✓ MCP server %q added globally\n", serverName)
 
 	case mcpScopeProfile:
-		cfg, err := config.Load()
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		if _, exists := cfg.Profiles[state.profile]; !exists {
-			return fmt.Errorf("profile %q not found", state.profile)
+		if _, _, err := loadProfile(state.profile); err != nil {
+			return err
 		}
 		if err := writeMCPFragment(state.profile, serverName, serverDef); err != nil {
 			return err
@@ -337,11 +332,11 @@ func buildServerDef(state *mcpState) (map[string]interface{}, error) {
 func parseKVSlice(pairs []string, flagName string) (map[string]interface{}, error) {
 	out := make(map[string]interface{}, len(pairs))
 	for _, raw := range pairs {
-		idx := strings.IndexByte(raw, '=')
-		if idx <= 0 {
+		k, v, ok := strings.Cut(raw, "=")
+		if !ok || k == "" {
 			return nil, fmt.Errorf("%s entry %q must be KEY=VALUE", flagName, raw)
 		}
-		out[raw[:idx]] = raw[idx+1:]
+		out[k] = v
 	}
 	return out, nil
 }
@@ -664,13 +659,9 @@ func hasMCPConnector(def map[string]interface{}) bool {
 func runMCPAuth(state *mcpState, args []string) error {
 	serverName := args[0]
 
-	cfg, err := config.Load()
+	_, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 
 	projectRoot := ""
