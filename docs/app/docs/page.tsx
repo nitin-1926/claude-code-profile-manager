@@ -67,10 +67,12 @@ export default async function DocsPage() {
             <strong>Applications</strong>.
           </p>
           <Callout type="warn" title="First launch: Gatekeeper">
-            The app isn&apos;t signed or notarized yet, so macOS blocks it on
-            first launch. <strong>Right-click the app → Open</strong> (or, on
-            Sequoia+, <strong>System Settings → Privacy &amp; Security → Open
-            Anyway</strong>) — just once. It opens normally after that.
+            The app is distributed unsigned (no Apple Developer account), so
+            macOS asks you to approve it once on first launch.{" "}
+            <strong>Right-click the app → Open</strong> (or, on Sequoia+,{" "}
+            <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>)
+            — just once. It opens normally after that, and in-app updates install
+            themselves without repeating this step.
           </Callout>
           <Callout type="info" title="Requires the ccpm CLI">
             The desktop app uses the <code>ccpm</code> CLI for all write

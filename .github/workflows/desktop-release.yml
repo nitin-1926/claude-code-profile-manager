@@ -41,7 +41,7 @@ jobs:
           Native desktop app for managing Claude Code profiles.
 
           ### Install
-          Download the `.dmg` for your Mac — **Apple Silicon** (`arm64`) or **Intel** (`amd64`) — open it and drag **CCPM** into **Applications**. On first launch, because the app isn't notarized yet, macOS Gatekeeper blocks it: right-click the app → **Open**, or if that's blocked (macOS Sequoia and later), allow it under **System Settings → Privacy & Security → Open Anyway**. After that, updates install in place automatically — no re-dragging.
+          Download the `.dmg` for your Mac — **Apple Silicon** (`arm64`) or **Intel** (`amd64`) — open it and drag **CCPM** into **Applications**. The app is distributed unsigned (no Apple Developer account), so on first launch macOS Gatekeeper asks you to approve it once: right-click the app → **Open**, or if that's blocked (macOS Sequoia and later), allow it under **System Settings → Privacy & Security → Open Anyway**. That's a one-time step — after that it launches normally, and updates install themselves in place (no re-approval, no re-dragging).
 
           The app uses the `ccpm` CLI for write actions; install it from the [README](https://github.com/nitin-1926/claude-code-profile-manager#install) if you haven't.
           EOF
