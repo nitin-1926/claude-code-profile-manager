@@ -11,7 +11,17 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   const [data, reload] = useLive<SettingKV[]>(() => api.settings.get(profile), [profile])
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [version, setVersion] = useState<string | null>(null)
   const toast = useToast()
+
+  // Reuse the updater's version binding (same one UpdateToast reads `current` from)
+  // to show a persistent app-version line. Network/API failures stay silent.
+  useEffect(() => {
+    api.updater
+      .check()
+      .then((u) => setVersion(u.current))
+      .catch(() => {})
+  }, [])
 
   function report(action: string, r: CmdResult) {
     if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
@@ -62,6 +72,12 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
           <SettingRow key={kv.key} kv={kv} busy={busy} onSave={(v) => save(kv.key, v)} />
         ))}
       </div>
+
+      {version && (
+        <div className="mt-6 border-t border-border pt-3 text-[11px] text-muted-foreground">
+          CCPM <span className="font-mono">v{version}</span>
+        </div>
+      )}
 
       <NewKeyModal
         open={adding}
