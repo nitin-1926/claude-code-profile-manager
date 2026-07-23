@@ -8,14 +8,17 @@ import '@fontsource/jetbrains-mono/500.css'
 import './globals.css'
 import App from './App'
 import { ToastProvider } from './components/ui/Toast'
+import { ThemeProvider } from './lib/theme'
 
 const container = document.getElementById('root')
 const root = createRoot(container!)
 
 root.render(
   <React.StrictMode>
-    <ToastProvider>
-      <App />
-    </ToastProvider>
+    <ThemeProvider>
+      <ToastProvider>
+        <App />
+      </ToastProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 )
