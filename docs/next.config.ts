@@ -11,6 +11,16 @@ import { resolve } from "node:path";
 const pkgPath = resolve(__dirname, "..", "npm", "package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 
+// The desktop app versions independently of the CLI (its own `desktop-v*`
+// release tags). Its authoritative version lives in ccpm/desktop/wails.json
+// (bumped by scripts/release-desktop.sh). Surface it so the site can deep-link
+// the correct per-arch .dmg on the matching release instead of guessing via
+// /releases/latest (which resolves to the CLI release, not the desktop one).
+const wailsPath = resolve(__dirname, "..", "ccpm", "desktop", "wails.json");
+const wails = JSON.parse(readFileSync(wailsPath, "utf-8")) as {
+  info: { productVersion: string };
+};
+
 // Security headers. CSP is the main line of defence against a future XSS
 // regression; the others close off clickjacking / MIME-sniffing / referrer
 // leaks / cross-origin probing that Next.js does not set by default. The
@@ -54,6 +64,7 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_CCPM_VERSION: pkg.version,
+    NEXT_PUBLIC_CCPM_DESKTOP_VERSION: wails.info.productVersion,
   },
   async headers() {
     return [
