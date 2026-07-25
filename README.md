@@ -88,13 +88,23 @@ A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/deskt
 
 It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
 
-### Download (macOS)
+<p align="center">
+  <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
+  <br>
+  <em>Overview — every profile's assets at a glance.</em>
+</p>
 
-<!-- TODO: add CCPM Desktop screenshot (sidebar + a tab) -->
+<p align="center">
+  <img src="docs/public/screenshots/mcp.png" alt="CCPM Desktop — MCP servers and plugins" width="860">
+  <br>
+  <em>MCP &amp; Plugins — manage servers and toggle plugins per profile.</em>
+</p>
+
+### Download (macOS)
 
 Grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
 
-Open the `.dmg` and drag **CCPM** into **Applications**. The app isn't notarized yet, so on first launch macOS Gatekeeper blocks it — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**), just once. It opens normally after that.
+Open the `.dmg` and drag **CCPM** into **Applications**. The app is distributed unsigned (no Apple Developer account), so on first launch macOS Gatekeeper asks you to approve it once — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**). It opens normally after that.
 
 **Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
 

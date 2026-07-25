@@ -53,8 +53,22 @@ export default async function DocsPage() {
             <strong>Permissions</strong>, <strong>Usage</strong>, and{" "}
             <strong>Health</strong> (<code>ccpm doctor</code>). Clone, rename,
             delete, open, and run from the toolbar; the view auto-refreshes when
-            the CLI changes things underneath it.
+            the CLI changes things underneath it. Three built-in themes
+            (Graphite, Midnight, Light) toggle from the title bar.
           </p>
+
+          <figure className="not-prose my-6 space-y-3">
+            <img
+              src="/screenshots/overview.png"
+              alt="CCPM Desktop — profile overview showing asset counts and details"
+              className="block w-full overflow-hidden rounded-xl border border-border"
+            />
+            <img
+              src="/screenshots/mcp.png"
+              alt="CCPM Desktop — MCP servers and plugins for a profile"
+              className="block w-full overflow-hidden rounded-xl border border-border"
+            />
+          </figure>
 
           <H3 id="desktop-download">Download (macOS)</H3>
           <p>

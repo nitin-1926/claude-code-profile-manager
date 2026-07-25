@@ -835,12 +835,61 @@ function CTA() {
   );
 }
 
+function DesktopShowcase() {
+  return (
+    <section id="desktop" className="relative py-20 px-6">
+      <div className="gradient-line max-w-6xl mx-auto mb-20" />
+      <div className="max-w-5xl mx-auto">
+        <div className="mb-10 max-w-2xl reveal">
+          <Eyebrow>{"// desktop"}</Eyebrow>
+          <h2
+            className="mt-2.5 font-semibold tracking-tight text-fg"
+            style={{ fontSize: "var(--t-h2)" }}
+          >
+            Prefer a window to a flag?
+          </h2>
+          <p className="mt-2 text-fg-muted leading-relaxed text-[0.9375rem]">
+            CCPM Desktop is a native macOS app over the same engine — every
+            profile&apos;s assets, cascade, MCP servers, permissions, usage, and
+            health in one place. Free, local-first, and it auto-updates.
+          </p>
+        </div>
+
+        <div className="reveal overflow-hidden rounded-2xl border border-border shadow-lg">
+          <img
+            src="/screenshots/overview.png"
+            alt="CCPM Desktop — profile overview showing asset counts and details"
+            className="block w-full"
+          />
+        </div>
+
+        <div className="mt-7 flex flex-wrap items-center gap-2.5 reveal">
+          <Button
+            href={DESKTOP_DMG.appleSilicon}
+            external
+            variant="primary"
+            size="md"
+          >
+            Download — Apple Silicon
+            <ArrowUpRight size={14} strokeWidth={2.25} />
+          </Button>
+          <Button href={DESKTOP_DMG.intel} external variant="secondary" size="md">
+            Intel
+            <ArrowUpRight size={14} strokeWidth={2.25} />
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
   return (
     <>
       <Nav />
       <main id="main" className="flex-1">
         <Hero />
+        <DesktopShowcase />
         <Features />
         <Anatomy />
         <HowItWorks />
