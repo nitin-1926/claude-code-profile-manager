@@ -64,6 +64,11 @@ export default async function DocsPage() {
               className="block w-full overflow-hidden rounded-xl border border-border"
             />
             <img
+              src="/screenshots/usage.png"
+              alt="CCPM Desktop — token usage dashboard with spend, burn rate and a live 5-hour block"
+              className="block w-full overflow-hidden rounded-xl border border-border"
+            />
+            <img
               src="/screenshots/mcp.png"
               alt="CCPM Desktop — MCP servers and plugins for a profile"
               className="block w-full overflow-hidden rounded-xl border border-border"

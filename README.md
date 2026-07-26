@@ -95,6 +95,12 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
 </p>
 
 <p align="center">
+  <img src="docs/public/screenshots/usage.png" alt="CCPM Desktop — token usage dashboard" width="860">
+  <br>
+  <em>Usage — token spend, burn rate, and a live 5-hour block, per profile.</em>
+</p>
+
+<p align="center">
   <img src="docs/public/screenshots/mcp.png" alt="CCPM Desktop — MCP servers and plugins" width="860">
   <br>
   <em>MCP &amp; Plugins — manage servers and toggle plugins per profile.</em>
