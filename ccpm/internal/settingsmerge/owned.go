@@ -48,7 +48,10 @@ func LoadOwnedKeys(fragmentPath string) (map[string]struct{}, error) {
 
 // SaveOwnedKeys persists the sidecar for the given fragment.
 func SaveOwnedKeys(fragmentPath string, keys map[string]struct{}) error {
-	list := slices.Sorted(maps.Keys(keys))
+	// AppendSeq over a made slice (not slices.Sorted) so an empty key set
+	// still marshals as [] rather than null — the sidecar shape is on disk.
+	list := slices.AppendSeq(make([]string, 0, len(keys)), maps.Keys(keys))
+	slices.Sort(list)
 	data, err := json.MarshalIndent(OwnedKeysFile{Keys: list}, "", "  ")
 	if err != nil {
 		return err

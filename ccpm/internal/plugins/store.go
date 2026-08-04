@@ -151,7 +151,9 @@ func SaveRegistry(reg *Registry) error {
 }
 
 // MarketplaceNames returns the registered marketplace names sorted
-// alphabetically.
+// alphabetically. Empty registry yields an empty (non-nil) slice.
 func (r *Registry) MarketplaceNames() []string {
-	return slices.Sorted(maps.Keys(r.Marketplaces))
+	names := slices.AppendSeq(make([]string, 0, len(r.Marketplaces)), maps.Keys(r.Marketplaces))
+	slices.Sort(names)
+	return names
 }
