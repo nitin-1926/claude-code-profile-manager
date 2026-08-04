@@ -103,7 +103,7 @@ func Run(opts Options) error {
 
 	// --fix mode: apply only the autoFixable issues; leave the rest for the
 	// slash skill.
-	autoFixable := filter(issues, true)
+	autoFixable, manual := partitionByFixability(issues)
 	if len(autoFixable) == 0 {
 		fmt.Fprintln(opts.Out, "No auto-fixable issues. Run /consolidate-claude-assets in Claude Code for interactive proposals.")
 		printIssues(opts.Out, issues)
@@ -111,23 +111,24 @@ func Run(opts Options) error {
 	}
 
 	applied, failed := applyAutoFixes(opts.Out, autoFixable)
-	printGuidance(opts.Out, filter(issues, false))
+	printGuidance(opts.Out, manual)
 	if failed > 0 {
 		return fmt.Errorf("applied %d fix(es), %d failed — re-run `ccpm consolidate` to see what remains", applied, failed)
 	}
 	return nil
 }
 
-// filter returns the issues whose auto-fixability matches wantFixable:
-// wantFixable=true yields the ones with a non-nil AutoFix, false the rest.
-func filter(issues []Issue, wantFixable bool) []Issue {
-	var out []Issue
+// partitionByFixability splits issues into the ones ccpm can apply itself
+// (non-nil AutoFix) and the ones left for the /consolidate slash skill.
+func partitionByFixability(issues []Issue) (fixable, manual []Issue) {
 	for _, i := range issues {
-		if (i.AutoFix != nil) == wantFixable {
-			out = append(out, i)
+		if i.AutoFix != nil {
+			fixable = append(fixable, i)
+		} else {
+			manual = append(manual, i)
 		}
 	}
-	return out
+	return fixable, manual
 }
 
 func printSummary(out io.Writer, snap Snapshot, issues []Issue) {
