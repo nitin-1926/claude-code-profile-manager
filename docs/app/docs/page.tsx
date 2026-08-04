@@ -50,8 +50,9 @@ export default async function DocsPage() {
             profile: <strong>Overview</strong>, <strong>Cascade</strong> (the
             effective host→global→profile config with provenance badges),{" "}
             <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
-            <strong>Permissions</strong>, <strong>Usage</strong>, and{" "}
-            <strong>Health</strong> (<code>ccpm doctor</code>). Clone, rename,
+            <strong>Permissions</strong>, <strong>Settings</strong>,{" "}
+            <strong>Usage</strong>, and <strong>Health</strong>{" "}
+            (<code>ccpm doctor</code>). Clone, rename,
             delete, open, and run from the toolbar; the view auto-refreshes when
             the CLI changes things underneath it. Three built-in themes
             (Graphite, Midnight, Light) toggle from the title bar.
@@ -112,8 +113,8 @@ export default async function DocsPage() {
           <CodeBlock
             code={`go install github.com/wailsapp/wails/v2/cmd/wails@latest   # one-time: the Wails CLI
 
-cd ccpm/desktop
-wails build          # or from ccpm/: make desktop
+cd ccpm
+make desktop         # builds desktop/build/bin/CCPM.app
 make desktop-dev     # hot-reload dev window`}
             lang="bash"
           />
