@@ -110,6 +110,15 @@ func runUsage(cmd *cobra.Command, args []string) error {
 		names = []string{name}
 	}
 
+	// Validate here, before any branch: the TUI path used to skip this and then
+	// index sortedProfileNames(cfg)[0] — a panic with zero profiles, and a
+	// silent switch to someone else's data when the name was merely a typo.
+	for _, name := range names {
+		if _, ok := cfg.Profiles[name]; !ok {
+			return fmt.Errorf("profile %q not found", name)
+		}
+	}
+
 	sinceDate, err := usage.ParseSince(usageSince, time.Now())
 	if err != nil {
 		return err
@@ -381,11 +390,17 @@ type usageJSONOut struct {
 }
 
 func buildUsageJSON(name string, view usage.View, sinceDate string) usageJSONOut {
+	// Pre-sized (not nil) so a profile with no usage emits `[]`, not `null` —
+	// consumers of --json shouldn't have to handle both shapes.
 	o := usageJSONOut{
-		Profile:  name,
-		Since:    sinceDate,
-		Totals:   toTokensJSON(view.Totals),
-		Messages: view.Messages,
+		Profile:   name,
+		Since:     sinceDate,
+		Totals:    toTokensJSON(view.Totals),
+		Messages:  view.Messages,
+		ByModel:   make([]namedJSON, 0, len(view.ByModel)),
+		ByProject: make([]namedJSON, 0, len(view.ByProject)),
+		ByDay:     make([]dayJSON, 0, len(view.ByDay)),
+		Sessions:  make([]usageSessionJSON, 0, len(view.Sessions)),
 	}
 	for _, m := range view.ByModel {
 		o.ByModel = append(o.ByModel, namedJSON{m.Name, toTokensJSON(m.Tokens)})

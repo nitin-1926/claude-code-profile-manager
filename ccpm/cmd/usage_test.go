@@ -70,3 +70,25 @@ func TestBuildUsageJSONContract(t *testing.T) {
 		t.Errorf("profile/since wrong: %q / %q", out.Profile, out.Since)
 	}
 }
+
+// TestBuildUsageJSONNeverEmitsNullArrays pins the --json contract for a profile
+// with no usage: the four list fields must serialize as [] rather than null, so
+// scripts can iterate without a nil check. The desktop side already guarantees
+// this (services.emptyUsage); the CLI did not.
+func TestBuildUsageJSONNeverEmitsNullArrays(t *testing.T) {
+	out := buildUsageJSON("fresh", usage.View{}, "")
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"by_model", "by_project", "by_day", "sessions"} {
+		if got := string(m[k]); got != "[]" {
+			t.Errorf("%s = %s, want []", k, got)
+		}
+	}
+}
