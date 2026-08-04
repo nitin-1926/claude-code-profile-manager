@@ -101,7 +101,7 @@ function AssetRow({ asset, last }: { asset: CascadeAsset; last: boolean }) {
       <LayerBadge layer={asset.layer} />
       <span className="truncate text-sm">{asset.name}</span>
       {asset.shadowedIn && asset.shadowedIn.length > 0 && (
-        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70">
+        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
           overrides {asset.shadowedIn.join(', ')}
         </span>
       )}
@@ -121,7 +121,7 @@ function SettingRow({ setting, last }: { setting: CascadeSetting; last: boolean 
         {setting.key}
       </span>
       {setting.merged && (
-        <span className="text-[10px] text-muted-foreground/70">merges {setting.contributors.join('+')}</span>
+        <span className="text-[10px] text-muted-foreground">merges {setting.contributors.join('+')}</span>
       )}
       <span className="ml-auto truncate font-mono text-[11px] text-muted-foreground/60">
         {setting.value}

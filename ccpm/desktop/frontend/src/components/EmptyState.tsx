@@ -41,7 +41,7 @@ export function EmptyState() {
             <Download className="size-4" />
             Import existing ~/.claude config
           </button>
-          <span className="mt-1 text-[11px] text-muted-foreground/70">
+          <span className="mt-1 text-[11px] text-muted-foreground">
             sign-in completes in a Terminal window
           </span>
         </div>

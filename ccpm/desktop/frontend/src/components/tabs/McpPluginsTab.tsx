@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import { Plug, Plus, Puzzle, Trash2 } from 'lucide-react'
 
 export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
-  const [data, reload] = useLive<Details>(() => api.details.get(profile), [profile])
+  const [data, reload, error] = useLive<Details>(() => api.details.get(profile), [profile])
   const [busy, setBusy] = useState(false)
   const [addingMcp, setAddingMcp] = useState(false)
   const [addingPlugin, setAddingPlugin] = useState(false)
@@ -30,6 +30,12 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
     }
   }
 
+  // Surface the failure instead of an indefinite "Loading…" — useLive
+  // reports fetch errors and every consumer must render them.
+  if (error)
+    return (
+      <div className="px-6 py-5 text-sm text-destructive">Could not load MCP servers and plugins: {error}</div>
+    )
   if (!data) return <div className="px-6 py-5 text-sm text-muted-foreground">Loading…</div>
   const mcp = data.mcp ?? []
   const plugins = data.plugins ?? []
@@ -168,7 +174,9 @@ function Switch({ on, disabled, onClick }: { on: boolean; disabled?: boolean; on
     >
       <span
         className={cn(
-          'inline-block size-4 rounded-full bg-white shadow-sm transition-transform',
+          // bg-background + a border, not bg-white: a white knob on the light
+          // theme's --input sits at 1.33:1 and reads as no knob at all.
+          'inline-block size-4 rounded-full border border-border bg-background shadow-sm transition-transform',
           on ? 'translate-x-[18px]' : 'translate-x-0.5',
         )}
       />
