@@ -298,10 +298,3 @@ export const CHANGELOG: ChangelogSeries[] = [
     ],
   },
 ];
-
-/** Latest N releases flattened, newest-first across all series. */
-export function getLatestChangelogReleases(n = 3): ChangelogRelease[] {
-  const flat = CHANGELOG.flatMap((s) => s.releases);
-  flat.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  return flat.slice(0, n);
-}
