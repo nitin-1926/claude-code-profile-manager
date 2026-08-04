@@ -70,6 +70,20 @@ func MarkOwned(fragmentPath, key string) error {
 	return SaveOwnedKeys(fragmentPath, set)
 }
 
+// UnmarkOwned drops a dot-notation key path from the sidecar, so the merge
+// stops re-asserting the fragment's value over the layers beneath it.
+func UnmarkOwned(fragmentPath, key string) error {
+	set, err := LoadOwnedKeys(fragmentPath)
+	if err != nil {
+		return err
+	}
+	if _, ok := set[key]; !ok {
+		return nil
+	}
+	delete(set, key)
+	return SaveOwnedKeys(fragmentPath, set)
+}
+
 // MarkOwnedFromPatch adds every leaf key path in `patch` to the sidecar.
 // Arrays and scalars count as leaves; nested objects recurse.
 func MarkOwnedFromPatch(fragmentPath string, patch map[string]interface{}) error {

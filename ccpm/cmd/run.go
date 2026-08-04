@@ -130,6 +130,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 			} else if wrote {
 				fmt.Fprintf(os.Stderr, "ccpm: usage tracking enabled for profile %q — disable with `ccpm config set usage_tracking false`\n", name)
 			}
+		} else if removed, err := settingsmerge.RemoveUsageHook(name); err != nil {
+			// Turning the setting off has to uninstall the hook, not just stop
+			// injecting it — otherwise it keeps firing on every session forever.
+			fmt.Fprintf(os.Stderr, "Warning: could not remove usage tracking hook: %v\n", err)
+		} else if removed {
+			fmt.Fprintf(os.Stderr, "ccpm: usage tracking disabled for profile %q — removed the SessionEnd hook\n", name)
 		}
 		return nil
 	}
