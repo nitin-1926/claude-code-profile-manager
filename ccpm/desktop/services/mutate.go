@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
 )
 
 // CmdResult is the outcome of a shelled-out ccpm command.
@@ -93,13 +94,19 @@ func (s *MutateService) OpenFolder(name string) CmdResult {
 // Launch opens a new Terminal running `ccpm run <name>` (spawns Claude Code with
 // the profile). macOS only for v1; other platforms get a copyable command.
 func (s *MutateService) Launch(name string) CmdResult {
-	return s.terminal(fmt.Sprintf("run %s", name))
+	if err := profile.ValidateName(name); err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	return s.terminal("run", name)
 }
 
 // CreateInTerminal opens a Terminal running `ccpm add <name>` (the interactive
 // auth wizard) — the bridge for in-GUI OAuth being deferred.
 func (s *MutateService) CreateInTerminal(name string) CmdResult {
-	return s.terminal(fmt.Sprintf("add %s", name))
+	if err := profile.ValidateName(name); err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	return s.terminal("add", name)
 }
 
 // ImportInTerminal opens a Terminal running the import-from-host wizard.
@@ -188,13 +195,23 @@ func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
 	return runCCPM("env", "unset", key, "--profile", profile)
 }
 
-// terminal launches a new Terminal window running `<ccpm> <argline>`.
-func (s *MutateService) terminal(argline string) CmdResult {
+// terminal launches a new Terminal window running `<ccpm> <args...>`.
+//
+// AppleScript's `do script` hands its argument to a shell, and %q only escapes
+// the AppleScript string literal — `;`, `|`, `$(…)` and backticks survive it
+// intact. Every argument is therefore single-quoted for the shell here, in the
+// one function all Terminal launches route through, so a profile name can
+// never break out into a second command.
+func (s *MutateService) terminal(args ...string) CmdResult {
 	bin := findCCPM()
 	if bin == "" {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
 	}
-	full := fmt.Sprintf("%s %s", bin, argline)
+	quoted := make([]string, 0, len(args)+1)
+	for _, a := range append([]string{bin}, args...) {
+		quoted = append(quoted, shellQuote(a))
+	}
+	full := strings.Join(quoted, " ")
 	if runtime.GOOS != "darwin" {
 		return CmdResult{OK: false, Output: full, Error: "open a terminal and run: " + full}
 	}
@@ -206,4 +223,11 @@ end tell`, full)
 		return CmdResult{Error: err.Error(), Output: full}
 	}
 	return CmdResult{OK: true, Output: full}
+}
+
+// shellQuote wraps s in single quotes for /bin/sh. Inside single quotes the
+// shell expands nothing, so the only character needing care is the quote
+// itself: close, emit an escaped quote, reopen.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

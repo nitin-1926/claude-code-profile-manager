@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +47,42 @@ type Updater struct {
 }
 
 func NewUpdater() *Updater {
-	return &Updater{http: &http.Client{Timeout: 60 * time.Second}}
+	return &Updater{http: &http.Client{
+		Timeout: 60 * time.Second,
+		// Follow GitHub's asset redirects, but never onto a foreign host or
+		// down to plaintext http — the redirect target is attacker-chosen if
+		// the release JSON is ever tampered with.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			if !trustedReleaseURL(req.URL.String()) {
+				return fmt.Errorf("refusing redirect to untrusted URL %q", req.URL.Redacted())
+			}
+			return nil
+		},
+	}}
+}
+
+// releaseHosts is every host the updater will talk to or hand to the OS opener.
+// GitHub serves release assets from github.com and redirects them to its
+// object storage, so both must be present.
+var releaseHosts = map[string]bool{
+	"api.github.com":                       true,
+	"github.com":                           true,
+	"objects.githubusercontent.com":        true,
+	"release-assets.githubusercontent.com": true,
+}
+
+// trustedReleaseURL reports whether raw is an https URL on a known GitHub host.
+// Everything the updater fetches, and the release page it asks the OS to open,
+// is decoded from a JSON response — none of it is trusted by construction.
+func trustedReleaseURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" {
+		return false
+	}
+	return releaseHosts[u.Hostname()]
 }
 
 // SetContext is called once from the App's startup with the Wails runtime ctx.
@@ -129,7 +165,7 @@ func (u *Updater) Check() (UpdateInfo, error) {
 	// Match the .app.zip asset for this architecture (arm64 / amd64).
 	want := "-" + runtime.GOARCH + ".app.zip"
 	for _, a := range best.Assets {
-		if strings.HasSuffix(a.Name, want) {
+		if strings.HasSuffix(a.Name, want) && trustedReleaseURL(a.URL) {
 			info.AssetURL = a.URL
 			info.AssetName = a.Name
 			break
@@ -137,6 +173,9 @@ func (u *Updater) Check() (UpdateInfo, error) {
 	}
 	if info.AssetURL == "" {
 		return info, fmt.Errorf("release %s has no %s asset", best.TagName, want)
+	}
+	if !trustedReleaseURL(info.URL) {
+		info.URL = "" // never hand an untrusted scheme/host to the OS opener
 	}
 	info.Available = true
 	return info, nil
@@ -185,7 +224,9 @@ func (u *Updater) Install() error {
 	}()
 	u.emit("downloading", 0)
 
-	zipPath := filepath.Join(tmp, info.AssetName)
+	// filepath.Base: AssetName is decoded from the release JSON, and a name of
+	// "../../../x-arm64.app.zip" would pass the suffix match and escape tmp.
+	zipPath := filepath.Join(tmp, filepath.Base(info.AssetName))
 	sum, err := u.download(info.AssetURL, zipPath)
 	if err != nil {
 		return fmt.Errorf("download update: %w", err)
@@ -278,7 +319,11 @@ func (u *Updater) download(url, dst string) (string, error) {
 func (u *Updater) verifyChecksum(info UpdateInfo, gotSum string) error {
 	// checksums.txt lives at the same base URL as the asset.
 	base := info.AssetURL[:strings.LastIndex(info.AssetURL, "/")+1]
-	req, _ := http.NewRequest(http.MethodGet, base+"checksums.txt", nil)
+	sumURL := base + "checksums.txt"
+	if !trustedReleaseURL(sumURL) {
+		return fmt.Errorf("checksums URL %q is not a trusted GitHub release URL", sumURL)
+	}
+	req, _ := http.NewRequest(http.MethodGet, sumURL, nil)
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := u.http.Do(req)
 	if err != nil {
@@ -288,7 +333,12 @@ func (u *Updater) verifyChecksum(info UpdateInfo, gotSum string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("checksums.txt missing (%s) — refusing unverified update", resp.Status)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	// A release manifest is a few hundred bytes; cap the read so a hostile or
+	// corrupted response can't be streamed into memory without bound.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read checksums: %w", err)
+	}
 	for _, line := range strings.Split(string(body), "\n") {
 		f := strings.Fields(line)
 		if len(f) == 2 && strings.HasSuffix(f[1], info.AssetName) {
@@ -323,10 +373,20 @@ else
 fi
 rm -rf "$TMP"
 /usr/bin/open "$OLD"
-rm -f "$0"
+rm -rf "$(dirname "$0")"
 `
-	sh := filepath.Join(os.TempDir(), fmt.Sprintf("ccpm-swap-%d.sh", os.Getpid()))
-	if err := os.WriteFile(sh, []byte(script), 0o755); err != nil {
+	// MkdirTemp, not a predictable name under os.TempDir(): when TMPDIR is
+	// unset Go falls back to the world-writable /tmp, where a local attacker
+	// could pre-create the path as a symlink or swap the file between the
+	// write and /bin/sh reading it — arbitrary code as the updating user.
+	// MkdirTemp gives a fresh 0700 directory nobody else can enter.
+	shDir, err := os.MkdirTemp("", "ccpm-swap-")
+	if err != nil {
+		return err
+	}
+	sh := filepath.Join(shDir, "swap.sh")
+	if err := os.WriteFile(sh, []byte(script), 0o700); err != nil {
+		_ = os.RemoveAll(shDir)
 		return err
 	}
 	cmd := exec.Command("/bin/sh", sh, strconv.Itoa(os.Getpid()), oldBundle, newApp, tmp)
@@ -349,9 +409,9 @@ func appBundlePath() (string, error) {
 	}
 	exe, _ = filepath.EvalSymlinks(exe)
 	// .../CCPM.app/Contents/MacOS/CCPM
-	macos := filepath.Dir(exe)         // .../Contents/MacOS
-	contents := filepath.Dir(macos)    // .../Contents
-	bundle := filepath.Dir(contents)   // .../CCPM.app
+	macos := filepath.Dir(exe)       // .../Contents/MacOS
+	contents := filepath.Dir(macos)  // .../Contents
+	bundle := filepath.Dir(contents) // .../CCPM.app
 	if !strings.HasSuffix(bundle, ".app") {
 		return "", fmt.Errorf("not running from a .app bundle (%s) — install to /Applications first", exe)
 	}
