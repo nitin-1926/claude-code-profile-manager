@@ -35,6 +35,9 @@ jobs:
       # The desktop (Wails) GUI is macOS-only and embeds a built frontend
       # (desktop/frontend/dist — gitignored and not built here), so exclude it
       # from CI tests; it is built and tested locally and at release time.
+      #
+      # shell: bash — PowerShell mangles `-coverprofile=cover.out` into two
+      # arguments on the Windows runner, so go tries to build a package `.out`.
       - name: Test
         shell: bash
         run: go test -race -count=1 -coverprofile=cover.out $(go list ./... | grep -v '/desktop')
