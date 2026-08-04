@@ -168,11 +168,14 @@ main() {
   write_wails_version "$new"; ok "wrote $new to $WAILS_JSON"
   run_build
 
-  step "Committing, tagging, pushing"
+  step "Committing, tagging, pushing the tag"
   git add "$WAILS_JSON"
   git commit -m "chore: release $tag"; ok "committed"
   git tag -a "$tag" -m "CCPM Desktop $tag"; ok "tagged $tag"
-  git push origin "$DEFAULT_BRANCH"; ok "pushed $DEFAULT_BRANCH"
+  # Push the TAG only. The docs site reads productVersion out of wails.json, so
+  # pushing the bump to the default branch first redeploys download buttons
+  # pointing at a .dmg that CI has not built yet — a 10-20 minute window of 404s
+  # on every release. The branch goes up below, once the assets exist.
   git push origin "$tag"; ok "pushed $tag"
 
   step "Waiting for the Desktop Release workflow"
@@ -195,13 +198,20 @@ main() {
   local elapsed=0
   while (( elapsed < RELEASE_WAIT_TIMEOUT )); do
     if gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | grep -q '\.dmg$'; then
+      step "Publishing the version bump"
+      # Assets are live, so the docs redeploy this triggers will link to a real
+      # download.
+      git push origin "$DEFAULT_BRANCH"; ok "pushed $DEFAULT_BRANCH"
       step "Done"
       ok "CCPM Desktop $tag shipped — https://github.com/$REPO_SLUG/releases/tag/$tag"
       return 0
     fi
     sleep 10; elapsed=$((elapsed + 10)); printf '.'
   done
-  echo; fatal "timed out waiting for $tag release assets"
+  echo
+  warn "$DEFAULT_BRANCH was NOT pushed — the version bump is still local."
+  warn "Once the release has assets, run: git push origin $DEFAULT_BRANCH"
+  fatal "timed out waiting for $tag release assets"
 }
 
 main "$@"
