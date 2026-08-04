@@ -188,8 +188,8 @@ func securityQuote(s string) (string, error) {
 // `ccpm remove` for a profile dir, and by `ccpm set-default` on the ~/.claude
 // default slot when switching to an API-key profile, so IDE extensions cannot
 // silently keep using a stale OAuth token. Returns nil if the entry is absent.
-func DeleteMacKeychainOAuth(profileDir string) error {
-	service, err := KeychainService(profileDir)
+func DeleteMacKeychainOAuth(claudeConfigDir string) error {
+	service, err := KeychainService(claudeConfigDir)
 	if err != nil {
 		return err
 	}

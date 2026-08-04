@@ -116,8 +116,12 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	return keyring.Set(service, primary, raw)
 }
 
-func DeleteMacKeychainOAuth(profileDir string) error {
-	service, err := KeychainService(profileDir)
+// DeleteMacKeychainOAuth removes every OAuth entry (all known account names)
+// from the credential slot derived from the given Claude config dir — a
+// profile dir for `ccpm remove`, or ~/.claude for the `ccpm set-default`
+// default slot.
+func DeleteMacKeychainOAuth(claudeConfigDir string) error {
+	service, err := KeychainService(claudeConfigDir)
 	if err != nil {
 		return err
 	}

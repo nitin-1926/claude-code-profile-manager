@@ -31,6 +31,6 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	return ErrNotDarwin
 }
 
-func DeleteMacKeychainOAuth(profileDir string) error {
+func DeleteMacKeychainOAuth(claudeConfigDir string) error {
 	return nil
 }
