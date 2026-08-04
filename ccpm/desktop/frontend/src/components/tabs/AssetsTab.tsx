@@ -18,7 +18,7 @@ const LABEL: Record<string, string> = {
 }
 
 export function AssetsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
-  const [data, reload] = useLive<Cascade>(() => api.cascade.get(profile), [profile])
+  const [data, reload, error] = useLive<Cascade>(() => api.cascade.get(profile), [profile])
   const [busy, setBusy] = useState(false)
   const [pendingRemove, setPendingRemove] = useState<{ kind: string; name: string } | null>(null)
   const toast = useToast()
@@ -50,6 +50,12 @@ export function AssetsTab({ profile, onMutated }: { profile: string; onMutated: 
     }
   }
 
+  // Surface the failure instead of an indefinite "Loading…" — useLive
+  // reports fetch errors and every consumer must render them.
+  if (error)
+    return (
+      <div className="px-6 py-5 text-sm text-destructive">Could not load assets: {error}</div>
+    )
   if (!data) return <div className="px-6 py-5 text-sm text-muted-foreground">Loading assets…</div>
 
   return (

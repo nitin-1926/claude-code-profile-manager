@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import { Plus, Save } from 'lucide-react'
 
 export function SettingsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
-  const [data, reload] = useLive<SettingKV[]>(() => api.settings.get(profile), [profile])
+  const [data, reload, error] = useLive<SettingKV[]>(() => api.settings.get(profile), [profile])
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
   const [version, setVersion] = useState<string | null>(null)
@@ -39,6 +39,12 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
     }
   }
 
+  // Surface the failure instead of an indefinite "Loading…" — useLive
+  // reports fetch errors and every consumer must render them.
+  if (error)
+    return (
+      <div className="px-6 py-5 text-sm text-destructive">Could not load settings: {error}</div>
+    )
   if (!data) return <div className="px-6 py-5 text-sm text-muted-foreground">Loading settings…</div>
   const rows = data ?? []
 

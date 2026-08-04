@@ -14,7 +14,7 @@ const BUCKETS = [
 ] as const
 
 export function PermissionsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
-  const [data, reload] = useLive<Details>(() => api.details.get(profile), [profile])
+  const [data, reload, error] = useLive<Details>(() => api.details.get(profile), [profile])
   const [busy, setBusy] = useState(false)
   const [draft, setDraft] = useState<Record<string, string>>({ allow: '', ask: '', deny: '' })
   const [envKey, setEnvKey] = useState('')
@@ -37,6 +37,12 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
     }
   }
 
+  // Surface the failure instead of an indefinite "Loading…" — useLive
+  // reports fetch errors and every consumer must render them.
+  if (error)
+    return (
+      <div className="px-6 py-5 text-sm text-destructive">Could not load permissions: {error}</div>
+    )
   if (!data) return <div className="px-6 py-5 text-sm text-muted-foreground">Loading…</div>
   const p = data.permissions ?? { allow: [], ask: [], deny: [], mode: '' }
   const env = data.env ?? []

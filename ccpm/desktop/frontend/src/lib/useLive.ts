@@ -27,6 +27,11 @@ export function useLive<T>(
   }, deps)
 
   useEffect(() => {
+    // Clear on a deps change (i.e. a profile switch) before the new fetch
+    // resolves. Without this the previous profile's rows stay on screen while
+    // the action buttons already target the newly-selected one.
+    setData(null)
+    setError(null)
     load()
     const off = api.onChanged(load)
     return off
