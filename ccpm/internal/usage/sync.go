@@ -108,17 +108,23 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		return prev, err
 	}
 
-	// Seed dedup with the last key counted from this file so a request whose
-	// duplicate lines straddle the offset boundary isn't recounted. It's seeded
-	// with a max sentinel so no straddling duplicate can revise it upward across
-	// the boundary — largest-wins applies within a pass; existing data adopts the
-	// correction via the version-bump full re-ingest.
+	// Seed dedup with the tail of keys already counted from this file, WITH the
+	// tokens attributed to each, so a request whose duplicate lines straddle the
+	// offset boundary is neither recounted (its duplicates compare as not-larger)
+	// nor frozen (a genuinely larger final snapshot still revises it by the
+	// delta). Seeding only the single last key — or seeding it with a max
+	// sentinel — got both of those wrong.
 	counted := map[string]Tokens{}
-	lastMsgID := prev.LastMsgID
-	if start == 0 {
-		lastMsgID = "" // re-reading from the top; the stale cursor id is gone
-	} else if lastMsgID != "" {
-		counted[lastMsgID] = straddleSentinel
+	order := make([]string, 0, len(prev.Recent)+16)
+	inOrder := make(map[string]bool, len(prev.Recent))
+	if start > 0 {
+		for _, ck := range prev.Recent {
+			counted[ck.Key] = ck.Tokens
+			if !inOrder[ck.Key] {
+				inOrder[ck.Key] = true
+				order = append(order, ck.Key)
+			}
+		}
 	}
 
 	reader := bufio.NewReaderSize(f, 1024*1024)
@@ -136,8 +142,9 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		var l transcriptLine
 		if jerr := json.Unmarshal(lineBytes, &l); jerr == nil {
 			if foldLine(l, sess, day, counted) {
-				if k := l.dedupKey(); k != "" {
-					lastMsgID = k
+				if k := l.dedupKey(); k != "" && !inOrder[k] {
+					inOrder[k] = true
+					order = append(order, k)
 				}
 			}
 		}
@@ -145,10 +152,26 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		consumed += int64(len(lineBytes))
 	}
 
+	// ponytail: bounded to the last recentWindow keys. Claude writes a response's
+	// duplicate lines adjacently, so only keys near the tail can straddle the
+	// next boundary; persisting every key ever seen would grow state.json without
+	// limit. Raise the window if transcripts ever interleave more widely.
+	if len(order) > recentWindow {
+		order = order[len(order)-recentWindow:]
+	}
+	recent := make([]CountedKey, 0, len(order))
+	for _, k := range order {
+		recent = append(recent, CountedKey{Key: k, Tokens: counted[k]})
+	}
+
 	return FileState{
-		Offset:    consumed,
-		Size:      info.Size(),
-		ModTime:   info.ModTime().Unix(),
-		LastMsgID: lastMsgID,
+		Offset:  consumed,
+		Size:    info.Size(),
+		ModTime: info.ModTime().Unix(),
+		Recent:  recent,
 	}, nil
 }
+
+// recentWindow is how many trailing dedup keys are carried across a sync
+// boundary per transcript.
+const recentWindow = 128

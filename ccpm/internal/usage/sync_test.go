@@ -136,3 +136,75 @@ func TestSyncPartialLastLine(t *testing.T) {
 
 // Total is a small test convenience on the record's token tally.
 func (r *SessionRecord) Total() int64 { return r.Tokens.Total() }
+
+// appendTranscript appends raw bytes to an existing transcript file.
+func appendTranscript(t *testing.T, path string, data []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSyncStraddleDoesNotDoubleCount pins the fix for a duplicate of a
+// NON-last dedup key arriving after the offset boundary. Seeding dedup with
+// only the single last key let every other recently-counted key be treated as
+// new on the next sync, inflating the total.
+func TestSyncStraddleDoesNotDoubleCount(t *testing.T) {
+	dir := t.TempDir()
+	a := asst("msg_a", "opus", "s1", "/repo", "2026-06-27T10:00:00Z", 100, 0, 0, 0)
+	b := asst("msg_b", "opus", "s1", "/repo", "2026-06-27T10:01:00Z", 50, 0, 0, 0)
+	path := writeTranscript(t, dir, "/repo", "s1", linesJSONL(a, b))
+
+	sess, _, err := Sync(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.Records["s1"].Tokens.Total(); got != 150 {
+		t.Fatalf("after first sync total = %d, want 150", got)
+	}
+
+	// Claude re-emits msg_a (an earlier key) after the boundary.
+	appendTranscript(t, path, linesJSONL(a))
+	sess, _, err = Sync(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.Records["s1"].Tokens.Total(); got != 150 {
+		t.Fatalf("after straddling duplicate total = %d, want 150 (double count)", got)
+	}
+}
+
+// TestSyncStraddleAdoptsLargerSnapshot pins the other half: Claude writes
+// intermediate usage snapshots and then a larger final one. A max sentinel
+// froze the earlier, smaller value forever when the boundary fell between them.
+func TestSyncStraddleAdoptsLargerSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	small := asst("msg_a", "opus", "s1", "/repo", "2026-06-27T10:00:00Z", 100, 0, 0, 0)
+	path := writeTranscript(t, dir, "/repo", "s1", linesJSONL(small))
+
+	if _, _, err := Sync(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// The final snapshot for the SAME request lands after the boundary.
+	large := asst("msg_a", "opus", "s1", "/repo", "2026-06-27T10:00:00Z", 100, 900, 0, 0)
+	appendTranscript(t, path, linesJSONL(large))
+	sess, day, err := Sync(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.Records["s1"].Tokens.Total(); got != 1000 {
+		t.Fatalf("session total = %d, want 1000 (largest snapshot wins across the boundary)", got)
+	}
+	if got := day.Days["2026-06-27"].Tokens.Total(); got != 1000 {
+		t.Fatalf("daily total = %d, want 1000", got)
+	}
+	if got := sess.Records["s1"].Messages; got != 1 {
+		t.Fatalf("messages = %d, want 1 (a revision is not a new message)", got)
+	}
+}

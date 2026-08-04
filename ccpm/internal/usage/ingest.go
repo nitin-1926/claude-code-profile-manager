@@ -7,12 +7,6 @@ import "time"
 // can pin it to UTC for deterministic day-boundary assertions.
 var bucketLocation = time.Local
 
-// straddleSentinel seeds the dedup map for a key counted in a prior ingest whose
-// duplicate lines straddle the offset boundary. Its huge Total means any real
-// duplicate line compares as "not larger" and is skipped (preserving the prior
-// count without knowing its exact tokens).
-var straddleSentinel = Tokens{Input: 1 << 62}
-
 // transcriptLine is the minimal decoded shape of one JSONL transcript line.
 // Claude Code writes many more fields per line; decoding only what usage needs
 // means added/unknown keys are ignored rather than breaking ingest.

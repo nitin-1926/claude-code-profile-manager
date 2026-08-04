@@ -29,7 +29,7 @@ import (
 // (Claude appends intermediate usage snapshots then a final larger one; first-
 // wins undercounted). Bumping forces a clean re-ingest so existing stores adopt
 // the corrected counts.
-const storeVersion = 3
+const storeVersion = 4
 
 // Tokens is the four-way token tally Claude Code reports per assistant message.
 type Tokens struct {
@@ -68,10 +68,19 @@ func (t Tokens) Minus(o Tokens) Tokens {
 // last message.id counted from this file, used to dedupe a request whose
 // duplicate lines straddle the offset boundary between two ingest runs.
 type FileState struct {
-	Offset    int64  `json:"offset"`
-	Size      int64  `json:"size"`
-	ModTime   int64  `json:"mtime"`
-	LastMsgID string `json:"last_msg_id,omitempty"`
+	Offset  int64        `json:"offset"`
+	Size    int64        `json:"size"`
+	ModTime int64        `json:"mtime"`
+	Recent  []CountedKey `json:"recent,omitempty"`
+}
+
+// CountedKey is one dedup key and the token snapshot already attributed to it.
+// The tail of these is persisted per transcript so an ingest that resumes
+// mid-request can both skip duplicates it already counted AND still adopt a
+// larger final snapshot for them (largest-wins across the offset boundary).
+type CountedKey struct {
+	Key    string `json:"key"`
+	Tokens Tokens `json:"tokens"`
 }
 
 // State is the persisted ingest cursor set, keyed by transcript path relative
