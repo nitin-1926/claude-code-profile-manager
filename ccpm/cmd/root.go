@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.5.4"
+var version = "0.6.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "ccpm",
