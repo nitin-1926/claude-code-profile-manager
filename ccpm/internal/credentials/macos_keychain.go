@@ -183,31 +183,13 @@ func securityQuote(s string) (string, error) {
 	return `"` + s + `"`, nil
 }
 
-// DeleteMacKeychainOAuth removes the namespaced keychain entry for a profile.
-// Used during `ccpm remove`. Returns nil if the entry is absent.
-func DeleteMacKeychainOAuth(profileDir string) error {
-	service, err := KeychainService(profileDir)
-	if err != nil {
-		return err
-	}
-	var firstErr error
-	for _, account := range keychainAccounts() {
-		if err := keyring.Delete(service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-			if firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
-	return firstErr
-}
-
-// DeleteMacKeychainOAuthDefault removes every entry under every known account
-// name from the keychain slot that IDE extensions read (the service name
-// derived from ~/.claude itself). Used by `ccpm set-default` when switching
-// to an API-key profile, so the VSCode extension cannot silently keep using a
-// stale OAuth token from a previous default.
-func DeleteMacKeychainOAuthDefault(homeClaudeDir string) error {
-	service, err := KeychainService(homeClaudeDir)
+// DeleteMacKeychainOAuth removes every OAuth entry (all known account names)
+// from the keychain slot derived from the given Claude config dir. Used during
+// `ccpm remove` for a profile dir, and by `ccpm set-default` on the ~/.claude
+// default slot when switching to an API-key profile, so IDE extensions cannot
+// silently keep using a stale OAuth token. Returns nil if the entry is absent.
+func DeleteMacKeychainOAuth(claudeConfigDir string) error {
+	service, err := KeychainService(claudeConfigDir)
 	if err != nil {
 		return err
 	}

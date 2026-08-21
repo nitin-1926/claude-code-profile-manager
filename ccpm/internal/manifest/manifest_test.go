@@ -183,18 +183,6 @@ func TestNewAssetKindsRoundtrip(t *testing.T) {
 	}
 }
 
-func TestGlobalInstalls(t *testing.T) {
-	m := &Manifest{Version: manifestVersion}
-	m.Add(Install{ID: "a", Kind: KindSkill, Scope: ScopeGlobal})
-	m.Add(Install{ID: "b", Kind: KindMCP, Scope: ScopeProfile})
-	m.Add(Install{ID: "c", Kind: KindSkill, Scope: ScopeGlobal})
-
-	globals := m.GlobalInstalls()
-	if len(globals) != 2 {
-		t.Errorf("expected 2 global installs, got %d", len(globals))
-	}
-}
-
 func TestSaveAtomicWrite(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

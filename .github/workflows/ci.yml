@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.25.12']
+        go-version: ['1.25.13']
     defaults:
       run:
         working-directory: ccpm
@@ -35,6 +35,9 @@ jobs:
       # The desktop (Wails) GUI is macOS-only and embeds a built frontend
       # (desktop/frontend/dist — gitignored and not built here), so exclude it
       # from CI tests; it is built and tested locally and at release time.
+      #
+      # shell: bash — PowerShell mangles `-coverprofile=cover.out` into two
+      # arguments on the Windows runner, so go tries to build a package `.out`.
       - name: Test
         shell: bash
         run: go test -race -count=1 -coverprofile=cover.out $(go list ./... | grep -v '/desktop')
@@ -90,7 +93,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.13'
           cache-dependency-path: ccpm/go.sum
 
       - name: golangci-lint
@@ -111,7 +114,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.13'
           cache-dependency-path: ccpm/go.sum
 
       - name: govulncheck
@@ -128,7 +131,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.13'
           cache-dependency-path: ccpm/go.sum
 
       # Catch a broken .goreleaser.yaml in CI instead of at tag time. Same
