@@ -182,29 +182,6 @@ func (m *Manifest) ListByKind(kind AssetKind) []Install {
 	return result
 }
 
-func (m *Manifest) GlobalInstalls() []Install {
-	var result []Install
-	for _, inst := range m.Installs {
-		if inst.Scope == ScopeGlobal {
-			result = append(result, inst)
-		}
-	}
-	return result
-}
-
-// HostInstalls returns every entry auto-adopted from the host ~/.claude tree.
-// These are managed by the cascade scanner — users do not add them via the
-// CLI. Useful for doctor / listings to render provenance.
-func (m *Manifest) HostInstalls() []Install {
-	var result []Install
-	for _, inst := range m.Installs {
-		if inst.Scope == ScopeHost {
-			result = append(result, inst)
-		}
-	}
-	return result
-}
-
 // CascadeInstalls returns the union of Global and Host installs — the set
 // that should be linked into every profile at launch. Profile-scoped entries
 // are not included; those are owned by their specific profile.
