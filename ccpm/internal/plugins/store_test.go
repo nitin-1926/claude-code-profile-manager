@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -53,13 +54,16 @@ func TestRegistryRoundTrip(t *testing.T) {
 	}
 
 	// Registry file must not be world-readable (may carry private repo URLs).
-	path, err := RegistryPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi, err := os.Stat(path); err == nil {
-		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-			t.Errorf("registry perms = %o, want user-only", perm)
+	// Windows file modes don't carry Unix permission bits, so skip there.
+	if runtime.GOOS != "windows" {
+		path, err := RegistryPath()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(path); err == nil {
+			if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+				t.Errorf("registry perms = %o, want user-only", perm)
+			}
 		}
 	}
 }

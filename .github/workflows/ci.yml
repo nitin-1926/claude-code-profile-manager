@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.25']
+        go-version: ['1.25.12']
     defaults:
       run:
         working-directory: ccpm
@@ -32,8 +32,12 @@ jobs:
 
       # -race catches the cross-process/goroutine hazards the manifest and
       # sync paths are prone to; -count=1 defeats stale cache hits in CI.
+      # The desktop (Wails) GUI is macOS-only and embeds a built frontend
+      # (desktop/frontend/dist — gitignored and not built here), so exclude it
+      # from CI tests; it is built and tested locally and at release time.
       - name: Test
-        run: go test -race -count=1 -coverprofile=cover.out ./...
+        shell: bash
+        run: go test -race -count=1 -coverprofile=cover.out $(go list ./... | grep -v '/desktop')
 
       # Floor set from the measured baseline (34.4% on 2026-06-10) minus a
       # small noise band. Ratchet upward as coverage improves — never down.
@@ -53,6 +57,27 @@ jobs:
         run: ./ccpm --version
         shell: bash
 
+  # The Wails frontend is 20+ TSX files that no other job compiles: Go tests
+  # exclude /desktop, and the release workflow only builds it after a tag is
+  # already pushed. Typecheck it on every PR so a break can't reach a release.
+  desktop-frontend:
+    name: Typecheck desktop frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ccpm/desktop/frontend
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ccpm/desktop/frontend/package-lock.json
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -65,7 +90,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache-dependency-path: ccpm/go.sum
 
       - name: golangci-lint
@@ -86,7 +111,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache-dependency-path: ccpm/go.sum
 
       - name: govulncheck
@@ -103,7 +128,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache-dependency-path: ccpm/go.sum
 
       # Catch a broken .goreleaser.yaml in CI instead of at tag time. Same

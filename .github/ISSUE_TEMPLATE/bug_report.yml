@@ -1,0 +1,58 @@
+name: Bug report
+description: Report something that isn't working
+labels: ["type: bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a bug. Please fill in as much as you can — it makes fixes much faster.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen, and what actually happened?
+      placeholder: I expected X, but Y happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps (commands, clicks) that trigger the bug.
+      placeholder: |
+        1. Run `ccpm ...`
+        2. Open the desktop app and click ...
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - CLI (ccpm)
+        - Desktop app
+        - Docs site
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ccpm version
+      description: Output of `ccpm --version`.
+      placeholder: v0.x.y
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15.5 / Ubuntu 24.04 / Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Relevant terminal output or error text. This is automatically formatted as code.
+      render: shell

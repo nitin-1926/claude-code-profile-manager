@@ -8,7 +8,12 @@ import { DocsToc } from "../components/docs-toc";
 import { InstallTabs } from "../components/install-tabs";
 import { H2, H3 } from "../components/docs/section-headings";
 import { DocsHero } from "../components/docs/docs-hero";
-import { VERSION } from "@/lib/version";
+import {
+  VERSION,
+  DESKTOP_DMG,
+  DESKTOP_RELEASES_URL,
+  DESKTOP_VERSION,
+} from "@/lib/version";
 
 export const metadata: Metadata = {
   title: "ccpm Documentation",
@@ -34,6 +39,85 @@ export default async function DocsPage() {
           <div className="not-prose my-5">
             <InstallTabs />
           </div>
+
+          <H2 id="desktop">Desktop app</H2>
+          <p>
+            <strong>CCPM Desktop</strong> is a native macOS GUI over the CLI —
+            built with <a href="https://wails.io" target="_blank" rel="noopener noreferrer">Wails</a> (Go + native webview) in the same module as{" "}
+            <code>ccpm</code>, so it reuses ccpm&apos;s own engine for reads and
+            shells out to the <code>ccpm</code> CLI for writes (same locking,
+            keychain, and validation). A left sidebar of profiles, and per
+            profile: <strong>Overview</strong>, <strong>Cascade</strong> (the
+            effective host→global→profile config with provenance badges),{" "}
+            <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
+            <strong>Permissions</strong>, <strong>Settings</strong>,{" "}
+            <strong>Usage</strong>, and <strong>Health</strong>{" "}
+            (<code>ccpm doctor</code>). Clone, rename,
+            delete, open, and run from the toolbar; the view auto-refreshes when
+            the CLI changes things underneath it. Three built-in themes
+            (Graphite, Midnight, Light) toggle from the title bar.
+          </p>
+
+          <figure className="not-prose my-6 space-y-3">
+            <img
+              src="/screenshots/overview.png"
+              alt="CCPM Desktop — profile overview showing asset counts and details"
+              className="block w-full overflow-hidden rounded-xl border border-border"
+            />
+            <img
+              src="/screenshots/usage.png"
+              alt="CCPM Desktop — token usage dashboard with spend, burn rate and a live 5-hour block"
+              className="block w-full overflow-hidden rounded-xl border border-border"
+            />
+            <img
+              src="/screenshots/mcp.png"
+              alt="CCPM Desktop — MCP servers and plugins for a profile"
+              className="block w-full overflow-hidden rounded-xl border border-border"
+            />
+          </figure>
+
+          <H3 id="desktop-download">Download (macOS)</H3>
+          <p>
+            Grab the <code>.dmg</code> for your Mac (~3–4 MB each):{" "}
+            <a href={DESKTOP_DMG.appleSilicon}>Apple Silicon</a> (
+            <code>arm64</code>) or <a href={DESKTOP_DMG.intel}>Intel</a> (
+            <code>amd64</code>). Older versions and checksums live on the{" "}
+            <a href={DESKTOP_RELEASES_URL} target="_blank" rel="noopener noreferrer">all desktop releases</a> page. Open the{" "}
+            <code>.dmg</code> and drag <strong>CCPM</strong> into{" "}
+            <strong>Applications</strong>.
+          </p>
+          <Callout type="warn" title="First launch: Gatekeeper">
+            The app is distributed unsigned (no Apple Developer account), so
+            macOS asks you to approve it once on first launch.{" "}
+            <strong>Right-click the app → Open</strong> (or, on Sequoia+,{" "}
+            <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>)
+            — just once. It opens normally after that, and in-app updates install
+            themselves without repeating this step.
+          </Callout>
+          <Callout type="info" title="Requires the ccpm CLI">
+            The desktop app uses the <code>ccpm</code> CLI for all write
+            actions — <a href="#installation">install it first</a> if you
+            haven&apos;t. Reads work through the shared engine; writes shell out
+            to the CLI.
+          </Callout>
+          <p>
+            <strong>Updates are automatic.</strong> When a new build ships, the
+            app shows an in-app <strong>Update now</strong> prompt, downloads it,
+            verifies the SHA-256, and swaps itself in place — no re-downloading,
+            no re-dragging, and no repeat of the Gatekeeper step. The desktop app
+            versions independently of the CLI (on <code>desktop-v*</code> tags;
+            current: <code>desktop-v{DESKTOP_VERSION}</code>).
+          </p>
+
+          <H3 id="desktop-build">Build from source</H3>
+          <CodeBlock
+            code={`go install github.com/wailsapp/wails/v2/cmd/wails@latest   # one-time: the Wails CLI
+
+cd ccpm
+make desktop         # builds desktop/build/bin/CCPM.app
+make desktop-dev     # hot-reload dev window`}
+            lang="bash"
+          />
 
           <H2 id="quick-start">Quick start</H2>
           <p>
@@ -305,7 +389,7 @@ ccpm import from-profile --src work --profile work-staging --force`}
           <p className="text-sm text-fg-muted">
             Settings merge: existing keys in the target profile win; new keys
             from the source are added. MCP servers are not cloned via this
-            command. Use <a href="#mcp">MCP commands</a> directly to share MCP
+            command. Use <a href="#mcp-commands">MCP commands</a> directly to share MCP
             fragments.
           </p>
 
@@ -1076,7 +1160,9 @@ ccpm auth refresh work-restored`}
             <code>~/.ccpm/</code>. It does <strong>not</strong> remove the{" "}
             <code>ccpm</code> binary itself or the shell hook you added to{" "}
             <code>~/.zshrc</code> / <code>~/.bashrc</code>. The command prints
-            those cleanup steps so you can run them by hand.
+            those cleanup steps so you can run them by hand. If you installed the{" "}
+            <a href="#desktop">desktop app</a>, also delete{" "}
+            <code>/Applications/CCPM.app</code>.
           </p>
           <CodeBlock
             code={`# with confirmation prompt
@@ -1323,11 +1409,17 @@ ccpm unset-default`}
                   </td>
                   <td className="py-2.5 px-4">Symlinks</td>
                 </tr>
-                <tr>
+                <tr className="border-b border-border">
                   <td className="py-2.5 px-4 text-fg">Shell hook</td>
                   <td className="py-2.5 px-4">zsh, bash, fish</td>
                   <td className="py-2.5 px-4">PowerShell</td>
                   <td className="py-2.5 px-4">zsh, bash, fish</td>
+                </tr>
+                <tr>
+                  <td className="py-2.5 px-4 text-fg">Desktop app</td>
+                  <td className="py-2.5 px-4">Native GUI (.dmg)</td>
+                  <td className="py-2.5 px-4">—</td>
+                  <td className="py-2.5 px-4">—</td>
                 </tr>
               </tbody>
             </table>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   BookOpen,
+  Monitor,
   Rocket,
   Share2,
   Terminal,
@@ -29,6 +30,12 @@ export const docsQuickLinks: QuickLink[] = [
     title: "Profiles & auth",
     desc: "Create, list, remove profiles. OAuth or API key, per profile.",
     href: "#profiles",
+  },
+  {
+    icon: Monitor,
+    title: "Desktop app",
+    desc: "Native macOS GUI over the CLI. Download the .dmg, auto-updates.",
+    href: "#desktop",
   },
   {
     icon: Share2,

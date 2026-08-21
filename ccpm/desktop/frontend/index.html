@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>CCPM</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash of the
+      // wrong palette. Kept in sync with src/lib/theme.tsx.
+      (function () {
+        try {
+          var t = localStorage.getItem("ccpm-theme");
+          if (t !== "graphite" && t !== "midnight" && t !== "light") t = "graphite";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "graphite");
+        }
+      })();
+    </script>
+</head>
+<body>
+<div id="root"></div>
+<script src="./src/main.tsx" type="module"></script>
+</body>
+</html>

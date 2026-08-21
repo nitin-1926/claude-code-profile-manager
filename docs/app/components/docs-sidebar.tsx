@@ -19,6 +19,7 @@ const groups: Group[] = [
     icon: Rocket,
     items: [
       { id: "installation", label: "Installation" },
+      { id: "desktop", label: "Desktop app" },
       { id: "quick-start", label: "Quick start" },
     ],
   },

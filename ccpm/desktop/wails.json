@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "CCPM",
+  "outputfilename": "CCPM",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "CCPM",
+    "productName": "CCPM",
+    "productVersion": "0.1.0",
+    "productIdentifier": "dev.ccpm.desktop",
+    "copyright": "Copyright © 2026 Nitin Gupta. MIT licensed."
+  },
+  "author": {
+    "name": "Nitin Gupta",
+    "email": "gupta7nitin@gmail.com"
+  }
+}

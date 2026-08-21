@@ -7,6 +7,14 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      # staticcheck SA5011 (2025.x) misfires on the idiomatic test pattern
+      # `x := m[k]; if x == nil { t.Fatal(...) }; x.Field` — it does not credit
+      # t.Fatal as terminating, yielding a false "possible nil deref". A real
+      # nil panics the test loudly anyway, so suppress SA5011 in tests only.
+      - path: _test\.go
+        text: SA5011
+        linters:
+          - staticcheck
       - path: cmd/
         linters:
           - errcheck

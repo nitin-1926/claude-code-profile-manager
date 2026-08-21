@@ -1,0 +1,231 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import { cn } from '@/lib/utils'
+import { useToast } from '@/components/ui/Toast'
+
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean
+  onClose: () => void
+  title: string
+  children: React.ReactNode
+}) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    // Remember who opened us so focus can go back there on close, and move
+    // focus into the dialog so Tab doesn't start behind the scrim.
+    const opener = document.activeElement as HTMLElement | null
+    // Don't steal focus from a child that autoFocused itself (PromptModal's input).
+    if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus()
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      // Focus trap: without it Tab walks straight out of the dialog into the
+      // app behind the backdrop, which is still fully interactive.
+      if (e.key !== 'Tab' || !panelRef.current) return
+      const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      opener?.focus?.()
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="relative z-10 w-[420px] max-w-full rounded-xl border border-border bg-popover p-5 shadow-xl outline-none"
+      >
+        <h2 id={titleId} className="text-sm font-semibold">
+          {title}
+        </h2>
+        <div className="mt-3">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+// useGuarded wraps a handler that may be async: a rejected Wails bridge call
+// (backend down, Go panic) would otherwise become an unhandled rejection and
+// the button would silently do nothing.
+function useGuarded(action: string) {
+  const toast = useToast()
+  return (fn: () => void) => () => {
+    try {
+      const r = fn() as unknown
+      if (r instanceof Promise) {
+        r.catch((e: unknown) =>
+          toast({ kind: 'error', title: `${action} failed`, desc: String(e) }),
+        )
+      }
+    } catch (e) {
+      toast({ kind: 'error', title: `${action} failed`, desc: String(e) })
+    }
+  }
+}
+
+/** Prompt for a single text value (e.g. a new profile name). */
+export function PromptModal({
+  open,
+  title,
+  label,
+  placeholder,
+  initial,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  validate,
+}: {
+  open: boolean
+  title: string
+  label: string
+  placeholder?: string
+  initial?: string
+  confirmLabel: string
+  onCancel: () => void
+  onConfirm: (value: string) => void
+  validate?: (v: string) => string | null
+}) {
+  const [value, setValue] = useState(initial ?? '')
+  const guard = useGuarded(confirmLabel)
+  useEffect(() => {
+    if (open) setValue(initial ?? '')
+  }, [open, initial])
+
+  const err = validate ? validate(value.trim()) : null
+  const canSubmit = value.trim().length > 0 && !err
+
+  return (
+    <Modal open={open} onClose={onCancel} title={title}>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && canSubmit && guard(() => onConfirm(value.trim()))()}
+        placeholder={placeholder}
+        className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      {err && <p className="mt-1.5 text-xs text-destructive">{err}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <GhostButton onClick={onCancel}>Cancel</GhostButton>
+        <PrimaryButton disabled={!canSubmit} onClick={guard(() => onConfirm(value.trim()))}>
+          {confirmLabel}
+        </PrimaryButton>
+      </div>
+    </Modal>
+  )
+}
+
+/** Confirm a destructive action; requires typing the name to enable. */
+export function ConfirmModal({
+  open,
+  title,
+  message,
+  confirmLabel,
+  requireText,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean
+  title: string
+  message: string
+  confirmLabel: string
+  requireText?: string
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const [typed, setTyped] = useState('')
+  const guard = useGuarded(confirmLabel)
+  useEffect(() => {
+    if (open) setTyped('')
+  }, [open])
+  const ok = !requireText || typed === requireText
+
+  return (
+    <Modal open={open} onClose={onCancel} title={title}>
+      <p className="text-sm text-muted-foreground">{message}</p>
+      {requireText && (
+        <input
+          autoFocus
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder={`type "${requireText}" to confirm`}
+          className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <GhostButton onClick={onCancel}>Cancel</GhostButton>
+        <button
+          disabled={!ok}
+          onClick={guard(onConfirm)}
+          className="cursor-pointer rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50"
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function GhostButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="cursor-pointer rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {children}
+    </button>
+  )
+}
+
+function PrimaryButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'cursor-pointer rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50',
+      )}
+    >
+      {children}
+    </button>
+  )
+}

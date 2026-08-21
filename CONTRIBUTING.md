@@ -28,6 +28,7 @@ npm run dev
 ccpm/          Go CLI source code
   cmd/         Cobra command definitions
   internal/    Internal packages (config, credentials, vault, etc.)
+  desktop/     Wails desktop app (Go backend + native webview GUI)
 docs/          Next.js documentation website
 npm/           npm wrapper package (downloads the Go binary on install)
 scripts/       Installation scripts
@@ -47,6 +48,13 @@ Two documents are load-bearing for non-trivial work:
 - Run tests with `cd ccpm && go test ./...`
 - Follow existing code style. No external linters are enforced, but keep it clean.
 - If you add a new command, create a new file in `ccpm/cmd/` following the existing pattern.
+
+### Desktop app (Wails)
+
+- The desktop app lives in `ccpm/desktop/` — a native GUI built with [Wails](https://wails.io) (Go backend + OS webview) in the same Go module as the CLI.
+- Install the Wails CLI once: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`.
+- Build a release app (`desktop/build/bin/CCPM.app`) with `cd ccpm && make desktop`.
+- For live development with a hot-reload window, run `cd ccpm && make desktop-dev`.
 
 ### Docs site (Next.js)
 

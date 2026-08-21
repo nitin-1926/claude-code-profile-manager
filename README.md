@@ -27,7 +27,11 @@ curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-mana
 go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
 ```
 
+**Prefer a GUI?** Download the native macOS **desktop app** from the [desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true) — Apple Silicon or Intel `.dmg`. See [Desktop app](#desktop-app-optional) below. (The desktop app still uses the `ccpm` CLI for write actions, so install one of the above too.)
+
 ## Quick start
+
+![ccpm in action](demo.gif)
 
 ```bash
 # Create profiles (each prompts for OAuth or API key)
@@ -77,6 +81,50 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 - **Encrypted vault**: AES-256-GCM credential backups with a master key in your OS keychain.
 - **Shared store**: directory-based assets are symlinked from `~/.ccpm/share/` into profiles for deduplication.
 - **macOS is the verified platform** today. Linux and Windows builds compile and ship; OAuth `set-default`, `auth backup/restore`, and keychain-based `status` on those platforms are experimental until verified on real hardware.
+
+## Desktop app (optional)
+
+A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
+
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings**, **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+
+<p align="center">
+  <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
+  <br>
+  <em>Overview — every profile's assets at a glance.</em>
+</p>
+
+<p align="center">
+  <img src="docs/public/screenshots/usage.png" alt="CCPM Desktop — token usage dashboard" width="860">
+  <br>
+  <em>Usage — token spend, burn rate, and a live 5-hour block, per profile.</em>
+</p>
+
+<p align="center">
+  <img src="docs/public/screenshots/mcp.png" alt="CCPM Desktop — MCP servers and plugins" width="860">
+  <br>
+  <em>MCP &amp; Plugins — manage servers and toggle plugins per profile.</em>
+</p>
+
+### Download (macOS)
+
+Grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
+
+Open the `.dmg` and drag **CCPM** into **Applications**. The app is distributed unsigned (no Apple Developer account), so on first launch macOS Gatekeeper asks you to approve it once — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**). It opens normally after that.
+
+**Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
+
+The app uses the `ccpm` CLI for write actions — install it first if you haven't (see [Install](#install) for the go / npm / curl options).
+
+### Build from source
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@latest   # one-time: the Wails CLI
+
+cd ccpm
+make desktop       # builds desktop/build/bin/CCPM.app
+make desktop-dev   # hot-reload dev window
+```
 
 ## Commands
 

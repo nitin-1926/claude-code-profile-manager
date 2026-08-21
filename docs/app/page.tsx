@@ -30,7 +30,7 @@ import {
   TerminalReel,
   type ReelStep,
 } from "./components/terminal-reel";
-import { VERSION_TAG } from "@/lib/version";
+import { VERSION_TAG, DESKTOP_DMG } from "@/lib/version";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Hero terminal windows — animated scripts inside a fixed-height frame
@@ -184,6 +184,24 @@ function Hero() {
               <ArrowUpRight size={14} strokeWidth={2.25} />
             </Button>
             <Button
+              href={DESKTOP_DMG.appleSilicon}
+              external
+              variant="secondary"
+              size="md"
+            >
+              macOS · Apple Silicon
+              <ArrowUpRight size={14} strokeWidth={2.25} />
+            </Button>
+            <Button
+              href={DESKTOP_DMG.intel}
+              external
+              variant="secondary"
+              size="md"
+            >
+              macOS · Intel
+              <ArrowUpRight size={14} strokeWidth={2.25} />
+            </Button>
+            <Button
               href="https://github.com/nitin-1926/claude-code-profile-manager"
               external
               variant="secondary"
@@ -192,6 +210,13 @@ function Hero() {
               View on GitHub
             </Button>
           </div>
+
+          <p className="mt-3 max-w-md text-fg-muted leading-relaxed text-[0.8125rem]">
+            Desktop app is macOS-only and not yet notarized — on first launch,
+            right-click it → Open (or allow it in System Settings → Privacy
+            &amp; Security). Profile changes run through the CLI, so keep it
+            installed.
+          </p>
         </div>
 
         {/* Right: 3 terminals in a diagonal cascade */}
@@ -650,8 +675,9 @@ function Privacy() {
           100% local. 100% private.
         </h2>
         <p className="mt-2 text-fg-muted leading-relaxed mb-10 text-[0.9375rem]">
-          ccpm never makes network requests. Your credentials, config, and data
-          stay on your machine. Always.
+          The ccpm CLI never makes network requests — your credentials, config,
+          and data stay on your machine. The optional desktop app only reaches
+          out to check GitHub for its own updates.
         </p>
 
         <div className="relative p-[1px] rounded-2xl bg-gradient-to-br from-[var(--c-accent-light)] via-[var(--c-accent)] to-[var(--c-accent-dark)] opacity-95">
@@ -787,6 +813,15 @@ function CTA() {
             <ArrowUpRight size={14} strokeWidth={2.25} />
           </Button>
           <Button
+            href={DESKTOP_DMG.appleSilicon}
+            external
+            variant="secondary"
+            size="md"
+          >
+            Download for macOS
+            <ArrowUpRight size={14} strokeWidth={2.25} />
+          </Button>
+          <Button
             href="https://github.com/nitin-1926/claude-code-profile-manager"
             external
             variant="secondary"
@@ -800,12 +835,61 @@ function CTA() {
   );
 }
 
+function DesktopShowcase() {
+  return (
+    <section id="desktop" className="relative py-20 px-6">
+      <div className="gradient-line max-w-6xl mx-auto mb-20" />
+      <div className="max-w-5xl mx-auto">
+        <div className="mb-10 max-w-2xl reveal">
+          <Eyebrow>{"// desktop"}</Eyebrow>
+          <h2
+            className="mt-2.5 font-semibold tracking-tight text-fg"
+            style={{ fontSize: "var(--t-h2)" }}
+          >
+            Prefer a window to a flag?
+          </h2>
+          <p className="mt-2 text-fg-muted leading-relaxed text-[0.9375rem]">
+            CCPM Desktop is a native macOS app over the same engine — every
+            profile&apos;s assets, cascade, MCP servers, permissions, usage, and
+            health in one place. Free, local-first, and it auto-updates.
+          </p>
+        </div>
+
+        <div className="reveal overflow-hidden rounded-2xl border border-border shadow-lg">
+          <img
+            src="/screenshots/overview.png"
+            alt="CCPM Desktop — profile overview showing asset counts and details"
+            className="block w-full"
+          />
+        </div>
+
+        <div className="mt-7 flex flex-wrap items-center gap-2.5 reveal">
+          <Button
+            href={DESKTOP_DMG.appleSilicon}
+            external
+            variant="primary"
+            size="md"
+          >
+            Download — Apple Silicon
+            <ArrowUpRight size={14} strokeWidth={2.25} />
+          </Button>
+          <Button href={DESKTOP_DMG.intel} external variant="secondary" size="md">
+            Intel
+            <ArrowUpRight size={14} strokeWidth={2.25} />
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
   return (
     <>
       <Nav />
       <main id="main" className="flex-1">
         <Hero />
+        <DesktopShowcase />
         <Features />
         <Anatomy />
         <HowItWorks />

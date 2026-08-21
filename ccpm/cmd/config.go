@@ -28,7 +28,11 @@ var configSetCmd = &cobra.Command{
                                      into launched profiles that have none, so the TUI
                                      shows the active profile + usage/limit windows
                                      (default: true). Never overwrites your own
-                                     statusLine.`,
+                                     statusLine.
+  usage_tracking        true|false — inject a SessionEnd hook (` + "`ccpm usage sync`" + `) into
+                                     launched profiles so the per-profile token
+                                     usage store stays warm (default: false).
+                                     ` + "`ccpm usage`" + ` works without it (lazy catch-up).`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -40,6 +44,7 @@ var configGetCmd = &cobra.Command{
   check_default_drift   bool — drift-warning setting
   cascade_auto_adopt    bool — host-asset auto-link setting
   statusline            bool — default-statusLine auto-injection setting
+  usage_tracking        bool — SessionEnd usage-sync hook injection setting
   default_dir           string — absolute path of the current default profile's
                         directory, or empty if no default is set. Used by
                         ccpm shell-init's claude() wrapper to set
@@ -82,6 +87,12 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("expected true/false, got %q", value)
 		}
 		cfg.Settings.DefaultStatusLine = &b
+	case "usage_tracking":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("expected true/false, got %q", value)
+		}
+		cfg.Settings.UsageTracking = &b
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}
@@ -106,6 +117,8 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		fmt.Println(cfg.Settings.CascadeAutoAdoptEnabled())
 	case "statusline":
 		fmt.Println(cfg.Settings.StatusLineEnabled())
+	case "usage_tracking":
+		fmt.Println(cfg.Settings.UsageTrackingEnabled())
 	case "default_dir":
 		// Print the default profile's directory, or empty when unset.
 		// Designed for shell scripts (notably the claude() wrapper in

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
 var (
@@ -256,38 +257,10 @@ func extractUserPrompt(entry map[string]interface{}) string {
 }
 
 // encodeCwdForClaude mirrors native Claude Code's cwd encoding used in
-// <profileDir>/projects/<encoded>/ — every run of non-alphanumeric characters
-// (and leading separators) turns into a single "-". Mirrors ~/.claude/projects
-// conventions.
+// <profileDir>/projects/<encoded>/. It delegates to usage.EncodeCwd so the
+// `sessions` and `usage` commands share one encoder and can never drift.
 func encodeCwdForClaude(cwd string) string {
-	var b strings.Builder
-	b.Grow(len(cwd))
-	prevDash := false
-	for _, r := range cwd {
-		if isSessionAlnum(r) {
-			b.WriteRune(r)
-			prevDash = false
-			continue
-		}
-		if !prevDash {
-			b.WriteByte('-')
-			prevDash = true
-		}
-	}
-	out := b.String()
-	return strings.Trim(out, "-")
-}
-
-func isSessionAlnum(r rune) bool {
-	switch {
-	case r >= '0' && r <= '9':
-		return true
-	case r >= 'a' && r <= 'z':
-		return true
-	case r >= 'A' && r <= 'Z':
-		return true
-	}
-	return false
+	return usage.EncodeCwd(cwd)
 }
 
 func truncate(s string, max int) string {

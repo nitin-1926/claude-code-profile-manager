@@ -3,6 +3,7 @@ package sync
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -324,6 +325,9 @@ func TestAdoptHostEntriesReportsProfileAppendAsMutation(t *testing.T) {
 // TestScanHostUnadoptedSkipsUnreadableDir pins the M16 EACCES fix: one
 // unreadable kind directory must not abort the scan of the others.
 func TestScanHostUnadoptedSkipsUnreadableDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0 is not an access barrier on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("running as root — chmod 0 is not an access barrier")
 	}

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Heart, Terminal } from "lucide-react";
 import { GithubIcon } from "./brand-icons";
-import { VERSION_TAG } from "@/lib/version";
+import { VERSION_TAG, DESKTOP_RELEASES_URL } from "@/lib/version";
 
 export function Footer() {
   return (
@@ -51,6 +51,16 @@ export function Footer() {
               >
                 Changelog
               </Link>
+            </li>
+            <li>
+              <a
+                href={DESKTOP_RELEASES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-fg-muted hover:text-fg transition-colors"
+              >
+                Download (macOS)
+              </a>
             </li>
           </ul>
         </div>
