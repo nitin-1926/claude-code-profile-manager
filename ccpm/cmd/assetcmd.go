@@ -144,8 +144,7 @@ ccpm asks whether to keep it as a live symlink or copy a snapshot. Pass
 			return runAssetLink(spec, state, args[0])
 		},
 	}
-	linkCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
-	_ = linkCmd.MarkFlagRequired("profile")
+	requireProfileFlag(linkCmd, &state.profile, "target profile (required)")
 
 	root.AddCommand(addCmd)
 	root.AddCommand(removeCmd)
@@ -408,14 +407,9 @@ func runAssetList(spec AssetSpec) error {
 }
 
 func runAssetLink(spec AssetSpec, state *assetState, assetID string) error {
-	cfg, err := config.Load()
+	_, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 
 	storeRoot, err := spec.SharedDir()

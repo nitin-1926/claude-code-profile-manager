@@ -24,9 +24,10 @@ package plugins
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -150,12 +151,9 @@ func SaveRegistry(reg *Registry) error {
 }
 
 // MarketplaceNames returns the registered marketplace names sorted
-// alphabetically.
+// alphabetically. Empty registry yields an empty (non-nil) slice.
 func (r *Registry) MarketplaceNames() []string {
-	names := make([]string, 0, len(r.Marketplaces))
-	for n := range r.Marketplaces {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.AppendSeq(make([]string, 0, len(r.Marketplaces)), maps.Keys(r.Marketplaces))
+	slices.Sort(names)
 	return names
 }

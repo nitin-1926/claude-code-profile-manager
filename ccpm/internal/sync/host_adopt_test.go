@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -308,7 +309,7 @@ func TestAdoptHostEntriesReportsProfileAppendAsMutation(t *testing.T) {
 		t.Error("Profiles-list append not reported as mutation — Save would be skipped (M16)")
 	}
 	inst := m.Find("matt-skills", manifest.KindSkill)
-	if inst == nil || !containsProfile(inst.Profiles, "new-profile") {
+	if inst == nil || !slices.Contains(inst.Profiles, "new-profile") {
 		t.Errorf("profile not appended: %+v", inst)
 	}
 

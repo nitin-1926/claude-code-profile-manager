@@ -2,8 +2,10 @@ package sync
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -134,7 +136,7 @@ func adoptHostEntries(profileDir, profileName string, entries []hostEntry, m *ma
 			})
 			mutated = true
 		} else {
-			if !containsProfile(existing.Profiles, profileName) {
+			if !slices.Contains(existing.Profiles, profileName) {
 				existing.Profiles = append(existing.Profiles, profileName)
 				mutated = true
 			}
@@ -170,21 +172,7 @@ func manifestKey(kind manifest.AssetKind, id string) string {
 }
 
 func sortedKinds(m map[manifest.AssetKind]string) []manifest.AssetKind {
-	out := make([]manifest.AssetKind, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func containsProfile(xs []string, target string) bool {
-	for _, x := range xs {
-		if x == target {
-			return true
-		}
-	}
-	return false
+	return slices.Sorted(maps.Keys(m))
 }
 
 // adoptionWarningOnce makes sure each (profile, scan-result) combination

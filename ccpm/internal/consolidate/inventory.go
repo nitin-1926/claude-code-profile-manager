@@ -3,8 +3,10 @@ package consolidate
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 )
 
@@ -233,21 +235,11 @@ func manifestProfileSet(m *Manifest) []string {
 			seen[p] = struct{}{}
 		}
 	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }
 
 func sortedKeys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(m))
 }
 
 func getMapField(m map[string]any, key string) map[string]any {

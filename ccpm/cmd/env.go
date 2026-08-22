@@ -55,8 +55,7 @@ Examples:
 			return runEnvSet(state, args)
 		},
 	}
-	setCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
-	_ = setCmd.MarkFlagRequired("profile")
+	requireProfileFlag(setCmd, &state.profile, "target profile (required)")
 
 	unsetCmd := &cobra.Command{
 		Use:   "unset <KEY> [KEY...]",
@@ -66,8 +65,7 @@ Examples:
 			return runEnvUnset(state, args)
 		},
 	}
-	unsetCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
-	_ = unsetCmd.MarkFlagRequired("profile")
+	requireProfileFlag(unsetCmd, &state.profile, "target profile (required)")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -77,8 +75,7 @@ Examples:
 			return runEnvList(state)
 		},
 	}
-	listCmd.Flags().StringVar(&state.profile, "profile", "", "profile to list (required)")
-	_ = listCmd.MarkFlagRequired("profile")
+	requireProfileFlag(listCmd, &state.profile, "profile to list (required)")
 
 	root.AddCommand(setCmd, unsetCmd, listCmd)
 	return root
@@ -99,13 +96,9 @@ func runEnvSet(state *envState, args []string) error {
 		}
 	}
 
-	cfg, err := config.Load()
+	cfg, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 	if p.Env == nil {
 		p.Env = map[string]string{}
@@ -125,13 +118,9 @@ func runEnvSet(state *envState, args []string) error {
 }
 
 func runEnvUnset(state *envState, args []string) error {
-	cfg, err := config.Load()
+	cfg, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 	if len(p.Env) == 0 {
 		fmt.Printf("Profile %q has no persisted env vars.\n", state.profile)
@@ -157,13 +146,9 @@ func runEnvUnset(state *envState, args []string) error {
 }
 
 func runEnvList(state *envState) error {
-	cfg, err := config.Load()
+	_, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 	if len(p.Env) == 0 {
 		fmt.Printf("No env vars set on profile %q. Add one with: ccpm env set KEY=VALUE --profile %s\n", state.profile, state.profile)

@@ -13,8 +13,10 @@ package consolidate
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -101,7 +103,7 @@ func Run(opts Options) error {
 
 	// --fix mode: apply only the autoFixable issues; leave the rest for the
 	// slash skill.
-	autoFixable := filterAutoFixable(issues)
+	autoFixable, manual := partitionByFixability(issues)
 	if len(autoFixable) == 0 {
 		fmt.Fprintln(opts.Out, "No auto-fixable issues. Run /consolidate-claude-assets in Claude Code for interactive proposals.")
 		printIssues(opts.Out, issues)
@@ -109,31 +111,24 @@ func Run(opts Options) error {
 	}
 
 	applied, failed := applyAutoFixes(opts.Out, autoFixable)
-	printGuidance(opts.Out, filterRemaining(issues))
+	printGuidance(opts.Out, manual)
 	if failed > 0 {
 		return fmt.Errorf("applied %d fix(es), %d failed — re-run `ccpm consolidate` to see what remains", applied, failed)
 	}
 	return nil
 }
 
-func filterAutoFixable(issues []Issue) []Issue {
-	var out []Issue
+// partitionByFixability splits issues into the ones ccpm can apply itself
+// (non-nil AutoFix) and the ones left for the /consolidate slash skill.
+func partitionByFixability(issues []Issue) (fixable, manual []Issue) {
 	for _, i := range issues {
 		if i.AutoFix != nil {
-			out = append(out, i)
+			fixable = append(fixable, i)
+		} else {
+			manual = append(manual, i)
 		}
 	}
-	return out
-}
-
-func filterRemaining(issues []Issue) []Issue {
-	var out []Issue
-	for _, i := range issues {
-		if i.AutoFix == nil {
-			out = append(out, i)
-		}
-	}
-	return out
+	return fixable, manual
 }
 
 func printSummary(out io.Writer, snap Snapshot, issues []Issue) {
@@ -169,12 +164,7 @@ func printSummary(out io.Writer, snap Snapshot, issues []Issue) {
 }
 
 func profileNames(snap Snapshot) []string {
-	names := make([]string, 0, len(snap.Profiles))
-	for n := range snap.Profiles {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(snap.Profiles))
 }
 
 func printIssues(out io.Writer, issues []Issue) {

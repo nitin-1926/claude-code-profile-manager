@@ -9,7 +9,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
@@ -75,9 +74,8 @@ Examples:
 			return runHooksAdd(state, cmd, args)
 		},
 	}
-	addCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
+	requireProfileFlag(addCmd, &state.profile, "target profile (required)")
 	addCmd.Flags().StringVar(&state.matcher, "matcher", "", "tool-name matcher (regex or literal)")
-	_ = addCmd.MarkFlagRequired("profile")
 
 	removeCmd := &cobra.Command{
 		Use:     "remove <event>",
@@ -92,9 +90,8 @@ a specific position (0-based), matching the numbering shown in ccpm hooks list.`
 			return runHooksRemove(state, args)
 		},
 	}
-	removeCmd.Flags().StringVar(&state.profile, "profile", "", "target profile (required)")
+	requireProfileFlag(removeCmd, &state.profile, "target profile (required)")
 	removeCmd.Flags().IntVar(&state.index, "index", -1, "0-based index of the entry to remove (default: last)")
-	_ = removeCmd.MarkFlagRequired("profile")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -104,8 +101,7 @@ a specific position (0-based), matching the numbering shown in ccpm hooks list.`
 			return runHooksList(state)
 		},
 	}
-	listCmd.Flags().StringVar(&state.profile, "profile", "", "profile to list (required)")
-	_ = listCmd.MarkFlagRequired("profile")
+	requireProfileFlag(listCmd, &state.profile, "profile to list (required)")
 
 	root.AddCommand(addCmd)
 	root.AddCommand(removeCmd)
@@ -218,13 +214,9 @@ func runHooksRemove(state *hooksState, args []string) error {
 }
 
 func runHooksList(state *hooksState) error {
-	cfg, err := config.Load()
+	_, p, err := loadProfile(state.profile)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	p, exists := cfg.Profiles[state.profile]
-	if !exists {
-		return fmt.Errorf("profile %q not found", state.profile)
+		return err
 	}
 
 	merged, err := buildMergedSettings(p.Dir, state.profile)
