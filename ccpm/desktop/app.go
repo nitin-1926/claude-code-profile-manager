@@ -7,6 +7,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/desktop/services"
+	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -29,6 +30,17 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.updater.SetContext(ctx)
 	a.startWatcher()
+}
+
+// onSecondInstanceLaunch runs when the single-instance lock turns away another
+// launch. Bring the window that is already running to the front so the user
+// sees a response rather than a click that seemingly did nothing.
+func (a *App) onSecondInstanceLaunch(_ options.SecondInstanceData) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.WindowUnminimise(a.ctx)
+	runtime.Show(a.ctx)
 }
 
 // shutdown tears the watcher down cleanly.

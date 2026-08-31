@@ -39,6 +39,14 @@ func main() {
 		BackgroundColour: &options.RGBA{R: 22, G: 21, B: 25, A: 1},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
+		// A second launch focuses the running window instead of starting another
+		// app. Belt-and-braces after the findCCPM fork bomb: if anything ever
+		// execs this binary again, the OS gets one extra process that exits
+		// immediately, not a tree of them.
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "dev.ccpm.desktop",
+			OnSecondInstanceLaunch: app.onSecondInstanceLaunch,
+		},
 		Mac: &mac.Options{
 			TitleBar:             mac.TitleBarHiddenInset(),
 			WebviewIsTransparent: false,
