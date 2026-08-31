@@ -42,6 +42,16 @@ jobs:
         shell: bash
         run: go test -race -count=1 -coverprofile=cover.out $(go list ./... | grep -v '/desktop')
 
+      # desktop/services is macOS-only but embeds nothing, so it compiles and
+      # tests without a built frontend — unlike package `desktop` itself, which
+      # go:embeds frontend/dist. Worth its own step: a bug in here (findCCPM
+      # returning the GUI binary) shipped a fork bomb to users precisely because
+      # no CI leg ever built this package.
+      - name: Test desktop services
+        if: runner.os == 'macOS'
+        shell: bash
+        run: go test -race -count=1 ./desktop/services/...
+
       # Floor set from the measured baseline (34.4% on 2026-06-10) minus a
       # small noise band. Ratchet upward as coverage improves — never down.
       - name: Coverage gate
