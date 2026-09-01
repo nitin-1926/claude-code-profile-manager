@@ -39,8 +39,14 @@ func main() {
 		},
 		// darkmatter dark background (oklch(0.1797 0.0043 308) ≈ #161519)
 		BackgroundColour: &options.RGBA{R: 22, G: 21, B: 25, A: 1},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		// The rail outlives the main window, so closing that window must stop
+		// quitting the app. Wails' WindowDelegate sends "Q" to Go on close
+		// unless this is set. Its partner is canHide=NO on the panel: the
+		// hide-on-close path calls [NSApp hide:], which would otherwise take
+		// the rail down with the window.
+		HideWindowOnClose: true,
+		OnStartup:         app.startup,
+		OnShutdown:        app.shutdown,
 		// A second launch focuses the running window instead of starting another
 		// app. Belt-and-braces after the findCCPM fork bomb: if anything ever
 		// execs this binary again, the OS gets one extra process that exits

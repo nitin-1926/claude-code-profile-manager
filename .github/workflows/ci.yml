@@ -50,7 +50,7 @@ jobs:
       - name: Test desktop services
         if: runner.os == 'macOS'
         shell: bash
-        run: go test -race -count=1 ./desktop/services/...
+        run: go test -race -count=1 ./desktop/services/... ./desktop/rail/...
 
       # Floor set from the measured baseline (34.4% on 2026-06-10) minus a
       # small noise band. Ratchet upward as coverage improves — never down.
