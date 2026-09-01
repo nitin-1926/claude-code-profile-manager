@@ -116,6 +116,22 @@ export namespace services {
 	        this.ccpmPath = source["ccpmPath"];
 	    }
 	}
+	export class DesktopPrefs {
+	    railMode: string;
+	    railEdge: string;
+	    railProfiles: Record<string, boolean>;
+	
+	    static createFrom(source: any = {}) {
+	        return new DesktopPrefs(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.railMode = source["railMode"];
+	        this.railEdge = source["railEdge"];
+	        this.railProfiles = source["railProfiles"];
+	    }
+	}
 	export class McpView {
 	    name: string;
 	    type: string;

@@ -181,3 +181,13 @@ export interface ProfileLimits {
   capturedAt: number
   windows: LimitWindow[]
 }
+
+export type RailMode = 'always' | 'hover' | 'hidden'
+export type RailEdge = 'right' | 'left' | 'top' | 'bottom'
+
+export interface DesktopPrefs {
+  railMode: RailMode
+  railEdge: RailEdge
+  /** Explicit choices only — a profile absent from this map is enabled. */
+  railProfiles: Record<string, boolean>
+}

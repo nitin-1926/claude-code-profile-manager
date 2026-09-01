@@ -26,6 +26,7 @@ func main() {
 	details := services.NewDetails()
 	settings := services.NewSettings()
 	limits := services.NewLimits()
+	prefs := services.NewPrefs()
 
 	err := wails.Run(&options.App{
 		Title:     "CCPM",
@@ -63,6 +64,7 @@ func main() {
 			details,
 			settings,
 			limits,
+			prefs,
 			updater,
 		},
 	})
