@@ -158,3 +158,26 @@ export interface UpdateProgress {
   phase: string
   percent: number
 }
+
+/** Why a profile has no limit reading. Empty string means it does have one. */
+export type LimitsReason = '' | 'no-data' | 'not-subscription-account'
+
+export interface LimitWindow {
+  key: string
+  label: string
+  usedPercentage: number
+  /** Unix seconds; 0 when Claude Code reported no reset clock. */
+  resetsAt: number
+}
+
+export interface ProfileLimits {
+  profile: string
+  account: string
+  plan: string
+  /** False means render the unavailable state and explain `reason` — never a 0% ring. */
+  available: boolean
+  reason: LimitsReason
+  /** Unix seconds the reading was captured. Always show this; the numbers are not live. */
+  capturedAt: number
+  windows: LimitWindow[]
+}

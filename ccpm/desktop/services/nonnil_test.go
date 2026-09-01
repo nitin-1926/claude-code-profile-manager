@@ -61,6 +61,23 @@ func TestUsageNoNullArrays(t *testing.T) {
 	}
 }
 
+func TestLimitsNoNullArrays(t *testing.T) {
+	name := firstProfile(t)
+	l, err := NewLimits().Get(name)
+	if err != nil {
+		t.Fatalf("Limits.Get: %v", err)
+	}
+	assertNoNullArrays(t, l, "windows")
+
+	all, err := NewLimits().All()
+	if err != nil {
+		t.Fatalf("Limits.All: %v", err)
+	}
+	for _, p := range all {
+		assertNoNullArrays(t, p, "windows")
+	}
+}
+
 func TestCascadeNoNullArrays(t *testing.T) {
 	name := firstProfile(t)
 	c, err := NewCascade().Get(name)

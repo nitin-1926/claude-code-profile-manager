@@ -5,6 +5,7 @@ import { List as ProfilesList, Get as ProfileGet } from '../../wailsjs/go/servic
 import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
+import { All as LimitsAll, Get as LimitsGet } from '../../wailsjs/go/services/LimitsService'
 import {
   Clone as MClone,
   Rename as MRename,
@@ -40,6 +41,7 @@ import type {
   Details,
   HealthResult,
   Profile,
+  ProfileLimits,
   SettingKV,
   UpdateInfo,
   UpdateProgress,
@@ -57,6 +59,10 @@ export const api = {
   usage: {
     get: (name: string, window: string) => UsageGet(name, window) as unknown as Promise<Usage>,
     blocks: (name: string) => UsageBlocks(name) as unknown as Promise<Block[]>,
+  },
+  limits: {
+    all: () => LimitsAll() as unknown as Promise<ProfileLimits[]>,
+    get: (name: string) => LimitsGet(name) as unknown as Promise<ProfileLimits>,
   },
   health: {
     doctor: () => Doctor() as unknown as Promise<HealthResult>,
