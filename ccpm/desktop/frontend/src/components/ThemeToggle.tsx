@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Sun, Moon, Contrast, Check, type LucideIcon } from 'lucide-react'
 import { useTheme, THEMES, type Theme } from '@/lib/theme'
+import { SetTheme } from '@/../wailsjs/go/services/PrefsService'
 import { cn } from '@/lib/utils'
 
 const ICON: Record<Theme, LucideIcon> = {
@@ -76,6 +77,11 @@ export function ThemeToggle() {
                 aria-checked={active}
                 onClick={() => {
                   setTheme(t.id)
+                  // The usage rail is a native panel: it cannot read this
+                  // choice from localStorage, so push it to the preferences
+                  // file, which reshapes the rail. Best-effort — a failed
+                  // write must not block the theme the user just picked.
+                  SetTheme(t.id).catch(() => undefined)
                   close()
                 }}
                 className={cn(

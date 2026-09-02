@@ -1,4 +1,5 @@
 import { ThemeToggle } from './ThemeToggle'
+import { RailMenu } from './RailMenu'
 
 // Full-width draggable chrome strip. The macOS traffic lights overlay its
 // left edge (Wails can't reposition them — issue #4227), so this strip stays
@@ -16,6 +17,7 @@ export function TitleBar({ right }: { right?: React.ReactNode }) {
         style={{ '--wails-draggable': 'no-drag' } as React.CSSProperties}
       >
         {right}
+        <RailMenu />
         <ThemeToggle />
       </div>
     </header>

@@ -13,3 +13,7 @@ export function Set(arg1) {
 export function SetRailProfile(arg1, arg2) {
   return window['go']['services']['PrefsService']['SetRailProfile'](arg1, arg2);
 }
+
+export function SetTheme(arg1) {
+  return window['go']['services']['PrefsService']['SetTheme'](arg1);
+}

@@ -120,6 +120,7 @@ export namespace services {
 	    railMode: string;
 	    railEdge: string;
 	    railProfiles: Record<string, boolean>;
+	    theme: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DesktopPrefs(source);
@@ -130,6 +131,7 @@ export namespace services {
 	        this.railMode = source["railMode"];
 	        this.railEdge = source["railEdge"];
 	        this.railProfiles = source["railProfiles"];
+	        this.theme = source["theme"];
 	    }
 	}
 	export class McpView {
