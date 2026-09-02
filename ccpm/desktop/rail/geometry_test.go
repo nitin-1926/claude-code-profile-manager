@@ -273,3 +273,54 @@ func TestEdgeVertical(t *testing.T) {
 		t.Error("top and bottom rails stack horizontally")
 	}
 }
+
+// The collapsed peek must hug the screen edge — flush, not inset — and cover
+// exactly the same span as the full panel, or the rail appears to jump sideways
+// as it reveals rather than sliding out.
+func TestPeekRectHugsTheEdge(t *testing.T) {
+	for _, edge := range []Edge{EdgeRight, EdgeLeft, EdgeTop, EdgeBottom} {
+		full := PanelRect(laptop, edge, 3)
+		peek := PeekRect(laptop, edge, 3)
+
+		if edge.Vertical() {
+			if !closeTo(peek.W, PeekThickness) {
+				t.Errorf("%s: peek width = %v, want %v", edge, peek.W, PeekThickness)
+			}
+			if !closeTo(peek.Y, full.Y) || !closeTo(peek.H, full.H) {
+				t.Errorf("%s: peek spans %v..%v, full spans %v..%v", edge,
+					peek.Y, peek.Y+peek.H, full.Y, full.Y+full.H)
+			}
+		} else {
+			if !closeTo(peek.H, PeekThickness) {
+				t.Errorf("%s: peek height = %v, want %v", edge, peek.H, PeekThickness)
+			}
+			if !closeTo(peek.X, full.X) || !closeTo(peek.W, full.W) {
+				t.Errorf("%s: peek spans %v..%v, full spans %v..%v", edge,
+					peek.X, peek.X+peek.W, full.X, full.X+full.W)
+			}
+		}
+
+		// Flush against the edge, and never past it.
+		if peek.X < laptop.X || peek.Y < laptop.Y ||
+			peek.X+peek.W > laptop.X+laptop.W || peek.Y+peek.H > laptop.Y+laptop.H {
+			t.Errorf("%s: peek %+v escapes the visible frame %+v", edge, peek, laptop)
+		}
+	}
+
+	// Right edge specifically: flush means touching, not EdgeMargin away.
+	if got := PeekRect(laptop, EdgeRight, 3); !closeTo(got.X+got.W, laptop.X+laptop.W) {
+		t.Errorf("right peek ends at %v, want the screen edge %v", got.X+got.W, laptop.X+laptop.W)
+	}
+	if got := PeekRect(laptop, EdgeLeft, 3); !closeTo(got.X, laptop.X) {
+		t.Errorf("left peek starts at %v, want the screen edge %v", got.X, laptop.X)
+	}
+}
+
+// The peek is the shape the rail wears before anyone has hovered it, so a
+// degenerate screen must not put it off-screen either.
+func TestPeekRectSurvivesAnUnknownScreen(t *testing.T) {
+	p := PeekRect(Rect{}, EdgeRight, 3)
+	if p.X < 0 || p.Y < 0 || p.W <= 0 || p.H <= 0 {
+		t.Errorf("peek against an unknown screen is unplaceable: %+v", p)
+	}
+}

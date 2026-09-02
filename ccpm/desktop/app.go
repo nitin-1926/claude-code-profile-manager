@@ -63,17 +63,19 @@ func (a *App) ApplyRailPrefs() {
 	if err != nil {
 		limits = nil
 	}
-	shown := 0
+	shown := make([]services.ProfileLimits, 0, len(limits))
 	for _, l := range limits {
 		if prefs.RailEnabled(l.Profile) {
-			shown++
+			shown = append(shown, l)
 		}
 	}
 
-	a.rail.SetLayout(rail.ParseEdge(prefs.RailEdge), shown)
+	a.rail.SetLayout(rail.ParseEdge(prefs.RailEdge), len(shown))
+	a.rail.SetModel(rail.BuildModel(shown, prefs.Theme))
+	a.rail.SetHoverMode(prefs.RailMode == services.RailModeHover)
 	// Hover mode still shows the panel; the reveal animation is what hover
 	// drives. Hidden is the only mode that takes it off screen entirely.
-	a.rail.SetVisible(prefs.RailMode != services.RailModeHidden && shown > 0)
+	a.rail.SetVisible(prefs.RailMode != services.RailModeHidden && len(shown) > 0)
 }
 
 // onSecondInstanceLaunch runs when the single-instance lock turns away another

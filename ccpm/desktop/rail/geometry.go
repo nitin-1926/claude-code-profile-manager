@@ -54,6 +54,14 @@ const (
 	EndPadding = 10
 	// EdgeMargin holds the rail just off the screen edge so its shadow reads.
 	EdgeMargin = 8
+	// PeekThickness is how much of the rail stays on screen in hover mode: a
+	// sliver hugging the edge, wide enough to aim at and to take a mouse-enter,
+	// narrow enough not to be in the way.
+	//
+	// The collapsed panel is deliberately this narrow rather than full width
+	// and transparent. A full-width invisible window at the screen edge would
+	// swallow every click meant for the app underneath it.
+	PeekThickness = 10
 )
 
 // StackLength returns the rail's long dimension for n profiles. A rail with no
@@ -112,6 +120,29 @@ func PanelRect(visible Rect, edge Edge, profiles int) Rect {
 		y = visible.Y + visible.H - Thickness - EdgeMargin
 	}
 	return Rect{X: x, Y: y, W: length, H: Thickness}
+}
+
+// PeekRect is where the rail sits while collapsed in hover mode: the same
+// extent along its long axis, but only PeekThickness deep and flush against the
+// screen edge, so it reads as a tab waiting to be pulled out rather than a
+// window someone forgot to close.
+func PeekRect(visible Rect, edge Edge, profiles int) Rect {
+	full := PanelRect(visible, edge, profiles)
+	if visible.W <= 0 || visible.H <= 0 {
+		visible = fallbackScreen
+	}
+	if edge.Vertical() {
+		x := visible.X + visible.W - PeekThickness
+		if edge == EdgeLeft {
+			x = visible.X
+		}
+		return Rect{X: x, Y: full.Y, W: PeekThickness, H: full.H}
+	}
+	y := visible.Y
+	if edge == EdgeTop {
+		y = visible.Y + visible.H - PeekThickness
+	}
+	return Rect{X: full.X, Y: y, W: full.W, H: PeekThickness}
 }
 
 // SlotRect returns the sub-rectangle of the panel occupied by ring i, in

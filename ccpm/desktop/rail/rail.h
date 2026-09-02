@@ -14,8 +14,22 @@ void CCPMRailStart(void);
 // Destroys the panel. Idempotent.
 void CCPMRailStop(void);
 
-// Moves and resizes the panel, in screen coordinates (origin bottom-left).
-void CCPMRailSetFrame(double x, double y, double w, double h);
+// Publishes the two frames the hover reveal moves between, in screen
+// coordinates (origin bottom-left): the collapsed peek and the full panel.
+// Both live on the C side so a mouse-enter can animate without a cgo hop.
+void CCPMRailSetFrames(double px, double py, double pw, double ph,
+                       double fx, double fy, double fw, double fh);
+
+// Replaces the drawn contents. json is the rail.Model encoding: theme tokens
+// plus one entry per profile ring.
+void CCPMRailSetModel(const char *json);
+
+// hover != 0 means collapse to the peek when the pointer leaves. Off means the
+// rail stays fully revealed.
+void CCPMRailSetHoverMode(int hover);
+
+// Expands or collapses now, animating unless Reduce Motion is on.
+void CCPMRailSetReveal(int expanded);
 
 void CCPMRailShow(void);
 void CCPMRailHide(void);

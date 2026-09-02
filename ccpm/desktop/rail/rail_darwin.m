@@ -3,6 +3,7 @@
 #import <Cocoa/Cocoa.h>
 #import <os/lock.h>
 #import "rail.h"
+#import "rail_internal.h"
 
 // Every Objective-C symbol in this file is prefixed CCPMRail. Wails already
 // defines WailsWindow, AppDelegate and WindowDelegate in the same process, and
@@ -40,12 +41,13 @@ static CCPMRailScreenObserver *gObserver = nil;
 static NSRect gVisible = {{0, 0}, {0, 0}};
 static os_unfair_lock gVisibleLock = OS_UNFAIR_LOCK_INIT;
 
-// Runs block on the main thread.
+// Runs block on the main thread. Declared in rail_internal.h; render_darwin.m
+// uses it too, so it is deliberately not static.
 //
 // dispatch_async, never dispatch_sync: a dispatch_sync to the main queue from
 // the main thread deadlocks instantly, and this file is called from both.
 // The isMainThread check keeps ordering intuitive when we are already there.
-static void ccpmRailOnMain(dispatch_block_t block) {
+void ccpmRailOnMain(dispatch_block_t block) {
   if ([NSThread isMainThread]) {
     block();
   } else {
@@ -141,6 +143,10 @@ void CCPMRailStart(void) {
     fx.layer.masksToBounds = YES;
     fx.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     gPanel.contentView = fx;
+
+    // NSTrackingInVisibleRect means the area follows the view through every
+    // resize the hover reveal performs, so this is the only install needed.
+    CCPMRailUpdateTracking();
   });
 }
 
@@ -159,14 +165,8 @@ void CCPMRailStop(void) {
   });
 }
 
-void CCPMRailSetFrame(double x, double y, double w, double h) {
-  ccpmRailOnMain(^{
-    if (gPanel == nil) {
-      return;
-    }
-    [gPanel setFrame:NSMakeRect(x, y, w, h) display:YES];
-  });
-}
+// Main thread only, which every caller in render_darwin.m already is.
+NSPanel *CCPMRailPanelRef(void) { return gPanel; }
 
 void CCPMRailShow(void) {
   ccpmRailOnMain(^{

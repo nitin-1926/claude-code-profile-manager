@@ -4,13 +4,17 @@ package rail
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc -Wno-unused-parameter
-#cgo LDFLAGS: -framework Cocoa
+#cgo LDFLAGS: -framework Cocoa -framework QuartzCore
 #include <stdlib.h>
 #include "rail.h"
 */
 import "C"
 
-import "sync"
+import (
+	"encoding/json"
+	"sync"
+	"unsafe"
+)
 
 // Controller owns the panel's lifecycle and placement.
 //
@@ -25,6 +29,8 @@ type Controller struct {
 	edge     Edge
 	profiles int
 	visible  bool
+	hover    bool
+	model    Model
 }
 
 // New returns an unstarted controller.
@@ -41,7 +47,9 @@ func (c *Controller) Start() {
 	}
 	C.CCPMRailStart()
 	c.started = true
+	C.CCPMRailSetHoverMode(cbool(c.hover))
 	c.applyLocked()
+	c.pushModelLocked()
 }
 
 // Stop tears the panel down. Idempotent.
@@ -63,6 +71,49 @@ func (c *Controller) SetLayout(edge Edge, profiles int) {
 	c.edge = edge
 	c.profiles = profiles
 	c.applyLocked()
+}
+
+// SetHoverMode chooses between collapsing to a peek when the pointer leaves and
+// staying fully revealed.
+func (c *Controller) SetHoverMode(hover bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hover = hover
+	if !c.started {
+		return
+	}
+	C.CCPMRailSetHoverMode(cbool(hover))
+}
+
+// SetModel replaces what the rail draws. Held so a later Start can redraw
+// without the caller having to remember to push the model again.
+func (c *Controller) SetModel(m Model) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.model = m
+	c.pushModelLocked()
+}
+
+// pushModelLocked hands the model to the renderer. Caller holds mu.
+func (c *Controller) pushModelLocked() {
+	if !c.started {
+		return
+	}
+	// EndPadding travels with the model so the C layer divides the stack with
+	// the same number geometry.go does, instead of keeping its own copy to
+	// drift out of step.
+	payload := struct {
+		Model
+		EndPadding float64 `json:"endPadding"`
+	}{Model: c.model, EndPadding: EndPadding}
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return // a model that will not marshal is a bug, but not one worth a panic in the UI
+	}
+	cs := C.CString(string(b))
+	defer C.free(unsafe.Pointer(cs))
+	C.CCPMRailSetModel(cs)
 }
 
 // SetVisible shows or hides the panel.
@@ -103,13 +154,24 @@ func (c *Controller) Edge() Edge {
 	return c.edge
 }
 
-// applyLocked pushes the computed frame down to the panel. Caller holds mu.
+// applyLocked pushes the computed frames down to the panel. Caller holds mu.
 func (c *Controller) applyLocked() {
 	if !c.started {
 		return
 	}
-	r := PanelRect(VisibleFrame(), c.edge, c.profiles)
-	C.CCPMRailSetFrame(C.double(r.X), C.double(r.Y), C.double(r.W), C.double(r.H))
+	v := VisibleFrame()
+	full := PanelRect(v, c.edge, c.profiles)
+	peek := PeekRect(v, c.edge, c.profiles)
+	C.CCPMRailSetFrames(
+		C.double(peek.X), C.double(peek.Y), C.double(peek.W), C.double(peek.H),
+		C.double(full.X), C.double(full.Y), C.double(full.W), C.double(full.H))
+}
+
+func cbool(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // VisibleFrame returns the main screen's usable area — the full screen minus
