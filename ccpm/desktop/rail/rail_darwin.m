@@ -159,6 +159,7 @@ void CCPMRailStop(void) {
     if (gPanel == nil) {
       return;
     }
+    ccpmCalloutStop();
     [gPanel orderOut:nil];
     [gPanel close];
     gPanel = nil;

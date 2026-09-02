@@ -71,6 +71,9 @@ func (c *Controller) SetLayout(edge Edge, profiles int) {
 	c.edge = edge
 	c.profiles = profiles
 	c.applyLocked()
+	// The anchors are derived from the panel's placement, so a re-place makes
+	// the ones the renderer is holding wrong.
+	c.pushModelLocked()
 }
 
 // SetHoverMode chooses between collapsing to a peek when the pointer leaves and
@@ -94,6 +97,13 @@ func (c *Controller) SetModel(m Model) {
 	c.pushModelLocked()
 }
 
+// calloutAnchor is where a ring's callout points, in screen coordinates.
+type calloutAnchor struct {
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	Grows string  `json:"grows"`
+}
+
 // pushModelLocked hands the model to the renderer. Caller holds mu.
 func (c *Controller) pushModelLocked() {
 	if !c.started {
@@ -102,10 +112,23 @@ func (c *Controller) pushModelLocked() {
 	// EndPadding travels with the model so the C layer divides the stack with
 	// the same number geometry.go does, instead of keeping its own copy to
 	// drift out of step.
+	// Anchors are computed here rather than in BuildModel because they depend
+	// on the panel's placement, which only the controller knows. Computing them
+	// with CalloutAnchor keeps the "grow away from the screen edge" rule in the
+	// one tested place instead of re-deriving it in Objective-C.
+	panel := PanelRect(VisibleFrame(), c.edge, c.profiles)
+	n := len(c.model.Slots)
+	anchors := make([]calloutAnchor, 0, n)
+	for i := range n {
+		x, y, grows := CalloutAnchor(panel, c.edge, i, n)
+		anchors = append(anchors, calloutAnchor{X: x, Y: y, Grows: string(grows)})
+	}
+
 	payload := struct {
 		Model
-		EndPadding float64 `json:"endPadding"`
-	}{Model: c.model, EndPadding: EndPadding}
+		EndPadding float64         `json:"endPadding"`
+		Anchors    []calloutAnchor `json:"anchors"`
+	}{Model: c.model, EndPadding: EndPadding, Anchors: anchors}
 
 	b, err := json.Marshal(payload)
 	if err != nil {

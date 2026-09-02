@@ -16,4 +16,15 @@ NSPanel *CCPMRailPanelRef(void);
 // Installs the hover tracking area on the panel's content view.
 void CCPMRailUpdateTracking(void);
 
+// Unpacks a 0xRRGGBB value from the model into an sRGB colour.
+NSColor *ccpmRailColor(unsigned int rgb, CGFloat alpha);
+
+// The hover callout. Driven from render_darwin.m, which already holds the
+// parsed model — passing dictionaries rather than re-encoding JSON for a second
+// trip across the same process.
+void ccpmCalloutShow(NSDictionary *callout, NSDictionary *theme,
+                     double anchorX, double anchorY, NSString *grows);
+void ccpmCalloutHide(void);
+void ccpmCalloutStop(void);
+
 #endif

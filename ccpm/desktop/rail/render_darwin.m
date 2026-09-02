@@ -34,10 +34,19 @@ static const NSTimeInterval kRevealDuration = 0.18;
 // pointer is already moving and a cgo hop per event is latency for nothing.
 static NSRect gPeekFrame = {{0, 0}, {0, 0}};
 static NSRect gFullFrame = {{0, 0}, {0, 0}};
+static CGFloat gEndPadding = 0;
 static BOOL gHoverMode = NO;   // collapse when the pointer leaves
 static BOOL gExpanded = NO;
 static NSTrackingArea *gTracking = nil;
 static CALayer *gStack = nil;  // holds every ring layer; replaced wholesale
+
+// The parsed model, kept so a hover can answer from memory. The pointer is
+// already moving when the callout is needed; re-reading three profiles' limit
+// files at that moment would put disk I/O on the hover path for data we have.
+static NSArray *gSlots = nil;
+static NSArray *gAnchors = nil;
+static NSDictionary *gTheme = nil;
+static NSInteger gHovered = -1;
 
 // Owns the mouse-entered callback. A separate object rather than a subclassed
 // view so the NSVisualEffectView stays exactly what AppKit gave us.
@@ -56,6 +65,10 @@ static CALayer *gStack = nil;  // holds every ring layer; replaced wholesale
 @end
 
 static id gMouseMonitor = nil;
+
+// Defined below, next to the hit-testing it depends on; forward-declared
+// because the pointer-leave watch installed here also drives it.
+static void ccpmRailSyncCallout(void);
 
 // Stops watching for the pointer to leave.
 static void ccpmRailEndWatch(void) {
@@ -85,14 +98,63 @@ static void ccpmRailBeginWatch(void) {
     }
     if (!NSPointInRect([NSEvent mouseLocation], gFullFrame)) {
       CCPMRailSetReveal(0);
+      return;
     }
+    // Global monitors see movement the tracking area does not, and the pointer
+    // can cross between rings without AppKit sending us a mouseMoved.
+    ccpmRailSyncCallout();
   }];
+}
+
+// Which ring the pointer is over, or -1. Divides the stack the same way the
+// renderer lays it out, and index 0 is the TOP ring because macOS y grows
+// upward — matching SlotRect in geometry.go.
+static NSInteger ccpmRailSlotAt(NSPoint screenPoint) {
+  NSUInteger n = gSlots.count;
+  if (n == 0 || !NSPointInRect(screenPoint, gFullFrame)) {
+    return -1;
+  }
+  CGFloat pad = gEndPadding;
+  CGFloat usable = NSHeight(gFullFrame) - 2 * pad;
+  if (usable <= 0) {
+    return -1;
+  }
+  CGFloat fromTop = NSMaxY(gFullFrame) - pad - screenPoint.y;
+  if (fromTop < 0 || fromTop >= usable) {
+    return -1;
+  }
+  NSInteger i = (NSInteger)(fromTop / (usable / n));
+  return (i < 0 || i >= (NSInteger)n) ? -1 : i;
+}
+
+// Shows, moves, or hides the callout for wherever the pointer currently is.
+static void ccpmRailSyncCallout(void) {
+  NSInteger i = ccpmRailSlotAt([NSEvent mouseLocation]);
+  // Collapsed, there is nothing to point at.
+  if (gHoverMode && !gExpanded) {
+    i = -1;
+  }
+  if (i == gHovered) {
+    return; // no churn while the pointer moves within one ring
+  }
+  gHovered = i;
+  if (i < 0 || i >= (NSInteger)gAnchors.count) {
+    ccpmCalloutHide();
+    return;
+  }
+  NSDictionary *a = gAnchors[i];
+  ccpmCalloutShow(gSlots[i][@"callout"], gTheme,
+                  [a[@"x"] doubleValue], [a[@"y"] doubleValue], a[@"grows"]);
 }
 
 @implementation CCPMRailTracker
 - (void)mouseEntered:(NSEvent *)event {
   (void)event;
   CCPMRailSetReveal(1);
+}
+- (void)mouseMoved:(NSEvent *)event {
+  (void)event;
+  ccpmRailSyncCallout();
 }
 @end
 
@@ -105,7 +167,7 @@ static CCPMRailTracker *CCPMRailTrackerRef(void) {
   return gTracker;
 }
 
-static NSColor *ccpmRailColor(unsigned int rgb, CGFloat alpha) {
+NSColor *ccpmRailColor(unsigned int rgb, CGFloat alpha) {
   return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
                              green:((rgb >> 8) & 0xFF) / 255.0
                               blue:(rgb & 0xFF) / 255.0
@@ -222,6 +284,13 @@ void CCPMRailSetModel(const char *json) {
     if (![slots isKindOfClass:[NSArray class]] || ![theme isKindOfClass:[NSDictionary class]]) {
       return;
     }
+    gSlots = slots;
+    gTheme = theme;
+    gAnchors = [model[@"anchors"] isKindOfClass:[NSArray class]] ? model[@"anchors"] : @[];
+    gEndPadding = [model[@"endPadding"] doubleValue];
+    // The stack was rebuilt underneath whatever was hovered, so re-resolve
+    // rather than leaving a callout describing a ring that has moved.
+    gHovered = -1;
 
     NSView *content = panel.contentView;
     content.wantsLayer = YES;
@@ -233,7 +302,7 @@ void CCPMRailSetModel(const char *json) {
 
     NSUInteger n = slots.count;
     if (n > 0) {
-      CGFloat pad = [model[@"endPadding"] doubleValue];
+      CGFloat pad = gEndPadding;
       CGFloat slotH = (CGRectGetHeight(content.bounds) - 2 * pad) / n;
       for (NSUInteger i = 0; i < n; i++) {
         // Index 0 is the TOP ring, and macOS y grows upward — mirroring
@@ -295,6 +364,10 @@ void CCPMRailSetReveal(int expanded) {
     } else {
       ccpmRailEndWatch();
     }
+    if (!gExpanded) {
+      gHovered = -1;
+      ccpmCalloutHide();
+    }
 
     if (ccpmRailReduceMotion()) {
       [panel setFrame:target display:YES];
@@ -329,8 +402,8 @@ void CCPMRailUpdateTracking(void) {
     }
     gTracking = [[NSTrackingArea alloc]
         initWithRect:content.bounds
-             options:(NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways |
-                      NSTrackingInVisibleRect)
+             options:(NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
+                      NSTrackingActiveAlways | NSTrackingInVisibleRect)
                owner:CCPMRailTrackerRef()
             userInfo:nil];
     [content addTrackingArea:gTracking];

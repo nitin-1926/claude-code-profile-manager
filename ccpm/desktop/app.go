@@ -3,6 +3,8 @@
 package main
 
 import (
+	"time"
+
 	"context"
 
 	"github.com/fsnotify/fsnotify"
@@ -71,7 +73,7 @@ func (a *App) ApplyRailPrefs() {
 	}
 
 	a.rail.SetLayout(rail.ParseEdge(prefs.RailEdge), len(shown))
-	a.rail.SetModel(rail.BuildModel(shown, prefs.Theme))
+	a.rail.SetModel(rail.BuildModel(shown, prefs.Theme, time.Now()))
 	a.rail.SetHoverMode(prefs.RailMode == services.RailModeHover)
 	// Hover mode still shows the panel; the reveal animation is what hover
 	// drives. Hidden is the only mode that takes it off screen entirely.

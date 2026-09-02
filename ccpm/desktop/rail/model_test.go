@@ -43,7 +43,7 @@ func available(profile string, fiveHour, sevenDay float64) services.ProfileLimit
 }
 
 func TestBuildModelMapsBothWindows(t *testing.T) {
-	m := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite)
+	m := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite, now)
 	if len(m.Slots) != 1 {
 		t.Fatalf("got %d slots, want 1", len(m.Slots))
 	}
@@ -76,7 +76,7 @@ func TestUnavailableProfileDrawsNoFill(t *testing.T) {
 			Profile:   "cin",
 			Available: false,
 			Reason:    reason,
-		}}, ThemeGraphite)
+		}}, ThemeGraphite, now)
 		s := m.Slots[0]
 		if s.Available {
 			t.Errorf("%s: slot reported available", reason)
@@ -101,7 +101,7 @@ func TestPartialWindowsLeaveTheOtherArcEmpty(t *testing.T) {
 		Profile:   "labs",
 		Available: true,
 		Windows:   []services.LimitWindowDTO{{Key: usage.KeyFiveHour, UsedPercentage: 10}},
-	}}, ThemeGraphite)
+	}}, ThemeGraphite, now)
 	s := m.Slots[0]
 	if s.Outer != 0.1 {
 		t.Errorf("outer = %v, want 0.1", s.Outer)
@@ -120,7 +120,7 @@ func TestPercentRoundsRatherThanTruncates(t *testing.T) {
 		100:  "100%",
 	}
 	for used, want := range cases {
-		m := BuildModel([]services.ProfileLimits{available("work", used, 0)}, ThemeGraphite)
+		m := BuildModel([]services.ProfileLimits{available("work", used, 0)}, ThemeGraphite, now)
 		if got := m.Slots[0].Percent; got != want {
 			t.Errorf("%v%% used rendered as %q, want %q", used, got, want)
 		}
@@ -129,7 +129,7 @@ func TestPercentRoundsRatherThanTruncates(t *testing.T) {
 
 func TestBuildModelPreservesOrder(t *testing.T) {
 	in := []services.ProfileLimits{available("cin", 1, 1), available("labs", 2, 2), available("work", 3, 3)}
-	m := BuildModel(in, ThemeGraphite)
+	m := BuildModel(in, ThemeGraphite, now)
 	for i, want := range []string{"cin", "labs", "work"} {
 		if m.Slots[i].Profile != want {
 			t.Errorf("slot %d is %q, want %q — ring order must not reshuffle between refreshes", i, m.Slots[i].Profile, want)
@@ -137,30 +137,13 @@ func TestBuildModelPreservesOrder(t *testing.T) {
 	}
 }
 
-func TestInitialOf(t *testing.T) {
-	cases := map[string]string{
-		"work":     "W",
-		"labs":     "L",
-		"  cin":    "C",
-		"9to5":     "9",
-		"":         "•",
-		"   ":      "•",
-		"-private": "P",
-	}
-	for in, want := range cases {
-		if got := initialOf(in); got != want {
-			t.Errorf("initialOf(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestBuildModelCarriesTheTheme(t *testing.T) {
-	if got := BuildModel(nil, ThemeLight).Theme; got != PaletteFor(ThemeLight) {
+	if got := BuildModel(nil, ThemeLight, now).Theme; got != PaletteFor(ThemeLight) {
 		t.Errorf("theme = %+v, want the light palette", got)
 	}
 	// No profiles is a legitimate state (all toggled off); it must not panic
 	// and must still carry a usable palette.
-	if BuildModel(nil, ThemeGraphite).Theme.Foreground == 0 {
+	if BuildModel(nil, ThemeGraphite, now).Theme.Foreground == 0 {
 		t.Error("an empty model has no usable foreground colour")
 	}
 }

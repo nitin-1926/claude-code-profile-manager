@@ -4,8 +4,7 @@ package rail
 
 import (
 	"fmt"
-	"strings"
-	"unicode"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/desktop/services"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
@@ -28,9 +27,6 @@ type Model struct {
 // menu item.
 type Slot struct {
 	Profile string `json:"profile"`
-	// Initial is the single glyph drawn inside the ring when there is no room
-	// for the name.
-	Initial string `json:"initial"`
 	// Percent is the label under the ring: the five-hour figure, or an em-dash
 	// when there is nothing honest to show.
 	Percent string `json:"percent"`
@@ -43,6 +39,12 @@ type Slot struct {
 	Inner    float64 `json:"inner"` // seven-day fill, 0..1
 	OuterRGB RGB     `json:"outerRGB"`
 	InnerRGB RGB     `json:"innerRGB"`
+
+	// Callout travels with the ring rather than being fetched on hover. The
+	// pointer is already moving when it is needed, and re-reading three
+	// profiles' limit files at that moment would put disk I/O on the hover
+	// path for data we already have.
+	Callout Callout `json:"callout"`
 }
 
 // FillFraction converts a used-percentage to an arc sweep.
@@ -65,18 +67,18 @@ func FillFraction(usedPercentage float64) float64 {
 //
 // Order is the caller's; it is already name-sorted by LimitsService.All so the
 // rings do not reshuffle between refreshes.
-func BuildModel(limits []services.ProfileLimits, theme string) Model {
+func BuildModel(limits []services.ProfileLimits, theme string, now time.Time) Model {
 	m := Model{Theme: PaletteFor(theme), Slots: make([]Slot, 0, len(limits))}
 	for _, l := range limits {
-		m.Slots = append(m.Slots, buildSlot(l))
+		m.Slots = append(m.Slots, buildSlot(l, now))
 	}
 	return m
 }
 
-func buildSlot(l services.ProfileLimits) Slot {
+func buildSlot(l services.ProfileLimits, now time.Time) Slot {
 	s := Slot{
+		Callout:   BuildCallout(l, now),
 		Profile:   l.Profile,
-		Initial:   initialOf(l.Profile),
 		Percent:   "—",
 		Available: l.Available,
 		// Unavailable still needs colours: the renderer tints the track with
@@ -102,16 +104,4 @@ func buildSlot(l services.ProfileLimits) Slot {
 		}
 	}
 	return s
-}
-
-// initialOf picks the glyph for the ring's centre: the first letter of the
-// profile name, upper-cased. Falls back to a bullet for a name that starts with
-// something unprintable, so the ring is never centred on empty space.
-func initialOf(profile string) string {
-	for _, r := range strings.TrimSpace(profile) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return strings.ToUpper(string(r))
-		}
-	}
-	return "•"
 }
