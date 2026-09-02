@@ -147,3 +147,22 @@ func TestSetReturnsNormalizedValues(t *testing.T) {
 		t.Errorf("Set discarded a valid edge: %q", got.RailEdge)
 	}
 }
+
+// The rail is a native panel and cannot read the frontend's localStorage, so
+// the theme reaches it through this file. A hand-edited or future-written value
+// must not leave the rail drawing in an unknown palette.
+func TestThemeNormalizesToAKnownValue(t *testing.T) {
+	if got := DefaultPrefs().Theme; got != ThemeGraphite {
+		t.Errorf("default theme = %q, want %q", got, ThemeGraphite)
+	}
+	for _, valid := range []string{ThemeGraphite, ThemeMidnight, ThemeLight} {
+		if got := (DesktopPrefs{Theme: valid}).normalize().Theme; got != valid {
+			t.Errorf("normalize dropped the valid theme %q, got %q", valid, got)
+		}
+	}
+	for _, bad := range []string{"", "solarized", "GRAPHITE", "dark"} {
+		if got := (DesktopPrefs{Theme: bad}).normalize().Theme; got != ThemeGraphite {
+			t.Errorf("normalize(%q) = %q, want the graphite fallback", bad, got)
+		}
+	}
+}

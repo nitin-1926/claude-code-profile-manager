@@ -28,6 +28,15 @@ const (
 )
 
 // Rail edges.
+// Theme names, matching the `data-theme` values in
+// desktop/frontend/src/globals.css. Duplicated as constants here rather than
+// imported from the rail package so services stays free of cgo.
+const (
+	ThemeGraphite = "graphite"
+	ThemeMidnight = "midnight"
+	ThemeLight    = "light"
+)
+
 const (
 	RailEdgeRight  = "right"
 	RailEdgeLeft   = "left"
@@ -43,6 +52,10 @@ type DesktopPrefs struct {
 	// from this map is enabled — so a newly created profile shows up on the
 	// rail without the user having to go and find a switch for it.
 	RailProfiles map[string]bool `json:"railProfiles"`
+	// Theme mirrors the `data-theme` the frontend sets on <html>. The rail is a
+	// native panel and cannot read the frontend's CSS custom properties or its
+	// localStorage, so the theme has to reach Go through the preferences file.
+	Theme string `json:"theme"`
 }
 
 // DefaultPrefs is what a machine with no preferences file gets. Hover rather
@@ -53,6 +66,7 @@ func DefaultPrefs() DesktopPrefs {
 		RailMode:     RailModeHover,
 		RailEdge:     RailEdgeRight,
 		RailProfiles: map[string]bool{},
+		Theme:        ThemeGraphite,
 	}
 }
 
@@ -81,6 +95,11 @@ func (p DesktopPrefs) normalize() DesktopPrefs {
 	}
 	if p.RailProfiles == nil {
 		p.RailProfiles = map[string]bool{}
+	}
+	switch p.Theme {
+	case ThemeGraphite, ThemeMidnight, ThemeLight:
+	default:
+		p.Theme = ThemeGraphite
 	}
 	return p
 }
