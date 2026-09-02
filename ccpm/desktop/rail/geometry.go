@@ -66,6 +66,16 @@ func StackLength(n int) float64 {
 	return float64(n)*SlotLength + 2*EndPadding
 }
 
+// fallbackScreen stands in when AppKit has not published a visible frame yet.
+//
+// Every dimension of PanelRect is computed relative to the screen it is given,
+// so a zero rect does not merely produce a small panel — it produces negative
+// origins (x = 0 - Thickness - EdgeMargin), which places the rail off the
+// bottom-left corner where nothing can see or reach it. The origin is the
+// main screen's own bottom-left, and 1280x720 is smaller than any display
+// macOS ships on, so the result is always inside the real screen.
+var fallbackScreen = Rect{X: 0, Y: 0, W: 1280, H: 720}
+
 // PanelRect places the rail within a screen's visible frame.
 //
 // visible is NSScreen.visibleFrame — the area excluding the menu bar and Dock,
@@ -74,6 +84,9 @@ func StackLength(n int) float64 {
 // panel taller than the screen would push its first ring off the top where no
 // pointer could ever reach it.
 func PanelRect(visible Rect, edge Edge, profiles int) Rect {
+	if visible.W <= 0 || visible.H <= 0 {
+		visible = fallbackScreen
+	}
 	length := StackLength(profiles)
 
 	if edge.Vertical() {

@@ -99,6 +99,11 @@ func TestPanelRectClampsToVisibleArea(t *testing.T) {
 // Degenerate inputs must still yield something placeable. AppKit handles a
 // zero-area window badly, and startup ordering means we can be asked to place
 // the rail before a screen frame is known.
+//
+// "Placeable" means ON SCREEN, not merely non-zero. An earlier version of this
+// test only checked for positive area and happily passed a panel at
+// (-72, -124) — arithmetic against a zero screen — which is a rail nobody can
+// ever see. Every case here asserts containment.
 func TestPanelRectDegenerateInputs(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -109,6 +114,7 @@ func TestPanelRectDegenerateInputs(t *testing.T) {
 		{"zero profiles", laptop, 0},
 		{"negative profiles", laptop, -5},
 		{"both zero", Rect{}, 0},
+		{"negative screen", Rect{W: -100, H: -100}, 3},
 	} {
 		r := PanelRect(c.visible, EdgeRight, c.n)
 		if r.W <= 0 || r.H <= 0 {
@@ -116,6 +122,39 @@ func TestPanelRectDegenerateInputs(t *testing.T) {
 		}
 		if math.IsNaN(r.X) || math.IsNaN(r.Y) || math.IsNaN(r.W) || math.IsNaN(r.H) {
 			t.Errorf("%s: produced NaN geometry %+v", c.name, r)
+		}
+		if r.X < 0 || r.Y < 0 {
+			t.Errorf("%s: panel origin %v,%v is off the bottom-left of every screen", c.name, r.X, r.Y)
+		}
+	}
+}
+
+// Whatever screen it is handed, the panel must land inside it — a rail that
+// overflows the visible frame is a rail with rings under the Dock or past the
+// screen edge.
+func TestPanelRectStaysOnScreen(t *testing.T) {
+	screens := map[string]Rect{
+		"laptop":       laptop,
+		"external":     {X: 1728, Y: 200, W: 2560, H: 1400},
+		"below origin": {X: -1440, Y: -900, W: 1440, H: 900},
+		"short":        {X: 0, Y: 0, W: 1440, H: 400},
+		"unknown":      {},
+	}
+	for name, s := range screens {
+		for _, edge := range []Edge{EdgeRight, EdgeLeft, EdgeTop, EdgeBottom} {
+			for _, n := range []int{1, 3, 20} {
+				r := PanelRect(s, edge, n)
+				// An unknown screen falls back to a synthetic one, so compare
+				// against what PanelRect actually placed within.
+				within := s
+				if s.W <= 0 || s.H <= 0 {
+					within = fallbackScreen
+				}
+				if r.X < within.X || r.Y < within.Y ||
+					r.X+r.W > within.X+within.W || r.Y+r.H > within.Y+within.H {
+					t.Errorf("%s/%s/%d: panel %+v escapes the visible frame %+v", name, edge, n, r, within)
+				}
+			}
 		}
 	}
 }

@@ -126,7 +126,14 @@ void CCPMRailStart(void) {
 
     NSVisualEffectView *fx =
         [[NSVisualEffectView alloc] initWithFrame:initial];
-    fx.material = NSVisualEffectMaterialHUDWindow;
+    // HUDWindow is the material that reads as a floating overlay rather than a
+    // document window, but it is 10.14+ while the bundle still declares a
+    // 10.13 minimum. Guarded rather than silenced; on 10.13 the untouched
+    // default (appearance-based) is the right fallback, and every non-deprecated
+    // alternative is itself 10.14+.
+    if (@available(macOS 10.14, *)) {
+      fx.material = NSVisualEffectMaterialHUDWindow;
+    }
     fx.blendingMode = NSVisualEffectBlendingModeBehindWindow;
     fx.state = NSVisualEffectStateActive;
     fx.wantsLayer = YES;
@@ -190,6 +197,28 @@ void CCPMRailVisibleFrame(double *x, double *y, double *w, double *h) {
   os_unfair_lock_lock(&gVisibleLock);
   NSRect v = gVisible;
   os_unfair_lock_unlock(&gVisibleLock);
+
+  // CCPMRailStart hands its work to the main queue and returns immediately, so
+  // Go's very first placement lands here before the main thread has published
+  // anything. Warm the cache synchronously that once, rather than shipping a
+  // panel placed against a zero screen.
+  //
+  // dispatch_sync is safe here and only here: this is a leaf read that takes no
+  // lock the main thread waits on, and the isMainThread branch keeps it from
+  // deadlocking against itself.
+  if (v.size.width <= 0 || v.size.height <= 0) {
+    if ([NSThread isMainThread]) {
+      ccpmRailRefreshVisible();
+    } else {
+      dispatch_sync(dispatch_get_main_queue(), ^{
+        ccpmRailRefreshVisible();
+      });
+    }
+    os_unfair_lock_lock(&gVisibleLock);
+    v = gVisible;
+    os_unfair_lock_unlock(&gVisibleLock);
+  }
+
   if (x) *x = v.origin.x;
   if (y) *y = v.origin.y;
   if (w) *w = v.size.width;
