@@ -106,6 +106,14 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
   <em>MCP &amp; Plugins — manage servers and toggle plugins per profile.</em>
 </p>
 
+### Usage rail (macOS)
+
+An optional floating panel pinned to a screen edge, with one ring per profile: the outer arc is your **5-hour** window, the inner one your **7-day** window, coloured by how much headroom is left — the same thresholds `ccpm statusline` uses, so the rail and your terminal never disagree. Hover a ring for the detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a bar, and the percentage used.
+
+Configure it from the **gauge button in the title bar** — always visible, show on hover, or hidden; which edge it lives on; and a switch per profile. In hover mode it sits as a thin sliver at the screen edge and slides out when you reach for it (Reduce Motion turns the slide into a jump).
+
+> **Where the numbers come from.** Claude Code already sends your rate-limit windows to `ccpm statusline`, and ccpm caches them per profile. **No API call, no credentials read.** The trade-off is that a profile's reading only refreshes when you actually use Claude Code on it — so the callout always tells you how old the number is, and says so plainly once it goes stale. A profile you've never run shows an empty ring and "No reading yet" rather than a misleading 0%. Only subscription plans (Max/Pro) report limits at all; API-key profiles say so instead of pretending.
+
 ### Download (macOS)
 
 Grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.

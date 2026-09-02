@@ -76,6 +76,37 @@ export default async function DocsPage() {
             />
           </figure>
 
+          <H3 id="desktop-rail">Usage rail</H3>
+          <p>
+            An optional floating panel pinned to a screen edge, with one ring per
+            profile: the outer arc is your <strong>5-hour</strong> window, the
+            inner one your <strong>7-day</strong> window, coloured by how much
+            headroom is left — the same thresholds{" "}
+            <code>ccpm statusline</code> uses, so the rail and your terminal
+            never disagree. Hover a ring for the detail: which account and plan
+            it belongs to, how old the reading is, and per window a reset time, a
+            bar, and the percentage used.
+          </p>
+          <p>
+            Configure it from the gauge button in the title bar — always visible,
+            show on hover, or hidden; which edge it lives on; and a switch per
+            profile. In hover mode it sits as a thin sliver at the screen edge
+            and slides out when you reach for it (Reduce Motion turns the slide
+            into a jump).
+          </p>
+          <p>
+            <strong>Where the numbers come from.</strong> Claude Code already
+            sends your rate-limit windows to <code>ccpm statusline</code>, and
+            ccpm caches them per profile — no API call, and no credentials read.
+            The trade-off is that a profile&rsquo;s reading only refreshes when
+            you actually use Claude Code on it, so the callout always tells you
+            how old the number is and says so plainly once it goes stale. A
+            profile you have never run shows an empty ring and &ldquo;No reading
+            yet&rdquo; rather than a misleading 0%. Only subscription plans
+            (Max/Pro) report limits at all; API-key profiles say so instead of
+            pretending.
+          </p>
+
           <H3 id="desktop-download">Download (macOS)</H3>
           <p>
             Grab the <code>.dmg</code> for your Mac (~3–4 MB each):{" "}

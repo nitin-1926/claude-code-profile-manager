@@ -37,6 +37,17 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
       {
+        date: "2026-09-02",
+        title: "CCPM Desktop: the usage rail",
+        categories: ["Added"],
+        bullets: [
+          "A floating usage rail for macOS: one ring per profile, pinned to a screen edge, showing your Claude limits at a glance. The outer arc is the 5-hour window, the inner one the 7-day window, coloured by how much headroom is left — on the same thresholds `ccpm statusline` uses, so the rail and your terminal never disagree.",
+          "Hover a ring for the detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a bar, and the percentage used. Configure it from the gauge button in the title bar — always visible, on hover, or hidden; which edge; and a switch per profile.",
+          "The numbers come from the rate-limit windows Claude Code already sends to `ccpm statusline`, cached per profile. No API call and no credentials are read. The trade-off is that a profile's reading only refreshes when you use Claude Code on it, so the rail always tells you how old the number is and marks it stale rather than passing it off as live.",
+          "Profiles that cannot report limits say so: an unused profile shows an empty ring and \"No reading yet\" instead of a misleading 0%, and non-subscription profiles explain that their plan never reports limits.",
+        ],
+      },
+      {
         date: "2026-07-08",
         title: "CCPM Desktop: download for macOS",
         categories: ["Added"],
