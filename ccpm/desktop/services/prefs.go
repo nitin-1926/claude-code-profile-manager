@@ -150,9 +150,25 @@ func SavePrefs(p DesktopPrefs) error {
 }
 
 // PrefsService exposes the desktop preferences to the frontend.
-type PrefsService struct{}
+// PrefsService is the frontend's door to the preferences file.
+//
+// OnChange fires after every successful write. The rail has to be reshaped when
+// preferences change, and making that a second call the frontend must remember
+// is a desync waiting to happen — one forgotten call and the rail silently
+// disagrees with the settings that produced it.
+type PrefsService struct {
+	OnChange func()
+}
 
 func NewPrefs() *PrefsService { return &PrefsService{} }
+
+// notify runs the change hook if one is wired. Never on the caller's error
+// path: a failed write must not make the rail redraw as though it succeeded.
+func (s *PrefsService) notify() {
+	if s.OnChange != nil {
+		s.OnChange()
+	}
+}
 
 // Get returns the current preferences, defaults included.
 func (s *PrefsService) Get() (DesktopPrefs, error) { return LoadPrefs(), nil }
@@ -163,7 +179,17 @@ func (s *PrefsService) Set(p DesktopPrefs) (DesktopPrefs, error) {
 	if err := SavePrefs(p); err != nil {
 		return LoadPrefs(), err
 	}
+	s.notify()
 	return LoadPrefs(), nil
+}
+
+// SetTheme records the palette the frontend is showing. The rail is a native
+// panel and cannot read the frontend's localStorage, so this is how the two
+// stay in the same theme.
+func (s *PrefsService) SetTheme(theme string) (DesktopPrefs, error) {
+	p := LoadPrefs()
+	p.Theme = theme
+	return s.Set(p)
 }
 
 // SetRailProfile toggles one profile without the frontend having to

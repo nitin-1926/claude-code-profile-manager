@@ -27,6 +27,10 @@ func main() {
 	settings := services.NewSettings()
 	limits := services.NewLimits()
 	prefs := services.NewPrefs()
+	// Every preference write reshapes the rail. Wiring it here rather than
+	// making the frontend call ApplyRailPrefs after each Set removes the only
+	// way the two can drift apart.
+	prefs.OnChange = app.ApplyRailPrefs
 
 	err := wails.Run(&options.App{
 		Title:     "CCPM",
