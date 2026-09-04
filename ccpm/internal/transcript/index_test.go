@@ -185,25 +185,80 @@ func TestBuildIndexPerModelTallyAndCost(t *testing.T) {
 	}
 }
 
-func TestBuildIndexDedupesRepeatedUsageLines(t *testing.T) {
-	// Claude writes several assistant lines per response; counting each once is
-	// what keeps the token tally honest.
+func TestBuildIndexDedupesTheWayUsageDoes(t *testing.T) {
+	// The shape real transcripts actually have: one API response written as
+	// several assistant lines that share a message.id and requestId, each with
+	// its own uuid and a GROWING usage snapshot. An earlier version of this test
+	// repeated the uuid instead, which no real transcript does, so it passed
+	// while the dedup key was wrong and tokens were ~2x inflated.
 	dir := t.TempDir()
-	same := jl(t, map[string]any{
-		"type": "assistant", "uuid": "a1", "sessionId": "s1",
-		"message": map[string]any{"role": "assistant", "model": "claude-opus-5",
-			"content": []any{map[string]any{"type": "text", "text": "x"}},
-			"usage": map[string]any{"input_tokens": 100, "output_tokens": 0,
-				"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}},
-	})
-	writeSessionTranscript(t, dir, "/repo", "s1", same, same, same)
+	line := func(uuid, msgID, reqID string, in, out int64) string {
+		return jl(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "requestId": reqID, "sessionId": "s1", "cwd": "/repo",
+			"message": map[string]any{
+				"id": msgID, "role": "assistant", "model": "claude-opus-5",
+				"content": []any{map[string]any{"type": "text", "text": "x"}},
+				"usage": map[string]any{"input_tokens": in, "output_tokens": out,
+					"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+			},
+		})
+	}
+	writeSessionTranscript(t, dir, "/repo", "s1",
+		// One response, three lines, distinct uuids, growing snapshot -> 150.
+		line("u1", "msg_a", "req_a", 100, 0),
+		line("u2", "msg_a", "req_a", 100, 30),
+		line("u3", "msg_a", "req_a", 100, 50),
+		// A genuinely separate response -> +40.
+		line("u4", "msg_b", "req_b", 40, 0),
+	)
 
 	ix, err := BuildIndex(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ix.Entries["s1"].Tokens().Total(); got != 100 {
-		t.Errorf("total = %d, want 100 — repeated lines for one response were counted more than once", got)
+	if got := ix.Entries["s1"].Tokens().Total(); got != 190 {
+		t.Errorf("total = %d, want 190 (largest snapshot per message.id+requestId, not a per-line sum)", got)
+	}
+}
+
+func TestBuildIndexDedupMatchesUsagePackage(t *testing.T) {
+	// The History tab and the Usage tab must agree about the same session. The
+	// only way to be sure is to run both over the same bytes.
+	dir := t.TempDir()
+	line := func(uuid, msgID, reqID string, in, out int64) string {
+		return jl(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "requestId": reqID, "sessionId": "s1", "cwd": "/repo",
+			"timestamp": "2026-06-27T10:00:00Z",
+			"message": map[string]any{
+				"id": msgID, "role": "assistant", "model": "claude-opus-5",
+				"content": []any{map[string]any{"type": "text", "text": "x"}},
+				"usage": map[string]any{"input_tokens": in, "output_tokens": out,
+					"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+			},
+		})
+	}
+	writeSessionTranscript(t, dir, "/repo", "s1",
+		line("u1", "msg_a", "req_a", 100, 0),
+		line("u2", "msg_a", "req_a", 100, 30),
+		line("u3", "msg_b", "req_b", 200, 10),
+		line("u4", "msg_b", "req_b", 200, 25),
+	)
+
+	ix, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, _, err := usage.Sync(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := sess.Records["s1"]
+	if rec == nil {
+		t.Fatal("usage produced no record for s1")
+	}
+	got, want := ix.Entries["s1"].Tokens().Total(), rec.Tokens.Total()
+	if got != want {
+		t.Errorf("History total = %d but Usage total = %d — the two tabs would disagree about the same session", got, want)
 	}
 }
 

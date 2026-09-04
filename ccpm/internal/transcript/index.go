@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
@@ -97,12 +98,36 @@ func BuildIndex(profileDir string) (*Index, error) {
 			return nil // unreadable right now (native claude mid-write); try again next time
 		}
 		id := sessionIDFromPath(rel)
-		if prev, ok := ix.Entries[id]; ok && prev.ModTime == fi.ModTime().Unix() && prev.Size == fi.Size() {
+		// The freshness signature covers the session's subagent transcripts too,
+		// since their usage folds into this entry.
+		subs := subagentTranscripts(abs)
+		mtime, size := signature(fi, subs)
+		if prev, ok := ix.Entries[id]; ok && prev.ModTime == mtime && prev.Size == size {
 			return nil // unchanged since last build
 		}
 		meta, err := Scan(abs)
 		if err != nil {
 			return nil
+		}
+		// Fold each subagent transcript's usage into the parent.
+		//
+		// Subagent lines carry the PARENT's sessionId, so internal/usage already
+		// attributes their tokens to this session; skipping them here entirely
+		// would leave History reporting 5-14% less than the Usage tab for the
+		// same session. They are still not indexed as sessions of their own and
+		// still not searched — their text is duplicated into the parent as
+		// sidechain turns. Each file is deduped independently, exactly as
+		// usage.ingestFile does, so the two agree by construction.
+		for _, sub := range subs {
+			sm, serr := Scan(sub)
+			if serr != nil {
+				continue
+			}
+			for model, tok := range sm.ByModel {
+				t := meta.ByModel[model]
+				t.Add(tok)
+				meta.ByModel[model] = t
+			}
 		}
 		// Key on the filename, not the sessionId inside the JSON. Claude Code
 		// names each transcript after its session and `--resume` matches on
@@ -127,8 +152,8 @@ func BuildIndex(profileDir string) (*Index, error) {
 			LastTS:    meta.LastTS,
 			Turns:     meta.Turns,
 			RelPath:   rel,
-			ModTime:   fi.ModTime().Unix(),
-			Size:      fi.Size(),
+			ModTime:   mtime,
+			Size:      size,
 		}
 		changed = true
 		return nil
@@ -179,6 +204,49 @@ func skipTranscript(abs, rel string) bool {
 	return false
 }
 
+// subagentTranscripts returns the subagent transcripts belonging to the session
+// whose transcript is at abs. Claude Code writes them beside it, under a
+// directory named for the session: <dir>/<id>.jsonl and <dir>/<id>/subagents/.
+func subagentTranscripts(abs string) []string {
+	root := filepath.Join(strings.TrimSuffix(abs, ".jsonl"), "subagents")
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		return nil
+	}
+	// Walk the whole subtree, not just the top level: workflow runs nest another
+	// level deep as subagents/workflows/wf_<id>/agent-*.jsonl. Reading only the
+	// immediate directory left one real session 10% short of the Usage tab.
+	var out []string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
+			return nil
+		}
+		if fi, lerr := os.Lstat(p); lerr != nil || fi.Mode()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		out = append(out, p)
+		return nil
+	})
+	sort.Strings(out) // stable signature regardless of walk order
+	return out
+}
+
+// signature combines a transcript and its subagents into one freshness key, so
+// a new subagent turn re-scans the parent entry whose tally it changes.
+func signature(fi os.FileInfo, subs []string) (mtime, size int64) {
+	mtime, size = fi.ModTime().Unix(), fi.Size()
+	for _, p := range subs {
+		si, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		size += si.Size()
+		if m := si.ModTime().Unix(); m > mtime {
+			mtime = m
+		}
+	}
+	return mtime, size
+}
+
 // sessionIDFromPath takes the id from the filename, matching how Claude Code
 // names transcripts and how cmd/sessions.go already derives it.
 func sessionIDFromPath(rel string) string {
@@ -214,7 +282,9 @@ type Meta struct {
 func Scan(path string) (Meta, error) {
 	m := Meta{ByModel: map[string]usage.Tokens{}}
 	var firstPrompt string
-	counted := map[string]bool{}
+	// key -> tokens already attributed, so a later, larger snapshot for the same
+	// request revises the tally by the delta instead of being summed on top.
+	counted := map[string]usage.Tokens{}
 
 	err := eachLine(path, func(raw []byte, skipped bool) bool {
 		if skipped {
@@ -260,26 +330,21 @@ func Scan(path string) (Meta, error) {
 		if l.Message.Model != "" {
 			m.Model = l.Message.Model
 		}
-		// Per-model tokens, deduped the way usage does it: one API response is
-		// written as several assistant lines, so count each id once.
-		if l.Type == "assistant" && l.Message.Usage != nil {
-			key := l.UUID
-			if key == "" {
-				key = l.Timestamp + "|" + l.Message.Model
-			}
-			if !counted[key] {
-				counted[key] = true
+		// Per-model tokens, deduped exactly the way internal/usage does it:
+		// (message.id + requestId) with the LARGEST snapshot winning. Claude Code
+		// writes one response as several assistant lines sharing a message.id
+		// with growing usage, so a naive per-line sum over-counts about 2x.
+		if key := l.usageKey(); key != "" {
+			tok := l.usageTokens()
+			prev, seen := counted[key]
+			if !seen || tok.Total() > prev.Total() {
+				counted[key] = tok
 				model := l.Message.Model
 				if model == "" {
 					model = "unknown"
 				}
 				t := m.ByModel[model]
-				t.Add(usage.Tokens{
-					Input:         l.Message.Usage.InputTokens,
-					Output:        l.Message.Usage.OutputTokens,
-					CacheCreation: l.Message.Usage.CacheCreationInputTokens,
-					CacheRead:     l.Message.Usage.CacheReadInputTokens,
-				})
+				t.Add(tok.Minus(prev)) // prev is zero when unseen
 				m.ByModel[model] = t
 			}
 		}
@@ -330,8 +395,9 @@ func promptText(l rawLine) string {
 func collapseWS(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // Cost returns the estimated USD for an entry, summed across every model it
-// actually used. Falls back to the last-seen model when an older entry has no
-// per-model tally.
+// actually used, so a session that switched models is priced at each model's
+// own rate. An entry with no per-model tally has no countable usage and costs
+// nothing — Model is a display label and is deliberately not used for pricing.
 func (e *Entry) Cost() float64 {
 	if len(e.ByModel) == 0 {
 		return 0

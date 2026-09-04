@@ -450,3 +450,44 @@ func TestResolvePathRejectsTraversal(t *testing.T) {
 		t.Errorf("ResolvePath = %q, want %q", got, want)
 	}
 }
+
+func TestSearchSeesFullToolContentNotJustThePreview(t *testing.T) {
+	// Search must not run on display previews. A tool result clipped to the
+	// 2 KB chip preview makes "include tool output" useless on exactly the large
+	// outputs it exists for; a tool input reduced to its chip label makes the
+	// code Claude wrote unfindable.
+	dir := t.TempDir()
+	deep := strings.Repeat("filler ", 2000) + " DEEPMARKER"
+	if len(deep) <= previewBytes {
+		t.Fatal("fixture must exceed the preview cap to be meaningful")
+	}
+	writeSessionTranscript(t, dir, "/repo", "s1",
+		// A marker far past the preview cap inside a tool result.
+		toolResultLine(t, "u1", deep),
+		// A marker in a NON-primary tool input field: toolInputPreview shows
+		// file_path in the chip, so new_string is only reachable if search reads
+		// the raw input.
+		jl(t, map[string]any{
+			"type": "assistant", "uuid": "a1", "sessionId": "s", "cwd": "/repo",
+			"message": map[string]any{"role": "assistant", "model": "m", "content": []any{
+				map[string]any{"type": "tool_use", "id": "t2", "name": "Edit", "input": map[string]any{
+					"file_path": "/repo/a.go", "old_string": "x", "new_string": "func NEWFUNCMARKER() {}"}}}},
+		}),
+	)
+	ctx := context.Background()
+
+	if res := Search(ctx, scopeOf(dir), "deepmarker", SearchOpts{IncludeToolResults: true}); len(res.Hits) != 1 {
+		t.Errorf("a match past the preview cap in tool output was missed: %d hits", len(res.Hits))
+	}
+	res := Search(ctx, scopeOf(dir), "newfuncmarker", SearchOpts{})
+	if len(res.Hits) != 1 {
+		t.Fatalf("a match in a non-primary tool input field was missed: %d hits", len(res.Hits))
+	}
+	if res.Hits[0].ToolName != "Edit" {
+		t.Errorf("tool name = %q, want Edit", res.Hits[0].ToolName)
+	}
+	// And the scope rule still holds: tool output stays out by default.
+	if res := Search(ctx, scopeOf(dir), "deepmarker", SearchOpts{}); len(res.Hits) != 0 {
+		t.Errorf("tool output matched in the default scope: %d hits", len(res.Hits))
+	}
+}

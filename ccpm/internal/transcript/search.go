@@ -322,29 +322,6 @@ type searchable struct {
 	toolName string
 }
 
-// searchables returns the parts of a turn the current scope covers.
-//
-// thinking is NEVER searched: it is hidden by default in the reader, so a hit
-// there would be a result the user cannot see, and it is model scratch rather
-// than anything they wrote or ran.
-func searchables(l rawLine, opts SearchOpts) []searchable {
-	blocks, _ := l.blocks()
-	out := make([]searchable, 0, len(blocks))
-	for _, b := range blocks {
-		switch b.Kind {
-		case KindText:
-			out = append(out, searchable{text: b.Text, source: SourceText})
-		case KindToolUse:
-			out = append(out, searchable{text: b.ToolName + " " + b.Preview, source: SourceToolUse, toolName: b.ToolName})
-		case KindToolResult:
-			if opts.IncludeToolResults {
-				out = append(out, searchable{text: b.Preview, source: SourceToolResult})
-			}
-		}
-	}
-	return out
-}
-
 // firstHitInTurn builds one hit for the turn's first match and counts the rest.
 // One result per matching message: a message containing the term forty times
 // must not flood the list, and the count is surfaced as Hit.More.
@@ -352,7 +329,7 @@ func firstHitInTurn(l rawLine, lowerQuery string, opts SearchOpts) (Hit, int) {
 	total := 0
 	var hit Hit
 	found := false
-	for _, s := range searchables(l, opts) {
+	for _, s := range l.searchTexts(opts.IncludeToolResults) {
 		n, first := countFold(s.text, lowerQuery)
 		if n == 0 {
 			continue

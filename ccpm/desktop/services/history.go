@@ -4,8 +4,10 @@ package services
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"sync"
 
@@ -68,6 +70,12 @@ type HistoryService struct {
 	// UI can easily land CancelSearch(N) before Search(N) has registered; without
 	// this the cancel is a silent no-op and a full scan runs anyway.
 	tombstones map[string]bool
+	// tombstoneOrder is insertion order, so the bound evicts the oldest entry
+	// rather than clearing the map. Clearing it would discard a tombstone an
+	// in-flight cancel-before-register is relying on, silently reinstating the
+	// race the map exists to close — and the bound is reached during ordinary
+	// typing, because every debounced-away search leaves one behind.
+	tombstoneOrder []string
 }
 
 func NewHistory() *HistoryService {
@@ -184,7 +192,20 @@ func resolveTranscript(profile, sessionID string) (string, error) {
 	if e == nil || e.RelPath == "" {
 		return "", os.ErrNotExist
 	}
-	return transcript.ResolvePath(dir, e.RelPath)
+	full, err := transcript.ResolvePath(dir, e.RelPath)
+	if err != nil {
+		return "", err
+	}
+	// Re-check the symlink here, not only when the index was built. The index
+	// records a regular file; if that path is later replaced by a link to, say,
+	// ~/.ssh/id_rsa, an index-time-only guard would happily open and render it.
+	// That is the same "profile shared or restored from elsewhere" threat model
+	// the containment check exists for, just with time added.
+	fi, err := os.Lstat(full)
+	if err != nil || fi.Mode()&fs.ModeSymlink != 0 {
+		return "", os.ErrNotExist
+	}
+	return full, nil
 }
 
 func emptyPage() HistoryPage {
@@ -291,6 +312,12 @@ func (s *HistoryService) Resume(profile, sessionID string) CmdResult {
 	return NewMutate().terminal(workdir, "run", profile, "--", "--resume", sessionID)
 }
 
+// forgetTombstoneLocked removes a consumed tombstone. Caller holds s.mu.
+func (s *HistoryService) forgetTombstoneLocked(token string) {
+	delete(s.tombstones, token)
+	s.tombstoneOrder = slices.DeleteFunc(s.tombstoneOrder, func(t string) bool { return t == token })
+}
+
 // maxTombstones bounds the cancel-before-register map. A tombstone is normally
 // consumed by the search it names; this only catches the case where that search
 // never arrives.
@@ -308,7 +335,7 @@ func (s *HistoryService) Search(profile, query, token string, includeToolResults
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	if s.tombstones[token] {
-		delete(s.tombstones, token)
+		s.forgetTombstoneLocked(token)
 		s.mu.Unlock()
 		cancel()
 		return transcript.SearchResult{Hits: []transcript.Hit{}, Cancelled: true}, nil
@@ -349,8 +376,14 @@ func (s *HistoryService) CancelSearch(token string) {
 		cancel()
 		return
 	}
-	if len(s.tombstones) >= maxTombstones {
-		s.tombstones = map[string]bool{}
+	if s.tombstones[token] {
+		return
+	}
+	for len(s.tombstoneOrder) >= maxTombstones {
+		oldest := s.tombstoneOrder[0]
+		s.tombstoneOrder = s.tombstoneOrder[1:]
+		delete(s.tombstones, oldest)
 	}
 	s.tombstones[token] = true
+	s.tombstoneOrder = append(s.tombstoneOrder, token)
 }

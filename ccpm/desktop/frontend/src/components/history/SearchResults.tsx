@@ -7,6 +7,14 @@ import { Wrench } from 'lucide-react'
 
 const DEBOUNCE_MS = 250
 
+// Module-level, NOT per-component. HistoryService keeps its cancel tombstones
+// for the app's lifetime, but this component unmounts whenever the reader opens.
+// A per-instance counter restarts at 0 on remount and reissues a token an
+// earlier cleanup already tombstoned, so the very next search returns cancelled
+// and the UI renders a false "No matches".
+let tokenSeq = 0
+const nextToken = () => `s${++tokenSeq}`
+
 /** Groups a flat hit list by session, preserving the backend's newest-first order. */
 function groupBySession(hits: SearchHit[]): { id: string; title: string; mtime: number; hits: SearchHit[] }[] {
   const order: string[] = []
@@ -45,8 +53,8 @@ export function SearchResults({
 
   // The token is the only real cancellation: dropping the JS promise does not
   // stop the Go scan, so a superseded search would still resolve and clobber a
-  // newer result set.
-  const token = useRef(0)
+  // newer result set. `live` holds the token this component still cares about.
+  const live = useRef('')
 
   useEffect(() => {
     const q = query.trim()
@@ -56,36 +64,46 @@ export function SearchResults({
       setSearching(false)
       return
     }
-    const mine = ++token.current
-    const tok = `s${mine}`
+    const tok = nextToken()
+    const wideTok = `${tok}w`
+    live.current = tok
     setSearching(true)
     const timer = setTimeout(() => {
       api.history
         .search(profile, q, tok, includeToolResults)
-        .then(async (r) => {
-          if (token.current !== mine) return
+        .then((r) => {
+          if (live.current !== tok) return
           setResult(r)
           setError(null)
+          setSearching(false)
           // A miss in conversation text is usually a hit in tool output. Offer
-          // it rather than showing a bare "no matches" the user has to guess at.
+          // it rather than showing a bare "no matches" to guess at. Fired after
+          // the spinner clears rather than awaited inside it — otherwise the
+          // header sits on "Searching..." through a second full profile scan
+          // while results are already on screen.
           if (!includeToolResults && r.hits.length === 0 && !r.cancelled) {
-            const wide = await api.history.search(profile, q, `${tok}w`, true)
-            if (token.current === mine) setToolOnlyCount(wide.hits.length)
+            api.history
+              .search(profile, q, wideTok, true)
+              .then((wide) => {
+                if (live.current === tok) setToolOnlyCount(wide.hits.length)
+              })
+              .catch(() => {})
           }
         })
         .catch((e) => {
-          if (token.current === mine) setError(String(e))
-        })
-        .finally(() => {
-          if (token.current === mine) setSearching(false)
+          if (live.current !== tok) return
+          setError(String(e))
+          setSearching(false)
         })
     }, DEBOUNCE_MS)
 
     return () => {
       clearTimeout(timer)
-      // Cancel whatever this token started. Landing before the search registers
-      // is fine — the service keeps a tombstone for exactly that race.
+      live.current = ''
+      // Cancel both scans this effect could have started. Landing before either
+      // registers is fine — the service keeps a tombstone for that race.
       void api.history.cancelSearch(tok)
+      void api.history.cancelSearch(wideTok)
     }
   }, [profile, query, includeToolResults])
 

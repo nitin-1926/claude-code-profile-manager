@@ -451,3 +451,47 @@ func TestToolInputPreviewPicksTheIdentifyingField(t *testing.T) {
 		t.Errorf("empty input = %q/%d, want empty", got, full)
 	}
 }
+
+func TestEachLineBoundsAllocationOnAPathologicalLine(t *testing.T) {
+	// A transcript with no newlines would otherwise have its whole length
+	// materialised before any cap could be consulted. The over-cap line must be
+	// reported as skipped, and the file must keep going afterwards.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s1.jsonl")
+	huge := strings.Repeat("z", maxLineBytes+4096)
+	body := userLine(t, "u1", "before") + "\n" +
+		`{"type":"user","uuid":"big","message":{"role":"user","content":"` + huge + `"}}` + "\n" +
+		userLine(t, "u2", "after") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	page, err := ReadPage(path, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.SkippedLines != 1 {
+		t.Errorf("SkippedLines = %d, want 1", page.SkippedLines)
+	}
+	if page.Total != 2 {
+		t.Errorf("Total = %d, want 2 — the lines around the oversize one must still parse", page.Total)
+	}
+}
+
+func TestEachLineStillDropsIncompleteTrailingLine(t *testing.T) {
+	// Guarded explicitly because the bounded reader is easy to rewrite with
+	// bufio.Scanner, which yields the trailing partial line instead of skipping
+	// it and would render half a JSON object from a session being written now.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s1.jsonl")
+	body := userLine(t, "u1", "complete") + "\n" + `{"type":"user","uuid":"u2","messa`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	page, err := ReadPage(path, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 {
+		t.Errorf("Total = %d, want 1", page.Total)
+	}
+}

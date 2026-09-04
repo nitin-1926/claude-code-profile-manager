@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { HistoryToolBody, Turn, TurnBlock } from '@/types'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -150,6 +150,13 @@ function ToolChip({
   const [open, setOpen] = useState(forceOpen)
   const [body, setBody] = useState<HistoryToolBody | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // useState seeds from forceOpen only once. Jumping between turns flips
+  // isTarget on chips that are already mounted, so without this only the first
+  // target after a page load would ever expand.
+  useEffect(() => {
+    if (forceOpen) setOpen(true)
+  }, [forceOpen])
 
   const isResult = block.kind === 'tool_result'
   const label = isResult ? 'result' : block.toolName || 'tool'

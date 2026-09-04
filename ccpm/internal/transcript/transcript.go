@@ -19,14 +19,21 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
 const (
-	// maxLineBytes is the largest JSONL line we will decode. The longest line
+	// maxLineBytes is the largest JSONL line we will read. The longest line
 	// measured in a real profile was 1.3 MB (a single tool result), so this is
 	// generous headroom; a line beyond it is counted and skipped rather than
 	// aborting the file, because one pathological line must not cost the reader
 	// every turn after it.
+	//
+	// This bounds ALLOCATION, not just decode cost: a transcript truncated or
+	// concatenated without a trailing newline would otherwise have its entire
+	// length materialised by ReadBytes before the cap could be consulted — 77 MB
+	// on the largest file observed, more with buffer growth.
 	maxLineBytes = 8 << 20
 
 	// previewBytes is how much of a tool input or tool result is carried inline
@@ -127,7 +134,9 @@ type rawLine struct {
 	IsSidechain bool   `json:"isSidechain"`
 	IsMeta      bool   `json:"isMeta"`
 	AITitle     string `json:"aiTitle"`
+	RequestID   string `json:"requestId"`
 	Message     *struct {
+		ID      string          `json:"id"`
 		Role    string          `json:"role"`
 		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
@@ -138,6 +147,38 @@ type rawLine struct {
 			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	} `json:"message"`
+}
+
+// usageKey is the identity under which a usage-bearing line is counted exactly
+// once, or "" when the line carries no countable usage.
+//
+// This MUST match internal/usage/ingest.go's dedupKey. Claude Code writes one
+// API response as several assistant lines sharing a message.id, each carrying a
+// growing usage snapshot, so summing lines over-counts about 2x — measured
+// 1.87x-2.29x across five real transcripts. Every line has its own uuid, so
+// keying on uuid dedups nothing at all.
+func (l rawLine) usageKey() string {
+	if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
+		return ""
+	}
+	if l.Message.ID != "" {
+		return l.Message.ID + "|" + l.RequestID
+	}
+	return l.Message.Model + "|" + l.Timestamp
+}
+
+// usageTokens is the four-way tally on this line, zero when it carries none.
+func (l rawLine) usageTokens() usage.Tokens {
+	if l.Message == nil || l.Message.Usage == nil {
+		return usage.Tokens{}
+	}
+	u := l.Message.Usage
+	return usage.Tokens{
+		Input:         u.InputTokens,
+		Output:        u.OutputTokens,
+		CacheCreation: u.CacheCreationInputTokens,
+		CacheRead:     u.CacheReadInputTokens,
+	}
 }
 
 // countsAsTurn is THE turn-enumeration rule, and the only place it is decided.
@@ -335,24 +376,53 @@ func eachLine(path string, fn func(raw []byte, skipped bool) bool) error {
 	}
 	defer f.Close()
 
+	// bufio.Scanner is not usable here: it yields a final line that has no
+	// trailing newline, which is exactly the half-written line this must skip.
+	// ReadBytes has the right semantics but would materialise a whole
+	// newline-free file before any cap could be consulted, so the line is
+	// assembled fragment by fragment and dropped once it passes maxLineBytes.
 	r := bufio.NewReaderSize(f, 1<<20)
+	var line []byte
+	oversize := false
 	for {
-		line, err := r.ReadBytes('\n')
+		frag, err := r.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if oversize || len(line)+len(frag) > maxLineBytes {
+				oversize = true // keep draining, stop accumulating
+				line = line[:0]
+			} else {
+				line = append(line, frag...)
+			}
+			continue
+		}
 		if err != nil {
+			// EOF with bytes pending is a line still being written: leave it.
 			if errors.Is(err, io.EOF) {
-				return nil // trailing partial line — leave it for next time
+				return nil
 			}
 			return err
 		}
-		if len(line) > maxLineBytes {
+		// The cap must be re-checked here, not only in the ErrBufferFull branch:
+		// the fragment that finally contains the newline arrives with err == nil,
+		// so a line just over the limit would otherwise be assembled in full.
+		if oversize || len(line)+len(frag) > maxLineBytes {
+			oversize = false
+			line = line[:0]
 			if !fn(nil, true) {
 				return nil
 			}
 			continue
 		}
-		if !fn(line, false) {
+		var complete []byte
+		if len(line) == 0 {
+			complete = frag // fast path: whole line already contiguous
+		} else {
+			complete = append(line, frag...)
+		}
+		if !fn(complete, false) {
 			return nil
 		}
+		line = line[:0]
 	}
 }
 
@@ -410,6 +480,51 @@ func ReadPage(path string, offset, limit int) (Page, error) {
 		return Page{Turns: []Turn{}}, err
 	}
 	return page, nil
+}
+
+// searchTexts yields the full text of a turn's content for MATCHING, as opposed
+// to blocks(), which truncates for display.
+//
+// Search must not run on display previews. A tool result clipped to 2 KB makes
+// "include tool output" silently useless on the large outputs it exists for, and
+// a tool input reduced to its one identifying field makes the code Claude wrote
+// (an Edit's new_string, a Write's content) unfindable — while the docs promise
+// both are searchable. Reading the raw blocks here costs nothing extra: this
+// only runs on lines that already survived the byte prefilter.
+func (l rawLine) searchTexts(includeToolResults bool) []searchable {
+	if l.Message == nil || len(l.Message.Content) == 0 {
+		return nil
+	}
+	var str string
+	if json.Unmarshal(l.Message.Content, &str) == nil {
+		return []searchable{{text: str, source: SourceText}}
+	}
+	var raws []rawBlock
+	if json.Unmarshal(l.Message.Content, &raws) != nil {
+		return nil
+	}
+	out := make([]searchable, 0, len(raws))
+	for _, rb := range raws {
+		switch rb.Type {
+		case "text":
+			out = append(out, searchable{text: rb.Text, source: SourceText})
+		case "tool_use":
+			// The whole input object, so every field is searchable — not just
+			// the one toolInputPreview picks for the chip label.
+			out = append(out, searchable{
+				text:     rb.Name + " " + flatten(rb.Input),
+				source:   SourceToolUse,
+				toolName: rb.Name,
+			})
+		case "tool_result":
+			if includeToolResults {
+				out = append(out, searchable{text: flatten(rb.Content), source: SourceToolResult})
+			}
+		}
+		// thinking is never searched: the reader hides it, so a hit there is one
+		// the user cannot be shown.
+	}
+	return out
 }
 
 // ToolBody returns the full, untruncated payload of one block in one turn —
