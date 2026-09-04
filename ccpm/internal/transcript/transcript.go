@@ -197,7 +197,7 @@ func (l rawLine) blocks() ([]Block, int) {
 		case "tool_use":
 			b.Kind = KindToolUse
 			b.ToolName, b.ToolUseID = rb.Name, rb.ID
-			b.Preview, b.FullBytes, b.Truncated = previewOf(rb.Input)
+			b.Preview, b.FullBytes, b.Truncated = toolInputPreview(rb.Input)
 		case "tool_result":
 			b.Kind = KindToolResult
 			b.ToolUseID, b.IsError = rb.ToolUseID, rb.IsError
@@ -215,6 +215,45 @@ func (l rawLine) blocks() ([]Block, int) {
 		out = append(out, b)
 	}
 	return out, unknown
+}
+
+// primaryInputKeys are the tool-input fields worth showing as a one-line
+// summary, in preference order. A Bash call is its command, an Edit is its
+// path, a Grep is its pattern.
+var primaryInputKeys = []string{
+	"command", "file_path", "path", "pattern", "query", "url",
+	"description", "prompt", "notebook_path",
+}
+
+// toolInputPreview renders a tool call's input as something a human can scan.
+//
+// The raw input is a JSON object, and showing it verbatim fills the chip with
+// `{"language":"go","code":"package main\n\nimport (...` — technically the
+// input, useless as a summary. Pulling the one field that identifies the call
+// turns the chip into "Bash  grep -rn findCCPM", which is what the row is for.
+// FullBytes stays the size of the whole input so the expanded view is honest.
+func toolInputPreview(raw json.RawMessage) (preview string, full int, truncated bool) {
+	if len(raw) == 0 {
+		return "", 0, false
+	}
+	full = len(raw)
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) == nil {
+		for _, k := range primaryInputKeys {
+			v, ok := obj[k]
+			if !ok {
+				continue
+			}
+			var s string
+			if json.Unmarshal(v, &s) != nil || strings.TrimSpace(s) == "" {
+				continue
+			}
+			p, t := clip(collapseWS(s), previewBytes)
+			return p, full, t || len(obj) > 1
+		}
+	}
+	p, t := clip(string(raw), previewBytes)
+	return p, full, t
 }
 
 // previewOf renders a tool input or tool result to a short display string.
@@ -371,6 +410,77 @@ func ReadPage(path string, offset, limit int) (Page, error) {
 		return Page{Turns: []Turn{}}, err
 	}
 	return page, nil
+}
+
+// ToolBody returns the full, untruncated payload of one block in one turn —
+// what a reader fetches when the user expands a tool chip.
+//
+// maxBytes still bounds the result. The longest single line measured in a real
+// profile was 1.3 MB, and handing that to a webview in one string locks it, so
+// "full" means "the whole thing up to a cap the UI can render", with the true
+// size reported alongside.
+func ToolBody(path, turnUUID string, blockIndex, maxBytes int) (body string, full int, truncated bool, err error) {
+	if maxBytes <= 0 {
+		maxBytes = 256 << 10
+	}
+	found := false
+	err = eachLine(path, func(raw []byte, skipped bool) bool {
+		if skipped {
+			return true
+		}
+		var l rawLine
+		if json.Unmarshal(raw, &l) != nil {
+			return true
+		}
+		if !l.countsAsTurn() || l.UUID != turnUUID {
+			return true
+		}
+		found = true
+		var raws []rawBlock
+		if json.Unmarshal(l.Message.Content, &raws) != nil {
+			return false
+		}
+		if blockIndex < 0 || blockIndex >= len(raws) {
+			return false
+		}
+		rb := raws[blockIndex]
+		payload := rb.Content
+		if len(payload) == 0 {
+			payload = rb.Input
+		}
+		text := flatten(payload)
+		full = len(text)
+		body, truncated = clip(text, maxBytes)
+		return false
+	})
+	if err != nil {
+		return "", 0, false, err
+	}
+	if !found {
+		return "", 0, false, os.ErrNotExist
+	}
+	return body, full, truncated, nil
+}
+
+// flatten renders a tool payload to plain text, handling the string shape, the
+// typed-block-array shape, and a raw JSON object input.
+func flatten(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []rawBlock
+	if json.Unmarshal(raw, &blocks) == nil {
+		var sb strings.Builder
+		for _, b := range blocks {
+			sb.WriteString(b.Text)
+		}
+		return sb.String()
+	}
+	return string(raw)
 }
 
 // IndexOfTurn returns the position of the turn with the given uuid, or -1 when

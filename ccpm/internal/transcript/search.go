@@ -86,12 +86,13 @@ type Hit struct {
 	Source    Source `json:"source"`
 	ToolName  string `json:"toolName,omitempty"`
 
-	// Snippet is a window of the matched text. MatchStart/MatchEnd are byte
-	// offsets INTO Snippet, computed by the same code that found the match, so
-	// the highlighter cannot disagree with the matcher.
-	Snippet    string `json:"snippet"`
-	MatchStart int    `json:"matchStart"`
-	MatchEnd   int    `json:"matchEnd"`
+	// The matched text is handed over pre-split rather than as offsets. Go
+	// offsets are byte-based and JavaScript strings are UTF-16, so any offset
+	// crossing the bridge would silently mis-highlight the moment a snippet
+	// contained a non-ASCII character. Three strings cannot disagree.
+	Before string `json:"before"`
+	Match  string `json:"match"`
+	After  string `json:"after"`
 	// More counts further matches in this same message beyond the one shown.
 	More int `json:"more"`
 }
@@ -361,11 +362,11 @@ func firstHitInTurn(l rawLine, lowerQuery string, opts SearchOpts) (Hit, int) {
 			continue
 		}
 		found = true
-		snippet, ms, me := window(s.text, first, len(lowerQuery), opts.SnippetBytes)
+		before, match, after := window(s.text, first, len(lowerQuery), opts.SnippetBytes)
 		hit = Hit{
 			TurnUUID: l.UUID, Role: l.Message.Role,
 			Timestamp: l.Timestamp, Source: s.source, ToolName: s.toolName,
-			Snippet: snippet, MatchStart: ms, MatchEnd: me,
+			Before: before, Match: match, After: after,
 		}
 	}
 	if !found {
@@ -427,27 +428,26 @@ func countFold(s, lowerSub string) (int, int) {
 	return count, first
 }
 
-// window cuts a display snippet around a match and returns the match's offsets
-// within that snippet. Cuts land on rune boundaries so the snippet is always
-// valid UTF-8.
-func window(s string, at, matchLen, size int) (string, int, int) {
+// window cuts a display snippet around a match and returns it already split
+// into the text before the match, the matched text itself, and the text after.
+// Cuts land on rune boundaries so every piece is valid UTF-8.
+func window(s string, at, matchLen, size int) (before, match, after string) {
 	if at < 0 {
-		return ClipRunes(s, size), 0, 0
+		return ClipRunes(s, size), "", ""
+	}
+	matchEnd := min(at+matchLen, len(s))
+	for matchEnd < len(s) && !utf8RuneStart(s[matchEnd]) {
+		matchEnd++
 	}
 	start := max(at-size/2, 0)
-	end := min(at+matchLen+size/2, len(s))
 	for start > 0 && start < len(s) && !utf8RuneStart(s[start]) {
 		start--
 	}
+	end := min(matchEnd+size/2, len(s))
 	for end < len(s) && !utf8RuneStart(s[end]) {
 		end++
 	}
-	snippet := s[start:end]
-	ms := at - start
-	me := ms + matchLen
-	me = min(me, len(snippet))
-	ms = min(ms, len(snippet))
-	return snippet, ms, me
+	return s[start:at], s[at:matchEnd], s[matchEnd:end]
 }
 
 func utf8RuneStart(b byte) bool { return utf8.RuneStart(b) }

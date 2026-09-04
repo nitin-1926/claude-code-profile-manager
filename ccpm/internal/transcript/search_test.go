@@ -80,11 +80,14 @@ func TestSearchSnippetOffsetsBracketTheMatch(t *testing.T) {
 		t.Fatalf("got %d hits, want 1", len(res.Hits))
 	}
 	h := res.Hits[0]
-	if h.MatchStart < 0 || h.MatchEnd > len(h.Snippet) || h.MatchStart >= h.MatchEnd {
-		t.Fatalf("offsets %d..%d are outside snippet of len %d", h.MatchStart, h.MatchEnd, len(h.Snippet))
+	if !strings.EqualFold(h.Match, "needle") {
+		t.Errorf("Match = %q, want the matched term", h.Match)
 	}
-	if got := h.Snippet[h.MatchStart:h.MatchEnd]; !strings.EqualFold(got, "needle") {
-		t.Errorf("snippet[%d:%d] = %q, want the matched term", h.MatchStart, h.MatchEnd, got)
+	if h.Before == "" || h.After == "" {
+		t.Errorf("snippet has no surrounding context: before=%q after=%q", h.Before, h.After)
+	}
+	if !strings.Contains(h.Before+h.Match+h.After, "NEEDLE") {
+		t.Error("the three pieces do not reassemble to the original text")
 	}
 }
 
@@ -291,8 +294,8 @@ func TestSearchNonASCIIQuery(t *testing.T) {
 		t.Fatalf("non-ASCII query found %d hits, want 1", len(res.Hits))
 	}
 	h := res.Hits[0]
-	if got := h.Snippet[h.MatchStart:h.MatchEnd]; !strings.EqualFold(got, "café") {
-		t.Errorf("offsets picked out %q, want café", got)
+	if !strings.EqualFold(h.Match, "café") {
+		t.Errorf("Match = %q, want café — a byte offset would have mis-split this", h.Match)
 	}
 }
 
@@ -352,7 +355,7 @@ func TestSearchStopsReadingAtPerSessionCap(t *testing.T) {
 		t.Fatalf("got %d hits, want 2", len(res.Hits))
 	}
 	for _, h := range res.Hits {
-		if strings.Contains(h.Snippet, "TAILMARKER") {
+		if strings.Contains(h.Before+h.Match+h.After, "TAILMARKER") {
 			t.Error("the scan read past the per-session cap")
 		}
 	}

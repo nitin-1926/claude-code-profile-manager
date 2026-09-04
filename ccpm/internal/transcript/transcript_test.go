@@ -416,3 +416,38 @@ func TestIsTitleWorthy(t *testing.T) {
 		t.Error("a real prompt must be title-worthy")
 	}
 }
+
+func TestToolInputPreviewPicksTheIdentifyingField(t *testing.T) {
+	// A chip showing `{"language":"go","code":"package main\n\nimport (...` is
+	// technically the input and useless as a summary.
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"bash command", `{"command":"grep -rn findCCPM ccpm/","timeout":120}`, "grep -rn findCCPM ccpm/"},
+		{"edit path", `{"file_path":"/repo/a.go","old_string":"x","new_string":"y"}`, "/repo/a.go"},
+		{"grep pattern", `{"pattern":"fork bomb","glob":"*.go"}`, "fork bomb"},
+		{"collapses newlines", `{"command":"line one\n\nline   two"}`, "line one line two"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, full, _ := toolInputPreview([]byte(tc.input))
+			if got != tc.want {
+				t.Errorf("preview = %q, want %q", got, tc.want)
+			}
+			if full != len(tc.input) {
+				t.Errorf("FullBytes = %d, want the whole input (%d)", full, len(tc.input))
+			}
+		})
+	}
+
+	// No recognised field: fall back to the raw JSON rather than showing nothing.
+	got, _, _ := toolInputPreview([]byte(`{"unusual":"shape"}`))
+	if got != `{"unusual":"shape"}` {
+		t.Errorf("fallback preview = %q, want the raw input", got)
+	}
+	if got, full, _ := toolInputPreview(nil); got != "" || full != 0 {
+		t.Errorf("empty input = %q/%d, want empty", got, full)
+	}
+}
