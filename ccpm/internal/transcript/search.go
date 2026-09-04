@@ -461,14 +461,44 @@ func utf8RuneStart(b byte) bool { return utf8.RuneStart(b) }
 // sandbox, so without this check a crafted value is an arbitrary-file-read
 // primitive that renders whatever it points at into the reader.
 func ResolvePath(profileDir, relPath string) (string, error) {
+	if relPath == "" {
+		return "", os.ErrNotExist
+	}
+	// Reject rooted and drive-qualified paths on EVERY platform rather than
+	// relying on filepath.IsAbs, which is platform-dependent in exactly the way
+	// that hurts here: IsAbs("/etc/passwd") is false on Windows and
+	// IsAbs(`C:\Windows\...`) is false everywhere else, so the same stored value
+	// would be refused on one OS and accepted on another.
+	//
+	// That asymmetry is not hypothetical: the threat model for this guard is a
+	// profile directory shared or restored from another machine, which is
+	// precisely how a Windows-shaped path ends up being resolved on macOS. A
+	// transcript's stored path is always relative, so anything rooted is wrong
+	// regardless of which OS is asking.
+	if relPath[0] == '/' || relPath[0] == '\\' || hasDrivePrefix(relPath) ||
+		filepath.IsAbs(relPath) || filepath.VolumeName(relPath) != "" {
+		return "", os.ErrNotExist
+	}
 	root := filepath.Join(profileDir, "projects")
 	full := filepath.Join(root, relPath)
 	rel, err := filepath.Rel(root, full)
 	if err != nil {
 		return "", os.ErrNotExist
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", os.ErrNotExist
 	}
 	return full, nil
+}
+
+// hasDrivePrefix reports whether p starts with a Windows drive designator like
+// "C:". filepath.VolumeName only recognises these when compiled for Windows,
+// so this is the portable check ResolvePath needs to refuse the same input on
+// every platform.
+func hasDrivePrefix(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }

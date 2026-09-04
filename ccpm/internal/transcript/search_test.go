@@ -398,9 +398,17 @@ func TestSearchCountsUnreadableTranscripts(t *testing.T) {
 	writeSessionTranscript(t, dir, "/repo", "ok", userLine(t, "u1", "readable hit"))
 	bad := writeSessionTranscript(t, dir, "/repo", "bad", userLine(t, "u1", "readable hit"))
 	if err := os.Chmod(bad, 0o000); err != nil {
-		t.Skip("cannot make a file unreadable here")
+		t.Skip("cannot change file mode here")
 	}
 	t.Cleanup(func() { _ = os.Chmod(bad, 0o644) })
+	// Windows chmod only toggles the read-only bit, and running as root ignores
+	// the mode entirely — in both cases the file stays readable and there is
+	// nothing for this test to observe. Verify the premise instead of asserting
+	// on a platform where it does not hold.
+	if f, err := os.Open(bad); err == nil {
+		f.Close()
+		t.Skip("file mode does not prevent reads on this platform")
+	}
 
 	res := Search(context.Background(), scopeOf(dir), "readable", SearchOpts{})
 	if res.Unreadable == 0 {
@@ -419,8 +427,15 @@ func TestResolvePathRejectsTraversal(t *testing.T) {
 		"../../../etc/passwd.jsonl",
 		"..",
 		"../outside.jsonl",
-		"/etc/passwd",
 		"sub/../../../../etc/passwd",
+		"", // empty
+		// Rooted paths must be refused identically on every OS. filepath.IsAbs
+		// alone would not do it: IsAbs("/etc/passwd") is false on Windows, so
+		// relying on it made the guard platform-dependent for the same input.
+		"/etc/passwd",
+		`\Windows\System32\config\SAM`,
+		`C:\Windows\System32\config\SAM`,
+		`C:/Windows/System32/config/SAM`,
 	} {
 		if _, err := ResolvePath(dir, bad); err == nil {
 			t.Errorf("ResolvePath accepted %q — that is an arbitrary-file-read primitive", bad)
