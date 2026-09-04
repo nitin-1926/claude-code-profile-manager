@@ -158,3 +158,103 @@ export interface UpdateProgress {
   phase: string
   percent: number
 }
+
+// --- History -------------------------------------------------------------
+// Mirrors ccpm/desktop/services/history.go and ccpm/internal/transcript.
+
+export type BlockKind = 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image' | 'unknown'
+
+export interface TurnBlock {
+  kind: BlockKind
+  /** Populated only for `unknown`, so the UI can name what it could not render. */
+  rawType?: string
+  text?: string
+  toolName?: string
+  toolUseId?: string
+  /** Truncated tool input or output; the full body is fetched on expand. */
+  preview?: string
+  fullBytes: number
+  truncated: boolean
+  isError?: boolean
+}
+
+export interface Turn {
+  index: number
+  uuid?: string
+  role: 'user' | 'assistant'
+  timestamp?: string
+  model?: string
+  isSidechain: boolean
+  isMeta: boolean
+  blocks: TurnBlock[]
+}
+
+export interface HistorySession {
+  id: string
+  title: string
+  cwd: string
+  branch: string
+  model: string
+  /** Deduped usage-bearing assistant lines — not the reader's turn count. */
+  responses: number
+  turns: number
+  tokens: number
+  cost: number
+  firstTs: string
+  lastTs: string
+  /** False when the transcript has been pruned; the row shows but cannot open. */
+  openable: boolean
+}
+
+export interface HistoryPage {
+  turns: Turn[]
+  total: number
+  offset: number
+  unknownBlocks: number
+  skippedLines: number
+  /** Index a jump-to-turn landed on, or -1. */
+  targetIndex: number
+}
+
+export interface HistoryToolBody {
+  body: string
+  fullBytes: number
+  truncated: boolean
+}
+
+export type HitSource = 'text' | 'tool_use' | 'tool_result'
+
+export interface SearchHit {
+  profile: string
+  sessionId: string
+  title?: string
+  cwd?: string
+  relPath: string
+  mtime: number
+  turnUuid?: string
+  role: string
+  timestamp?: string
+  source: HitSource
+  toolName?: string
+  /**
+   * The snippet arrives pre-split. Go offsets are byte-based and JS strings are
+   * UTF-16, so an offset crossing the bridge would mis-highlight any snippet
+   * containing a non-ASCII character.
+   */
+  before: string
+  match: string
+  after: string
+  /** Further matches in this same message beyond the one shown. */
+  more: number
+}
+
+export interface SearchResult {
+  hits: SearchHit[]
+  sessions: number
+  /** A floor, not a total: scanning stops at each session's quota. */
+  matches: number
+  truncated: boolean
+  droppedSessions: number
+  unreadable: number
+  cancelled: boolean
+}

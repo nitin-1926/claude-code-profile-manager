@@ -28,6 +28,14 @@ import {
   SetEnv as MSetEnv,
   UnsetEnv as MUnsetEnv,
 } from '../../wailsjs/go/services/MutateService'
+import {
+  Sessions as HistorySessions,
+  Transcript as HistoryTranscript,
+  TranscriptAround as HistoryTranscriptAround,
+  ToolBody as HistoryToolBodyFn,
+  Search as HistorySearch,
+  CancelSearch as HistoryCancelSearch,
+} from '../../wailsjs/go/services/HistoryService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
 import { Check as UpdaterCheck, Install as UpdaterInstall } from '../../wailsjs/go/services/Updater'
@@ -39,7 +47,11 @@ import type {
   CmdResult,
   Details,
   HealthResult,
+  HistoryPage,
+  HistorySession,
+  HistoryToolBody,
   Profile,
+  SearchResult,
   SettingKV,
   UpdateInfo,
   UpdateProgress,
@@ -60,6 +72,18 @@ export const api = {
   },
   health: {
     doctor: () => Doctor() as unknown as Promise<HealthResult>,
+  },
+  history: {
+    sessions: (profile: string) => HistorySessions(profile) as unknown as Promise<HistorySession[]>,
+    transcript: (profile: string, id: string, offset: number, limit: number) =>
+      HistoryTranscript(profile, id, offset, limit) as unknown as Promise<HistoryPage>,
+    transcriptAround: (profile: string, id: string, turnUuid: string, limit: number) =>
+      HistoryTranscriptAround(profile, id, turnUuid, limit) as unknown as Promise<HistoryPage>,
+    toolBody: (profile: string, id: string, turnUuid: string, blockIndex: number) =>
+      HistoryToolBodyFn(profile, id, turnUuid, blockIndex) as unknown as Promise<HistoryToolBody>,
+    search: (profile: string, query: string, token: string, includeToolResults: boolean) =>
+      HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
+    cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
   },
   details: {
     get: (name: string) => DetailsGet(name) as unknown as Promise<Details>,

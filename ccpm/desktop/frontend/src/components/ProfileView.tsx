@@ -10,6 +10,7 @@ import { Copy, FolderOpen, KeyRound, type LucideIcon, Pencil, Play, Trash2 } fro
 import { OverviewTab } from './tabs/OverviewTab'
 import { CascadeTab } from './tabs/CascadeTab'
 import { UsageTab } from './tabs/UsageTab'
+import { HistoryTab } from './tabs/HistoryTab'
 import { HealthTab } from './tabs/HealthTab'
 import { AssetsTab } from './tabs/AssetsTab'
 import { McpPluginsTab } from './tabs/McpPluginsTab'
@@ -25,6 +26,7 @@ const TABS = [
   { id: 'Permissions', enabled: true },
   { id: 'Settings', enabled: true },
   { id: 'Usage', enabled: true },
+  { id: 'History', enabled: true },
   { id: 'Health', enabled: true },
 ] as const
 
@@ -128,6 +130,7 @@ export function ProfileView({
           {tab === 'Permissions' && <PermissionsTab profile={profile.name} onMutated={onMutated} />}
           {tab === 'Settings' && <SettingsTab profile={profile.name} onMutated={onMutated} />}
           {tab === 'Usage' && <UsageTab profile={profile.name} />}
+          {tab === 'History' && <HistoryTab profile={profile.name} />}
           {tab === 'Health' && <HealthTab />}
         </ErrorBoundary>
       </div>
