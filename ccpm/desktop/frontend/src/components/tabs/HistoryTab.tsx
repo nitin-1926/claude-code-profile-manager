@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
-import type { HistorySession, SearchHit, SearchResult } from '@/types'
+import type { HistorySession, SearchHit } from '@/types'
 import { humanTokens, money, tildePath, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { GitBranch, Search, Terminal } from 'lucide-react'
+import { GitBranch, Play, Search } from 'lucide-react'
+import { useToast } from '@/components/ui/Toast'
+import { useGuarded } from '@/lib/useGuarded'
 import { TranscriptReader } from '@/components/history/TranscriptReader'
 import { SearchResults } from '@/components/history/SearchResults'
 
@@ -128,6 +130,7 @@ export function HistoryTab({ profile }: { profile: string }) {
           sessions={filtered}
           total={sessions.length}
           filtering={query.trim().length > 0}
+          profile={profile}
           onOpen={(s) => setReading({ session: s, origin: { kind: 'list' } })}
         />
       )}
@@ -166,11 +169,13 @@ function SessionList({
   sessions,
   total,
   filtering,
+  profile,
   onOpen,
 }: {
   sessions: HistorySession[]
   total: number
   filtering: boolean
+  profile: string
   onOpen: (s: HistorySession) => void
 }) {
   if (total === 0) {
@@ -206,7 +211,13 @@ function SessionList({
       </h2>
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         {sessions.map((s, i) => (
-          <SessionRow key={s.id} s={s} last={i === sessions.length - 1} onOpen={() => onOpen(s)} />
+          <SessionRow
+            key={s.id}
+            s={s}
+            last={i === sessions.length - 1}
+            profile={profile}
+            onOpen={() => onOpen(s)}
+          />
         ))}
       </div>
     </>
@@ -219,13 +230,28 @@ function SessionList({
 function SessionRow({
   s,
   last,
+  profile,
   onOpen,
 }: {
   s: HistorySession
   last: boolean
+  profile: string
   onOpen: () => void
 }) {
   const openable = s.openable
+  const toast = useToast()
+  const guard = useGuarded('Resume')
+
+  const resume = guard(async () => {
+    const r = await api.history.resume(profile, s.id)
+    if (r.ok) {
+      // Name the directory: `claude --resume` scopes by cwd, so seeing where it
+      // landed is how a wrong target becomes visible rather than silent.
+      toast({ kind: 'info', title: 'Resuming in Terminal', desc: r.output })
+    } else {
+      toast({ kind: 'error', title: 'Could not resume', desc: r.error || r.output })
+    }
+  })
   return (
     <div
       className={cn(
@@ -275,7 +301,17 @@ function SessionRow({
       <div className="flex shrink-0 items-center gap-2 pt-0.5">
         <span className="text-[11px] text-muted-foreground">{timeAgo(s.lastTs)}</span>
         {openable && (
-          <Terminal className="size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+          <button
+            title="Resume this session in Terminal"
+            aria-label="Resume this session in Terminal"
+            onClick={(e) => {
+              e.stopPropagation()
+              resume()
+            }}
+            className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+          >
+            <Play className="size-3" />
+          </button>
         )}
       </div>
     </div>

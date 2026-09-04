@@ -35,6 +35,7 @@ import {
   ToolBody as HistoryToolBodyFn,
   Search as HistorySearch,
   CancelSearch as HistoryCancelSearch,
+  Resume as HistoryResume,
 } from '../../wailsjs/go/services/HistoryService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
@@ -84,6 +85,7 @@ export const api = {
     search: (profile: string, query: string, token: string, includeToolResults: boolean) =>
       HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
     cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
+    resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<CmdResult>,
   },
   details: {
     get: (name: string) => DetailsGet(name) as unknown as Promise<Details>,

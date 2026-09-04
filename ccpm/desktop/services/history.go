@@ -5,6 +5,7 @@ package services
 import (
 	"context"
 	"os"
+	"regexp"
 	"sort"
 	"sync"
 
@@ -241,6 +242,53 @@ func (s *HistoryService) ToolBody(profile, sessionID, turnUUID string, blockInde
 		return HistoryToolBody{}, nil
 	}
 	return HistoryToolBody{Body: body, FullBytes: full, Truncated: truncated}, nil
+}
+
+// safeSessionID admits a session id to the shell only if it is built from
+// characters that cannot mean anything to it.
+//
+// A session id is read out of on-disk JSON and a profile directory can be
+// shared or restored, so it is untrusted input. This is deliberately not a
+// strict UUID pattern even though every id observed is one: if Claude Code ever
+// changes the format, a UUID gate silently breaks Resume, whereas this gate
+// keeps working and still admits nothing a shell could act on. It is
+// defence-in-depth on top of shellQuote, not a replacement for it.
+var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// Resume relaunches a past session in Terminal, in the directory it was
+// started from.
+//
+// This lives on HistoryService rather than MutateService so that issue #8
+// (embedded terminal) re-points one method body and the frontend never changes.
+func (s *HistoryService) Resume(profile, sessionID string) CmdResult {
+	if !safeSessionID.MatchString(sessionID) {
+		return CmdResult{Error: "refusing to resume an implausible session id"}
+	}
+	dir := profileDir(profile)
+	if dir == "" {
+		return CmdResult{Error: "unknown profile: " + profile}
+	}
+	e := transcript.LoadIndex(dir).Entries[sessionID]
+	if e == nil {
+		return CmdResult{Error: "no transcript on disk for this session"}
+	}
+
+	// The session's FIRST cwd, which is what the sidecar records and what the
+	// transcript's own directory encodes. `claude --resume` scopes its session
+	// set by the current directory, so resuming from a later cwd — 7 of 25
+	// measured sessions drifted, some ending in a subdirectory — lands in a
+	// project that has no such session while every guard here still passes.
+	workdir := e.Cwd
+	if workdir != "" {
+		if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
+			// Short-circuiting the && would otherwise leave the user staring at
+			// a lone `cd: no such file` in a fresh Terminal window.
+			return CmdResult{Error: "that session's directory no longer exists: " + workdir}
+		}
+	}
+
+	// `--` so a future ccpm flag can never collide with a claude one.
+	return NewMutate().terminal(workdir, "run", profile, "--", "--resume", sessionID)
 }
 
 // maxTombstones bounds the cancel-before-register map. A tombstone is normally

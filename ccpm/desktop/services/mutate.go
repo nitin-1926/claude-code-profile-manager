@@ -97,7 +97,7 @@ func (s *MutateService) Launch(name string) CmdResult {
 	if err := profile.ValidateName(name); err != nil {
 		return CmdResult{Error: err.Error()}
 	}
-	return s.terminal("run", name)
+	return s.terminal("", "run", name)
 }
 
 // CreateInTerminal opens a Terminal running `ccpm add <name>` (the interactive
@@ -106,12 +106,12 @@ func (s *MutateService) CreateInTerminal(name string) CmdResult {
 	if err := profile.ValidateName(name); err != nil {
 		return CmdResult{Error: err.Error()}
 	}
-	return s.terminal("add", name)
+	return s.terminal("", "add", name)
 }
 
 // ImportInTerminal opens a Terminal running the import-from-host wizard.
 func (s *MutateService) ImportInTerminal() CmdResult {
-	return s.terminal("add")
+	return s.terminal("", "add")
 }
 
 // --- asset-level writes (profile-scoped) ---
@@ -195,23 +195,42 @@ func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
 	return runCCPM("env", "unset", key, "--profile", profile)
 }
 
-// terminal launches a new Terminal window running `<ccpm> <args...>`.
+// terminal launches a new Terminal window running `<ccpm> <args...>`, optionally
+// after cd-ing into workdir.
 //
 // AppleScript's `do script` hands its argument to a shell, and %q only escapes
 // the AppleScript string literal — `;`, `|`, `$(…)` and backticks survive it
 // intact. Every argument is therefore single-quoted for the shell here, in the
 // one function all Terminal launches route through, so a profile name can
 // never break out into a second command.
-func (s *MutateService) terminal(args ...string) CmdResult {
+//
+// The `cd` for workdir is composed here rather than by callers: the path goes
+// through shellQuote like any other argument and only the `&&` is emitted
+// outside the quoting, so a directory name cannot introduce a second command.
+func (s *MutateService) terminal(workdir string, args ...string) CmdResult {
 	bin := findCCPM()
 	if bin == "" {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
+	}
+	// Reject control characters for every caller, in the shared funnel rather
+	// than at each call site. A newline does not escape single quotes — it stays
+	// inside them — but Go's %q renders it as \n and AppleScript's parser turns
+	// that back into a real newline, so `do script` would type a broken command
+	// into Terminal. Refusing is clearer than emitting something confusing, and
+	// putting the check here means the next caller cannot rediscover it.
+	for _, a := range append([]string{workdir}, args...) {
+		if strings.ContainsAny(a, "\n\r\x00") {
+			return CmdResult{Error: "refusing to run a command containing a control character"}
+		}
 	}
 	quoted := make([]string, 0, len(args)+1)
 	for _, a := range append([]string{bin}, args...) {
 		quoted = append(quoted, shellQuote(a))
 	}
 	full := strings.Join(quoted, " ")
+	if workdir != "" {
+		full = "cd " + shellQuote(workdir) + " && " + full
+	}
 	if runtime.GOOS != "darwin" {
 		return CmdResult{OK: false, Output: full, Error: "open a terminal and run: " + full}
 	}
@@ -219,8 +238,15 @@ func (s *MutateService) terminal(args ...string) CmdResult {
 	activate
 	do script %q
 end tell`, full)
-	if err := exec.Command("osascript", "-e", script).Start(); err != nil {
-		return CmdResult{Error: err.Error(), Output: full}
+	// Run, not Start: Start only reports a failure to launch osascript itself,
+	// so a script osascript refuses to compile (a non-UTF-8 byte in a path
+	// renders as \xNN via %q, which AppleScript rejects) would return OK.
+	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return CmdResult{Error: msg, Output: full}
 	}
 	return CmdResult{OK: true, Output: full}
 }
