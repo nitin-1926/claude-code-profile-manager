@@ -87,8 +87,8 @@ type Block struct {
 // Turn is one visible unit of the conversation.
 //
 // Index is the turn's ordinal under the enumeration rule documented on
-// countsAsTurn: it is deliberately independent of any UI filter, so a search
-// hit's index still addresses the same turn when the reader's thinking and
+// countsAsTurn. It is deliberately independent of any UI filter, so paging and
+// jump-to-turn keep addressing the same turn when the reader's thinking and
 // sidechain toggles change.
 type Turn struct {
 	Index       int     `json:"index"`
@@ -141,8 +141,8 @@ type rawLine struct {
 }
 
 // countsAsTurn is THE turn-enumeration rule, and the only place it is decided.
-// Search and ReadPage both route through it so that a hit's TurnIndex means the
-// same turn in both.
+// ReadPage and IndexOfTurn both route through it, so resolving a search hit's
+// UUID lands on the same turn the reader renders.
 //
 // A line is a turn when it decoded cleanly, is a user or assistant line, and
 // carries a message. Meta and sidechain lines DO count — they are turns that
@@ -277,14 +277,19 @@ func ClipRunes(s string, n int) string {
 	return s
 }
 
-// eachLine streams path, handing every complete line to fn. It stops before a
-// trailing line with no newline — that is a transcript still being written, and
-// decoding half a JSON object would render a corrupt turn. This mirrors the
-// rule internal/usage/sync.go applies for the same reason.
+// eachLine streams path, handing every complete line to fn until fn returns
+// false. It stops before a trailing line with no newline — that is a transcript
+// still being written, and decoding half a JSON object would render a corrupt
+// turn. This mirrors the rule internal/usage/sync.go applies for the same
+// reason.
 //
 // A line longer than maxLineBytes is reported to fn as skipped rather than
 // decoded, so one pathological line does not cost every turn after it.
-func eachLine(path string, fn func(raw []byte, skipped bool)) error {
+//
+// The early-stop return is what bounds search: once a file has produced its
+// quota of hits there is nothing to gain from decoding the rest of it, and on a
+// common query the rest is most of a 76 MB file.
+func eachLine(path string, fn func(raw []byte, skipped bool) bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -301,10 +306,14 @@ func eachLine(path string, fn func(raw []byte, skipped bool)) error {
 			return err
 		}
 		if len(line) > maxLineBytes {
-			fn(nil, true)
+			if !fn(nil, true) {
+				return nil
+			}
 			continue
 		}
-		fn(line, false)
+		if !fn(line, false) {
+			return nil
+		}
 	}
 }
 
@@ -326,23 +335,23 @@ func ReadPage(path string, offset, limit int) (Page, error) {
 	}
 
 	idx := 0
-	err := eachLine(path, func(raw []byte, skipped bool) {
+	err := eachLine(path, func(raw []byte, skipped bool) bool {
 		if skipped {
 			page.SkippedLines++
-			return
+			return true
 		}
 		var l rawLine
 		if json.Unmarshal(raw, &l) != nil {
-			return // malformed line: not a turn, does not advance the index
+			return true // malformed line: not a turn, does not advance the index
 		}
 		if !l.countsAsTurn() {
-			return
+			return true
 		}
 		i := idx
 		idx++
 		page.Total = idx
 		if i < offset || i >= offset+limit {
-			return
+			return true
 		}
 		blocks, unknown := l.blocks()
 		page.UnknownBlocks += unknown
@@ -356,11 +365,71 @@ func ReadPage(path string, offset, limit int) (Page, error) {
 			IsMeta:      l.IsMeta,
 			Blocks:      blocks,
 		})
+		return true
 	})
 	if err != nil {
 		return Page{Turns: []Turn{}}, err
 	}
 	return page, nil
+}
+
+// IndexOfTurn returns the position of the turn with the given uuid, or -1 when
+// the file has no such turn.
+//
+// This is how a search hit becomes a reader position. The search scan cannot
+// produce a trustworthy index — its byte prefilter skips lines without decoding
+// them, so it never learns whether a skipped line was a turn — so it hands back
+// a UUID and this resolves it under the same enumeration rule ReadPage uses.
+// One rule, one pass, no contract between two filters to drift.
+func IndexOfTurn(path, uuid string) (int, error) {
+	if uuid == "" {
+		return -1, nil
+	}
+	idx, found := 0, -1
+	err := eachLine(path, func(raw []byte, skipped bool) bool {
+		if skipped {
+			return true
+		}
+		var l rawLine
+		if json.Unmarshal(raw, &l) != nil {
+			return true
+		}
+		if !l.countsAsTurn() {
+			return true
+		}
+		if l.UUID == uuid {
+			found = idx
+			return false // found it; no reason to read the rest
+		}
+		idx++
+		return true
+	})
+	if err != nil {
+		return -1, err
+	}
+	return found, nil
+}
+
+// PageAround returns the window of turns containing the turn with uuid, plus
+// that turn's index so the caller can scroll to and flash it. An unknown uuid
+// falls back to the first page rather than erroring — the transcript may have
+// been rewritten since the search ran.
+func PageAround(path, uuid string, limit int) (Page, int, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	at, err := IndexOfTurn(path, uuid)
+	if err != nil {
+		return Page{Turns: []Turn{}}, -1, err
+	}
+	offset := 0
+	if at >= 0 {
+		// Put the target a little way into the page so there is preceding
+		// context to read rather than landing on the very first line.
+		offset = max(at-limit/4, 0)
+	}
+	page, err := ReadPage(path, offset, limit)
+	return page, at, err
 }
 
 // FirstUserPrompt pulls a human-readable preview out of one decoded transcript

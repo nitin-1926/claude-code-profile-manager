@@ -216,13 +216,13 @@ func Scan(path string) (Meta, error) {
 	var firstPrompt string
 	counted := map[string]bool{}
 
-	err := eachLine(path, func(raw []byte, skipped bool) {
+	err := eachLine(path, func(raw []byte, skipped bool) bool {
 		if skipped {
-			return
+			return true
 		}
 		var l rawLine
 		if json.Unmarshal(raw, &l) != nil {
-			return
+			return true
 		}
 		if l.SessionID != "" && m.SessionID == "" {
 			m.SessionID = l.SessionID
@@ -250,10 +250,10 @@ func Scan(path string) (Meta, error) {
 		}
 		if l.Type == "ai-title" && l.AITitle != "" {
 			m.Title = ClipRunes(strings.TrimSpace(l.AITitle), TitleRunes)
-			return
+			return true
 		}
 		if !l.countsAsTurn() {
-			return
+			return true
 		}
 		m.Turns++
 
@@ -289,6 +289,7 @@ func Scan(path string) (Meta, error) {
 				firstPrompt = strings.TrimSpace(p)
 			}
 		}
+		return true
 	})
 	if err != nil {
 		return m, err
