@@ -19,6 +19,31 @@ import (
 // decode only what we display so newer keys are ignored rather than erroring.
 // See https://code.claude.com/docs/en/statusline for the full schema.
 type statusLineInput struct {
+	// Cwd duplicates workspace.current_dir; Claude Code sends both and
+	// documents current_dir as preferred. Kept as a fallback for older clients.
+	Cwd       string `json:"cwd"`
+	Workspace struct {
+		CurrentDir string `json:"current_dir"`
+		ProjectDir string `json:"project_dir"`
+		// Repo is present only inside a git repository that has an `origin`
+		// remote configured.
+		Repo *struct {
+			Host  string `json:"host"`
+			Owner string `json:"owner"`
+			Name  string `json:"name"`
+		} `json:"repo"`
+	} `json:"workspace"`
+	// Worktree is present only inside a Claude Code managed worktree, and is the
+	// one place the payload names a git branch — everywhere else we read it off
+	// disk ourselves.
+	Worktree *struct {
+		Branch string `json:"branch"`
+	} `json:"worktree"`
+	// Effort is present only when the active model supports the reasoning-effort
+	// parameter, so the segment is absent for models that do not.
+	Effort *struct {
+		Level string `json:"level"`
+	} `json:"effort"`
 	Model struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"display_name"`
@@ -46,10 +71,16 @@ type rateWindow struct {
 var statusLineRenderCmd = &cobra.Command{
 	Use:   "statusline",
 	Short: "Render the Claude Code status line for the active ccpm profile",
-	Long: `Reads Claude Code's status JSON on stdin and prints a one-line status
-showing the active ccpm profile, model, context usage, subscription usage
-windows (5h / 7d used, Pro/Max accounts only), and session cost. Output is
-ANSI-coloured unless NO_COLOR is set.
+	Long: `Reads Claude Code's status JSON on stdin and prints a two-row status.
+
+  Row 1  the active ccpm profile, the repo (with the subdirectory you are in),
+         and the git branch.
+  Row 2  the model, context usage, reasoning effort, the subscription usage
+         windows (5h / 7d used, Pro/Max accounts only), and session cost.
+
+Segments drop out when their data is absent, and a row with nothing to say is
+not printed at all — so an API-key profile outside a repo collapses to a single
+row. Output is ANSI-coloured unless NO_COLOR is set.
 
 You don't normally run this yourself — Claude Code invokes it as the
 configured statusLine command. 'ccpm run' wires it in automatically for
@@ -77,9 +108,9 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 	var in statusLineInput
 	_ = json.Unmarshal(raw, &in) // best-effort; missing fields just don't render
 
-	line := renderStatusLine(in, statusLineProfileName(), time.Now(), statusLineColorEnabled())
-	if line != "" {
-		fmt.Fprintln(cmd.OutOrStdout(), line)
+	// Claude Code renders each printed line as its own row.
+	for _, row := range renderStatusLine(in, statusLineProfileName(), time.Now(), statusLineColorEnabled()) {
+		fmt.Fprintln(cmd.OutOrStdout(), row)
 	}
 	return nil
 }
@@ -100,6 +131,9 @@ const (
 	cOrange  = "\033[38;5;208m" // 5h / 7d window labels
 	cYellow  = "\033[38;5;221m" // reset clock
 	cCost    = "\033[38;5;109m" // estimated cost
+	cDir     = "\033[38;5;110m" // repo / directory
+	cBranch  = "\033[38;5;114m" // git branch
+	cEffort  = "\033[38;5;180m" // reasoning effort
 )
 
 // statusLineColorEnabled reports whether to emit ANSI color, following the
@@ -145,40 +179,201 @@ func ctxColor(used int) string {
 	}
 }
 
-// renderStatusLine builds the status line from decoded input. Pure (now and the
-// color toggle are injected) so it is unit-testable. Segments drop out when
-// their data is absent, so an API-key profile collapses to
-// "⬢ work · Opus 4.8 · $0.12" (wrapped in ANSI color when enabled).
-func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool) string {
-	var segs []string
-	if profile != "" {
-		segs = append(segs, paint(color, cBold+cProfile, "⬢ "+profile))
-	}
-	if name := in.Model.DisplayName; name != "" {
-		segs = append(segs, paint(color, cModel, name))
-	} else if in.Model.ID != "" {
-		segs = append(segs, paint(color, cModel, in.Model.ID))
-	}
-	if in.ContextWindow.UsedPercentage > 0 {
-		pct := roundPct(in.ContextWindow.UsedPercentage)
-		segs = append(segs, paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct)))
-	}
-	if in.RateLimits != nil {
-		if w := in.RateLimits.FiveHour; w != nil {
-			segs = append(segs, formatWindow("5h", w, now, color))
-		}
-		if w := in.RateLimits.SevenDay; w != nil {
-			segs = append(segs, formatWindow("7d", w, now, color))
-		}
-	}
-	if in.Cost.TotalCostUSD > 0 {
-		segs = append(segs, paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD)))
-	}
+// renderStatusLine builds the status line from decoded input, as one row per
+// returned string — Claude Code renders each printed line as its own row.
+//
+// Row 1 is where you are: profile, repo/directory, branch.
+// Row 2 is what it is costing: model, context, effort, the usage windows, spend.
+//
+// Splitting them this way keeps the volatile numbers on their own row, so the
+// identity line stays still while usage ticks. Pure (the clock and the color
+// toggle are injected) so it is unit-testable. Segments drop out when their data
+// is absent, and a row with no segments is omitted entirely rather than printed
+// blank — an API-key profile outside a repo collapses to a single row.
+func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool) []string {
 	sep := " · "
 	if color {
 		sep = " " + cGrey + "·" + cReset + " "
 	}
-	return strings.Join(segs, sep)
+
+	var where []string
+	if profile != "" {
+		where = append(where, paint(color, cBold+cProfile, "⬢ "+profile))
+	}
+	if loc := workspaceLabel(in); loc != "" {
+		where = append(where, paint(color, cDir, loc))
+	}
+	if br := statusLineBranch(in); br != "" {
+		where = append(where, paint(color, cBranch, "⎇ "+br))
+	}
+
+	var usage []string
+	if name := in.Model.DisplayName; name != "" {
+		usage = append(usage, paint(color, cModel, name))
+	} else if in.Model.ID != "" {
+		usage = append(usage, paint(color, cModel, in.Model.ID))
+	}
+	if in.ContextWindow.UsedPercentage > 0 {
+		pct := roundPct(in.ContextWindow.UsedPercentage)
+		usage = append(usage, paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct)))
+	}
+	if in.Effort != nil && in.Effort.Level != "" {
+		usage = append(usage, paint(color, cEffort, "effort "+in.Effort.Level))
+	}
+	if in.RateLimits != nil {
+		if w := in.RateLimits.FiveHour; w != nil {
+			usage = append(usage, formatWindow("5h", w, now, color))
+		}
+		if w := in.RateLimits.SevenDay; w != nil {
+			usage = append(usage, formatWindow("7d", w, now, color))
+		}
+	}
+	if in.Cost.TotalCostUSD > 0 {
+		usage = append(usage, paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD)))
+	}
+
+	rows := make([]string, 0, 2)
+	for _, segs := range [][]string{where, usage} {
+		if len(segs) > 0 {
+			rows = append(rows, strings.Join(segs, sep))
+		}
+	}
+	return rows
+}
+
+// workspaceLabel renders "repo/subdir", or just the directory name when there is
+// no repo. The subdirectory is included only when the session has moved below
+// the launch directory, which is exactly when the repo name alone stops being
+// enough to say where you are.
+func workspaceLabel(in statusLineInput) string {
+	cur := in.Workspace.CurrentDir
+	if cur == "" {
+		cur = in.Cwd
+	}
+	root := in.Workspace.ProjectDir
+
+	name := ""
+	if in.Workspace.Repo != nil {
+		name = in.Workspace.Repo.Name
+	}
+	if name == "" && root != "" {
+		name = filepath.Base(root)
+	}
+	if name == "" {
+		if cur == "" {
+			return ""
+		}
+		return filepath.Base(cur)
+	}
+	if cur == "" || root == "" {
+		return name
+	}
+	rel, err := filepath.Rel(root, cur)
+	if err != nil || rel == "." || rel == "" || strings.HasPrefix(rel, "..") {
+		return name
+	}
+	return name + string(filepath.Separator) + rel
+}
+
+// statusLineBranch resolves the current git branch.
+//
+// The status-line payload carries a branch only for Claude Code's own
+// worktrees, so everywhere else it is read straight off disk. That is
+// deliberate: the documented approach is to shell out to `git branch
+// --show-current`, but this command runs on every assistant message, and
+// spawning a process each time is exactly the cost the docs warn about. Reading
+// .git/HEAD is a couple of stats and one small read, with no subprocess and
+// nothing to cache.
+func statusLineBranch(in statusLineInput) string {
+	if in.Worktree != nil && in.Worktree.Branch != "" {
+		return in.Worktree.Branch
+	}
+	dir := in.Workspace.CurrentDir
+	if dir == "" {
+		dir = in.Cwd
+	}
+	return gitBranchAt(dir)
+}
+
+// gitBranchAt walks up from dir looking for a .git entry and reads the branch
+// out of its HEAD. Returns "" when there is no repository, and a short SHA when
+// HEAD is detached.
+func gitBranchAt(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	gitPath := findGitEntry(dir)
+	if gitPath == "" {
+		return ""
+	}
+	head, err := os.ReadFile(filepath.Join(gitPath, "HEAD"))
+	if err != nil {
+		return ""
+	}
+	return branchFromHead(string(head))
+}
+
+// findGitEntry returns the git directory governing dir, or "".
+//
+// A .git FILE rather than a directory means a linked worktree or a submodule;
+// it holds "gitdir: <path>" pointing at the real one, which is where HEAD lives.
+func findGitEntry(dir string) string {
+	// Bounded so a pathological path cannot walk forever.
+	for range 64 {
+		candidate := filepath.Join(dir, ".git")
+		fi, err := os.Stat(candidate)
+		switch {
+		case err == nil && fi.IsDir():
+			return candidate
+		case err == nil:
+			b, rerr := os.ReadFile(candidate)
+			if rerr != nil {
+				return ""
+			}
+			target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(b)), "gitdir:"))
+			if target == "" {
+				return ""
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(dir, target)
+			}
+			return target
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// branchFromHead parses a .git/HEAD payload: a symbolic ref for a branch, or a
+// raw object id when detached.
+func branchFromHead(head string) string {
+	h := strings.TrimSpace(head)
+	if rest, ok := strings.CutPrefix(h, "ref:"); ok {
+		ref := strings.TrimSpace(rest)
+		// refs/heads/feat/x -> feat/x, keeping slashes inside the branch name.
+		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			return name
+		}
+		return filepath.Base(ref)
+	}
+	if len(h) >= 7 && isHex(h) {
+		return h[:7] // detached HEAD
+	}
+	return ""
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // formatWindow renders a rate-limit window as label + percent-USED + reset
@@ -195,10 +390,24 @@ func formatWindow(label string, w *rateWindow, now time.Time, color bool) string
 	s := paint(color, cOrange, label) + " " + paint(color, headroomColor(remaining), fmt.Sprintf("%d%%", used))
 	if w.ResetsAt > 0 {
 		if reset := time.Unix(w.ResetsAt, 0); reset.After(now) {
-			s += " " + paint(color, cYellow, "↺"+reset.Format("15:04"))
+			s += " " + paint(color, cYellow, "↺"+resetClock(reset, now))
 		}
 	}
 	return s
+}
+
+// resetClock formats a reset time, naming the weekday once it is not today.
+// A bare "08:25" on the seven-day window reads as this morning when it is
+// actually two days out, which is the opposite of the reassurance it should
+// give; the five-hour window always lands today and stays a plain clock.
+func resetClock(reset, now time.Time) string {
+	if reset.YearDay() == now.YearDay() && reset.Year() == now.Year() {
+		return reset.Format("15:04")
+	}
+	if reset.Sub(now) < 7*24*time.Hour {
+		return reset.Format("Mon 15:04")
+	}
+	return reset.Format("2 Jan 15:04")
 }
 
 func roundPct(p float64) int {
