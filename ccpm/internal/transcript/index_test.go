@@ -151,18 +151,22 @@ func TestBuildIndexPerModelTallyAndCost(t *testing.T) {
 		return map[string]any{"input_tokens": in, "output_tokens": out,
 			"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
 	}
-	line := func(uuid, model string, in, out int64) string {
+	// Real assistant lines always carry message.id and requestId. Omitting them
+	// would exercise the model|timestamp FALLBACK dedup key rather than the real
+	// one — the same shape of mistake as a fixture that repeats a uuid.
+	line := func(uuid, msgID, model string, in, out int64) string {
 		return jl(t, map[string]any{
-			"type": "assistant", "uuid": uuid, "sessionId": "s1", "cwd": "/repo",
-			"message": map[string]any{"role": "assistant", "model": model,
+			"type": "assistant", "uuid": uuid, "requestId": "req_" + msgID,
+			"sessionId": "s1", "cwd": "/repo", "timestamp": "2026-06-27T10:00:00Z",
+			"message": map[string]any{"id": msgID, "role": "assistant", "model": model,
 				"content": []any{map[string]any{"type": "text", "text": "ok"}},
 				"usage":   usageBlock(in, out)},
 		})
 	}
 	writeSessionTranscript(t, dir, "/repo", "s1",
 		userLine(t, "u1", "mixed model session"),
-		line("a1", "claude-haiku-4-5", 1_000_000, 0),
-		line("a2", "claude-opus-5", 1_000_000, 0),
+		line("a1", "msg_h", "claude-haiku-4-5", 1_000_000, 0),
+		line("a2", "msg_o", "claude-opus-5", 1_000_000, 0),
 	)
 
 	ix, err := BuildIndex(dir)

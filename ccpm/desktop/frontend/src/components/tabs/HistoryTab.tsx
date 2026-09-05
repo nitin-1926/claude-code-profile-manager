@@ -173,7 +173,9 @@ function sessionFromHit(hit: SearchHit): HistorySession {
     tokens: 0,
     cost: 0,
     firstTs: '',
-    lastTs: '',
+    // The hit's file mtime is the only activity time available here; without it
+    // a search-opened session renders "never" in the reader header.
+    lastTs: hit.mtime ? new Date(hit.mtime * 1000).toISOString() : '',
     openable: true,
   }
 }
@@ -321,6 +323,9 @@ function SessionRow({
               e.stopPropagation()
               resume()
             }}
+            // The row is itself a button with an Enter/Space handler, so without
+            // this, keyboard-activating Resume also opens the reader behind it.
+            onKeyDown={(e) => e.stopPropagation()}
             className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
           >
             <Play className="size-3" />

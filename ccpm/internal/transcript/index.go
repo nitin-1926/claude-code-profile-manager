@@ -82,6 +82,15 @@ func LoadIndex(profileDir string) *Index {
 	if json.Unmarshal(b, &ix) != nil || ix.Version != indexVersion || ix.Entries == nil {
 		return newIndex()
 	}
+	// `{"entries": {"x": null}}` unmarshals to a nil *Entry, and every consumer
+	// dereferences what it finds. The sidecar lives inside a profile directory
+	// that may have been shared or restored, so it is not necessarily a file
+	// this code wrote.
+	for id, e := range ix.Entries {
+		if e == nil {
+			delete(ix.Entries, id)
+		}
+	}
 	return &ix
 }
 

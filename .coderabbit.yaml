@@ -24,8 +24,10 @@ reviews:
     labels: []
     # Drafts stay out: they are work in progress by definition.
     drafts: false
-    # Empty = every base branch. This repo only merges into main today, but
-    # pinning it would silently skip a future release branch.
+    # Empty means the DEFAULT branch only — it extends the reviewed set rather
+    # than replacing it, so `[]` is not "all branches". This repo merges into
+    # main and nothing else; a future release branch would need adding here (or
+    # `[".*"]` for every branch).
     base_branches: []
     ignore_title_keywords: []
 

@@ -194,6 +194,12 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 			continue
 		}
 		res.Matches += matches
+		if scanCancelled(ctx) {
+			res.Cancelled = true
+			res.DroppedSessions = len(cands) - i - 1
+			res.Hits = append(res.Hits, hits...)
+			return res
+		}
 		if capped {
 			// A session stopped at its quota, so Matches is a floor. Say so,
 			// rather than presenting a partial count as a total.
@@ -384,6 +390,14 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 		return nil, 0, false, err
 	}
 	return hits, matches, capped, nil
+}
+
+// scanCancelled reports whether ctx was cancelled. Checked after each file
+// because scanFile's in-file checkpoint stops the read but cannot distinguish
+// itself from a clean finish — so a cancel landing inside the LAST candidate
+// would otherwise fall out of the loop and be reported as a complete scan.
+func scanCancelled(ctx context.Context) bool {
+	return ctx.Err() != nil
 }
 
 // searchable is one piece of a turn that is in scope, with where it came from.

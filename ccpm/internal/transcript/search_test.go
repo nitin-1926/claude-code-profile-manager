@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -608,5 +609,50 @@ func TestContainsFoldMatchesToLowerContains(t *testing.T) {
 				t.Errorf("containsFold(%q,%q)=%v but ToLower+Contains=%v", h, n, got, want)
 			}
 		}
+	}
+}
+
+// TestSearchReportsCancellationInsideTheLastCandidate covers the tail case: the
+// in-file checkpoint stops the read but cannot distinguish itself from a clean
+// finish, so a cancel landing while the FINAL transcript is being scanned used
+// to fall out of the loop reporting Cancelled=false — a truncated scan
+// presented as complete.
+func TestSearchReportsCancellationInsideTheLastCandidate(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 4000)
+	for i := range 4000 {
+		lines = append(lines, userLine(t, "u"+strconv.Itoa(i), "findme over and over"))
+	}
+	writeSessionTranscript(t, dir, "/repo", "only", lines...)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel while the single (therefore last) candidate is mid-scan.
+	go func() {
+		time.Sleep(2 * time.Millisecond)
+		cancel()
+	}()
+	res := Search(ctx, scopeOf(dir), "findme", SearchOpts{MaxPerSession: 100000, MaxResults: 100000})
+	if !res.Cancelled {
+		t.Error("a cancel inside the last candidate must be reported, not presented as a complete scan")
+	}
+}
+
+func TestLoadIndexDropsNullEntries(t *testing.T) {
+	// A hand-written sidecar in a shared or restored profile can carry a null
+	// entry; every consumer dereferences what it finds.
+	dir := t.TempDir()
+	if err := os.MkdirAll(usage.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":1,"entries":{"good":{"session_id":"good","rel_path":"a/b.jsonl"},"bad":null}}`
+	if err := os.WriteFile(IndexPath(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ix := LoadIndex(dir)
+	if _, ok := ix.Entries["bad"]; ok {
+		t.Error("a null entry survived the load and will be dereferenced")
+	}
+	if ix.Entries["good"] == nil {
+		t.Error("the valid entry was dropped")
 	}
 }
