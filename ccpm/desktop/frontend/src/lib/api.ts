@@ -28,6 +28,15 @@ import {
   SetEnv as MSetEnv,
   UnsetEnv as MUnsetEnv,
 } from '../../wailsjs/go/services/MutateService'
+import {
+  Sessions as HistorySessions,
+  Transcript as HistoryTranscript,
+  TranscriptAround as HistoryTranscriptAround,
+  ToolBody as HistoryToolBodyFn,
+  Search as HistorySearch,
+  CancelSearch as HistoryCancelSearch,
+  Resume as HistoryResume,
+} from '../../wailsjs/go/services/HistoryService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
 import { Check as UpdaterCheck, Install as UpdaterInstall } from '../../wailsjs/go/services/Updater'
@@ -39,7 +48,11 @@ import type {
   CmdResult,
   Details,
   HealthResult,
+  HistoryPage,
+  HistorySession,
+  HistoryToolBody,
   Profile,
+  SearchResult,
   SettingKV,
   UpdateInfo,
   UpdateProgress,
@@ -60,6 +73,22 @@ export const api = {
   },
   health: {
     doctor: () => Doctor() as unknown as Promise<HealthResult>,
+  },
+  history: {
+    sessions: (profile: string) => HistorySessions(profile) as unknown as Promise<HistorySession[]>,
+    // relPath selects one of the session's subagent transcripts; "" is the
+    // session's own. The service matches it against an allowlist built from the
+    // index, so this is never an arbitrary path.
+    transcript: (profile: string, id: string, relPath: string, offset: number, limit: number) =>
+      HistoryTranscript(profile, id, relPath, offset, limit) as unknown as Promise<HistoryPage>,
+    transcriptAround: (profile: string, id: string, relPath: string, turnUuid: string, limit: number) =>
+      HistoryTranscriptAround(profile, id, relPath, turnUuid, limit) as unknown as Promise<HistoryPage>,
+    toolBody: (profile: string, id: string, relPath: string, turnUuid: string, blockIndex: number) =>
+      HistoryToolBodyFn(profile, id, relPath, turnUuid, blockIndex) as unknown as Promise<HistoryToolBody>,
+    search: (profile: string, query: string, token: string, includeToolResults: boolean) =>
+      HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
+    cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
+    resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<CmdResult>,
   },
   details: {
     get: (name: string) => DetailsGet(name) as unknown as Promise<Details>,

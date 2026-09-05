@@ -86,7 +86,7 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 
 A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
 
-It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings**, **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings**, **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
 
 <p align="center">
   <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
@@ -319,13 +319,14 @@ command = "ccpm prompt"
 
 ### Status line (which profile is running, plus usage/limits)
 
-Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — a line pinned to the bottom of the session window showing which profile is active and how much you've used:
+Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — two rows pinned to the bottom of the session window. Row 1 is where you are; row 2 is what it is costing:
 
 ```
-⬢ work · Sonnet 4.6 · ctx 34% · 5h 58% ↺16:15 · 7d 88% · $1.23
+⬢ work · claude-code-profile-manager/ccpm · ⎇ feat/history-tab
+Opus 5 · ctx 34% · effort high · 5h 58% ↺16:15 · 7d 88% ↺Mon 08:25 · $1.23
 ```
 
-The `5h` / `7d` segments are the **remaining** percentage of your rolling subscription usage windows (Claude Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles, which show just `⬢ work · Opus 4.8 · $0.12`).
+The `5h` / `7d` segments are the percentage **used** of your rolling subscription usage windows, matching Claude's own `/usage` panel (Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles). `effort` appears only for models that report a reasoning-effort level. A reset on today's date shows a bare clock; one on another date names the weekday. Segments drop out when their data is absent and an empty row is not printed, so an API-key profile outside a git repo prints `⬢ work` and `Opus 4.8 · $0.12`.
 
 `ccpm run` wires this in automatically: when a profile has no `statusLine` of its own, it injects `ccpm statusline` as the profile's status line. It **never** overwrites a status line you set in `~/.claude/settings.json`, a profile, or a trusted project. To opt out:
 

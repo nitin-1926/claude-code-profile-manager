@@ -34,8 +34,31 @@ export const CHANGELOG: ChangelogSeries[] = [
   {
     series: "0.5.x",
     summary:
-      "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
+      "Session history with transcript reading and search, profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
+      {
+        date: "2026-09-06",
+        title: "Status line: two rows, with repo, branch and effort",
+        categories: ["Improved"],
+        bullets: [
+          "The in-TUI status line is now **two rows** instead of one. Row 1 is where you are — profile, repo (with the subdirectory you are in), git branch. Row 2 is what it is costing — model, context usage, reasoning effort, the 5h and 7d usage windows with their resets, session cost. Splitting them keeps the identity row still while the numbers tick, and makes room for three fields the single line had no space for.",
+          "Reset times now name the day when the reset is not today. A bare \"08:25\" on the seven-day window read as this morning when it was two days out.",
+          "The branch is read straight from `.git/HEAD` rather than by shelling out to git — this runs on every assistant message, and a subprocess each time is exactly the cost Claude Code's own docs warn about.",
+        ],
+      },
+      {
+        date: "2026-09-04",
+        title: "History: browse, read and search your past sessions",
+        categories: ["Added", "Fixed"],
+        bullets: [
+          "New **History** tab in the desktop app. Every session the profile has run, listed newest first with a real title (Claude Code's own generated one where it exists, otherwise your opening prompt), the project and branch, the model, response and turn counts, tokens, and an estimated cost.",
+          "Click a session to read the actual conversation. Tool calls fold to a one-line chip you can expand; thinking blocks and subagent turns sit behind toggles. Long sessions page rather than loading whole — the largest transcript on a real machine is 77 MB and decodes to over ten thousand turns.",
+          "Full-text search across every transcript in a profile, with no index to build or keep fresh. Results are snippets grouped by session, newest first; clicking one opens the reader at that exact message, expanding whatever chip it is hiding inside. Search covers your prompts, Claude's replies, the commands and file paths it ran, and the work its subagents did — which is roughly three quarters of what a profile actually contains. Tool *output* is one toggle away, and is excluded by default because that is where pasted credentials tend to end up.",
+          "Resume any listed session in Terminal, in the directory it was originally started from.",
+          "The Usage tab's \"Recent sessions\" list now points at History instead of duplicating it.",
+          "Fixed `ccpm sessions list <profile>`: scoped to the current project it reported no sessions, because the directory-name encoder dropped a leading dash and collapsed repeated separators, so it never matched what Claude Code actually writes on disk. It now matches, and `--all` is no longer the only way to see anything.",
+        ],
+      },
       {
         date: "2026-07-08",
         title: "CCPM Desktop: download for macOS",

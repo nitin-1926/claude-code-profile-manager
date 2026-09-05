@@ -97,26 +97,10 @@ export function UsageTab({ profile }: { profile: string }) {
           </div>
 
           <section className="mt-7">
-            <SectionLabel>Recent sessions · {data.sessions.length}</SectionLabel>
-            <div className="overflow-hidden rounded-xl border border-border bg-card">
-              {data.sessions.slice(0, 12).map((s, i) => (
-                <div
-                  key={s.id}
-                  className={cn(
-                    'flex items-center gap-3 px-4 py-2 text-sm',
-                    i < Math.min(12, data.sessions.length) - 1 && 'border-b border-border',
-                  )}
-                >
-                  <span className="truncate text-muted-foreground">{s.cwd || '—'}</span>
-                  {s.branch && (
-                    <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
-                      {s.branch}
-                    </span>
-                  )}
-                  <span className="ml-auto tabular-nums text-muted-foreground">{s.messages} msg</span>
-                  <span className="w-16 text-right tabular-nums">{humanTokens(s.total)}</span>
-                </div>
-              ))}
+            <SectionLabel>Sessions</SectionLabel>
+            <div className="rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+              {data.sessions.length} sessions recorded. Open the{' '}
+              <span className="text-foreground">History</span> tab to browse, read and search them.
             </div>
           </section>
         </>

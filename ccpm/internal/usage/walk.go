@@ -8,24 +8,28 @@ import (
 )
 
 // EncodeCwd mirrors native Claude Code's cwd encoding for the directory layout
-// <profileDir>/projects/<encoded-cwd>/: every run of non-alphanumeric
-// characters collapses to a single "-", with leading/trailing dashes trimmed.
+// <profileDir>/projects/<encoded-cwd>/: EVERY non-alphanumeric character becomes
+// its own "-". Nothing is collapsed and nothing is trimmed, so a leading "/" is
+// a leading "-" and "/." becomes "--".
+//
+// This used to collapse runs of non-alphanumerics and trim the ends, which
+// matched no real directory: "/Users/x/.claude-brain" encoded to
+// "Users-x-claude-brain" where Claude Code writes "-Users-x--claude-brain".
+// Measured against a real profile, 0 of 11 directories matched. Every caller
+// that used the result as a filesystem lookup silently found nothing — the
+// onlyEncodedSubdir filter below, and with it the cwd-scoped default of
+// `ccpm sessions list`, which returned "no sessions" unless given --all.
 func EncodeCwd(cwd string) string {
 	var b strings.Builder
 	b.Grow(len(cwd))
-	prevDash := false
 	for _, r := range cwd {
 		if isAlnum(r) {
 			b.WriteRune(r)
-			prevDash = false
 			continue
 		}
-		if !prevDash {
-			b.WriteByte('-')
-			prevDash = true
-		}
+		b.WriteByte('-')
 	}
-	return strings.Trim(b.String(), "-")
+	return b.String()
 }
 
 func isAlnum(r rune) bool {

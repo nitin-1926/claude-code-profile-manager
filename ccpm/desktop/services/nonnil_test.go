@@ -106,4 +106,27 @@ func TestUnknownProfileSafe(t *testing.T) {
 		t.Fatalf("Usage.Get(ghost): %v", err)
 	}
 	_ = u
+
+	h := NewHistory()
+	rows, err := h.Sessions(ghost)
+	if err != nil {
+		t.Fatalf("History.Sessions(ghost): %v", err)
+	}
+	if rows == nil {
+		t.Error("History.Sessions must return a non-nil slice")
+	}
+	page, err := h.Transcript(ghost, "any", "", 0, 10)
+	if err != nil {
+		t.Fatalf("History.Transcript(ghost): %v", err)
+	}
+	if page.Turns == nil {
+		t.Error("History.Transcript must return a non-nil Turns slice")
+	}
+	res, err := h.Search(ghost, "q", "tok", false)
+	if err != nil {
+		t.Fatalf("History.Search(ghost): %v", err)
+	}
+	if res.Hits == nil {
+		t.Error("History.Search must return a non-nil Hits slice")
+	}
 }
