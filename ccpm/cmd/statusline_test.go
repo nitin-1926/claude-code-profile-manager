@@ -135,6 +135,8 @@ func TestRenderStatusLine(t *testing.T) {
 func TestRenderStatusLineWorkspaceRow(t *testing.T) {
 	repo := t.TempDir()
 	writeGit(t, repo, "ref: refs/heads/feat/history-tab\n")
+	// sub is built with the native separator, but the rendered label is always
+	// forward-slashed, so the expectation below holds on every OS.
 	sub := filepath.Join(repo, "ccpm", "internal")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -186,7 +188,7 @@ func TestWorkspaceLabel(t *testing.T) {
 			in.Workspace.Repo = repoName("ccpm")
 			in.Workspace.ProjectDir = "/w/ccpm"
 			in.Workspace.CurrentDir = "/w/ccpm/desktop/frontend"
-		}, filepath.Join("ccpm", "desktop", "frontend")},
+		}, "ccpm/desktop/frontend"},
 		{"no repo falls back to the launch directory name", func(in *statusLineInput) {
 			in.Workspace.ProjectDir = "/w/scratch"
 			in.Workspace.CurrentDir = "/w/scratch"
@@ -373,5 +375,22 @@ func TestResetClockNamesTheDayWhenNotToday(t *testing.T) {
 				t.Errorf("resetClock = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestWorkspaceLabelIsAlwaysForwardSlashed pins the label's separator. It is a
+// display string in the shape "repo/subdir", so it must read identically on
+// every OS; joining with filepath.Separator rendered repo\sub on Windows and
+// broke this on the CI leg that catches exactly this class of thing.
+func TestWorkspaceLabelIsAlwaysForwardSlashed(t *testing.T) {
+	var in statusLineInput
+	in.Workspace.ProjectDir = filepath.Join("w", "ccpm")
+	in.Workspace.CurrentDir = filepath.Join("w", "ccpm", "desktop", "frontend")
+	got := workspaceLabel(in)
+	if strings.Contains(got, `\`) {
+		t.Errorf("label contains a backslash: %q", got)
+	}
+	if got != "ccpm/desktop/frontend" {
+		t.Errorf("got %q, want ccpm/desktop/frontend", got)
 	}
 }

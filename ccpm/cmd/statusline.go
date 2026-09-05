@@ -272,7 +272,11 @@ func workspaceLabel(in statusLineInput) string {
 	if err != nil || rel == "." || rel == "" || strings.HasPrefix(rel, "..") {
 		return name
 	}
-	return name + string(filepath.Separator) + rel
+	// Forward slashes on every platform: this is a display label in the shape
+	// "repo/subdir", not a path anyone will open. Joining with the OS separator
+	// rendered the same session as repo\sub on Windows and repo/sub elsewhere,
+	// for a string whose whole job is to read the same to everyone.
+	return name + "/" + filepath.ToSlash(rel)
 }
 
 // statusLineBranch resolves the current git branch.
