@@ -236,6 +236,8 @@ export interface SearchHit {
   timestamp?: string
   source: HitSource
   toolName?: string
+  /** True when the hit is in one of the session's subagent transcripts. */
+  subagent: boolean
   /**
    * The snippet arrives pre-split. Go offsets are byte-based and JS strings are
    * UTF-16, so an offset crossing the bridge would mis-highlight any snippet

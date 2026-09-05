@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// buildCommand mirrors what terminal() composes, so the quoting can be asserted
-// without launching Terminal. It is deliberately a copy of the composition
-// rather than a refactor of it: the point is to catch a change to the real one.
-func buildCommand(bin, workdir string, args ...string) string {
-	quoted := make([]string, 0, len(args)+1)
-	for _, a := range append([]string{bin}, args...) {
-		quoted = append(quoted, shellQuote(a))
-	}
-	full := strings.Join(quoted, " ")
-	if workdir != "" {
-		full = "cd " + shellQuote(workdir) + " && " + full
-	}
-	return full
-}
-
 func TestShellQuoteNeutralisesShellMetacharacters(t *testing.T) {
 	// Everything here would be a second command without the quoting.
 	cases := map[string]string{
@@ -41,7 +26,7 @@ func TestShellQuoteNeutralisesShellMetacharacters(t *testing.T) {
 }
 
 func TestTerminalCommandShape(t *testing.T) {
-	got := buildCommand("/usr/local/bin/ccpm", "/repo/project", "run", "work", "--", "--resume", "abc-123")
+	got := composeCommand("/usr/local/bin/ccpm", "/repo/project", "run", "work", "--", "--resume", "abc-123")
 	want := `cd '/repo/project' && '/usr/local/bin/ccpm' 'run' 'work' '--' '--resume' 'abc-123'`
 	if got != want {
 		t.Errorf("command = %s\nwant     = %s", got, want)
@@ -51,7 +36,7 @@ func TestTerminalCommandShape(t *testing.T) {
 func TestTerminalWorkdirQuotingContainsHostileNames(t *testing.T) {
 	// The && joining cd to the command is emitted outside the quoting; the path
 	// itself goes through it, so a directory name cannot start a second command.
-	got := buildCommand("/bin/ccpm", "/tmp/x'; echo pwn; '", "run", "work")
+	got := composeCommand("/bin/ccpm", "/tmp/x'; echo pwn; '", "run", "work")
 	if !strings.HasPrefix(got, `cd '/tmp/x'\''; echo pwn; '\''' && `) {
 		t.Errorf("hostile workdir was not contained: %s", got)
 	}
@@ -61,7 +46,7 @@ func TestTerminalWorkdirQuotingContainsHostileNames(t *testing.T) {
 }
 
 func TestTerminalEmptyWorkdirEmitsNoCd(t *testing.T) {
-	got := buildCommand("/bin/ccpm", "", "add")
+	got := composeCommand("/bin/ccpm", "", "add")
 	if strings.Contains(got, "cd ") {
 		t.Errorf("empty workdir still emitted a cd: %s", got)
 	}
@@ -87,14 +72,26 @@ func TestTerminalRejectsControlCharacters(t *testing.T) {
 }
 
 func TestResumeRejectsImplausibleSessionIDs(t *testing.T) {
+	// Assert the SPECIFIC rejection, against a profile that cannot exist. The
+	// earlier version used a real profile name and asserted only !r.OK, so every
+	// id was rejected later by the unknown-session lookup instead — deleting the
+	// safeSessionID gate entirely left this test green.
 	h := NewHistory()
 	for _, bad := range []string{
 		"", "../../../etc/passwd", "a b", "a;id", "a'b", "a\nb", "a$(id)", strings.Repeat("x", 200),
 	} {
-		r := h.Resume("work", bad)
+		r := h.Resume("definitely-not-a-real-profile-xyz", bad)
 		if r.OK {
 			t.Errorf("Resume accepted session id %q", bad)
 		}
+		if !strings.Contains(r.Error, "implausible") {
+			t.Errorf("Resume(%q) error = %q, want the session-id gate to reject it "+
+				"(a later check rejecting it means the gate is untested)", bad, r.Error)
+		}
+	}
+	// A well-formed id must get PAST the gate and fail on the profile instead.
+	if r := h.Resume("definitely-not-a-real-profile-xyz", "4245147b-6298-4288-9207-146fb29288b4"); strings.Contains(r.Error, "implausible") {
+		t.Error("a valid UUID was rejected by the session-id gate")
 	}
 }
 

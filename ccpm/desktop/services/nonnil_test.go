@@ -115,7 +115,7 @@ func TestUnknownProfileSafe(t *testing.T) {
 	if rows == nil {
 		t.Error("History.Sessions must return a non-nil slice")
 	}
-	page, err := h.Transcript(ghost, "any", 0, 10)
+	page, err := h.Transcript(ghost, "any", "", 0, 10)
 	if err != nil {
 		t.Fatalf("History.Transcript(ghost): %v", err)
 	}

@@ -223,14 +223,7 @@ func (s *MutateService) terminal(workdir string, args ...string) CmdResult {
 			return CmdResult{Error: "refusing to run a command containing a control character"}
 		}
 	}
-	quoted := make([]string, 0, len(args)+1)
-	for _, a := range append([]string{bin}, args...) {
-		quoted = append(quoted, shellQuote(a))
-	}
-	full := strings.Join(quoted, " ")
-	if workdir != "" {
-		full = "cd " + shellQuote(workdir) + " && " + full
-	}
+	full := composeCommand(bin, workdir, args...)
 	if runtime.GOOS != "darwin" {
 		return CmdResult{OK: false, Output: full, Error: "open a terminal and run: " + full}
 	}
@@ -241,7 +234,21 @@ end tell`, full)
 	// Run, not Start: Start only reports a failure to launch osascript itself,
 	// so a script osascript refuses to compile (a non-UTF-8 byte in a path
 	// renders as \xNN via %q, which AppleScript rejects) would return OK.
-	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
+	//
+	// Bounded, because waiting is now possible: osascript does not return while
+	// macOS is showing the Automation consent sheet ("CCPM wants to control
+	// Terminal"), which is guaranteed on first use and waits on a human. Without
+	// a deadline that blocks the Wails goroutine forever and the button silently
+	// does nothing. runCCPM above bounds its shell-out for the same reason.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "osascript", "-e", script).CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return CmdResult{
+				Error:  "Terminal did not respond within 30s — if macOS asked for permission to control Terminal, grant it and try again",
+				Output: full,
+			}
+		}
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
 			msg = err.Error()
@@ -249,6 +256,26 @@ end tell`, full)
 		return CmdResult{Error: msg, Output: full}
 	}
 	return CmdResult{OK: true, Output: full}
+}
+
+// composeCommand builds the shell command terminal() hands to AppleScript.
+//
+// Split out of terminal() so the quoting tests can exercise the real thing. They
+// used to call a copy of these lines living in the test file, which cannot catch
+// a change to the original: a reviewer deleted the shellQuote around workdir —
+// a live command injection, since Resume passes a directory read out of on-disk
+// JSON — and all five tests stayed green.
+func composeCommand(bin, workdir string, args ...string) string {
+	quoted := make([]string, 0, len(args)+1)
+	for _, a := range append([]string{bin}, args...) {
+		quoted = append(quoted, shellQuote(a))
+	}
+	full := strings.Join(quoted, " ")
+	if workdir != "" {
+		// Only the && sits outside the quoting; the path itself goes through it.
+		full = "cd " + shellQuote(workdir) + " && " + full
+	}
+	return full
 }
 
 // shellQuote wraps s in single quotes for /bin/sh. Inside single quotes the

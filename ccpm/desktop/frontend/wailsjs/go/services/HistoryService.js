@@ -18,14 +18,14 @@ export function Sessions(arg1) {
   return window['go']['services']['HistoryService']['Sessions'](arg1);
 }
 
-export function ToolBody(arg1, arg2, arg3, arg4) {
-  return window['go']['services']['HistoryService']['ToolBody'](arg1, arg2, arg3, arg4);
+export function ToolBody(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['services']['HistoryService']['ToolBody'](arg1, arg2, arg3, arg4, arg5);
 }
 
-export function Transcript(arg1, arg2, arg3, arg4) {
-  return window['go']['services']['HistoryService']['Transcript'](arg1, arg2, arg3, arg4);
+export function Transcript(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['services']['HistoryService']['Transcript'](arg1, arg2, arg3, arg4, arg5);
 }
 
-export function TranscriptAround(arg1, arg2, arg3, arg4) {
-  return window['go']['services']['HistoryService']['TranscriptAround'](arg1, arg2, arg3, arg4);
+export function TranscriptAround(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['services']['HistoryService']['TranscriptAround'](arg1, arg2, arg3, arg4, arg5);
 }

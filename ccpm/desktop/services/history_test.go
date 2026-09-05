@@ -66,14 +66,14 @@ func TestHistoryTranscriptRejectsTraversal(t *testing.T) {
 		"/etc/passwd",
 		"..",
 	} {
-		page, err := h.Transcript(name, bad, 0, 10)
+		page, err := h.Transcript(name, bad, "", 0, 10)
 		if err != nil {
 			t.Fatalf("Transcript(%q) errored instead of returning empty: %v", bad, err)
 		}
 		if len(page.Turns) != 0 {
 			t.Errorf("Transcript(%q) returned %d turns — path traversal", bad, len(page.Turns))
 		}
-		body, err := h.ToolBody(name, bad, "any", 0)
+		body, err := h.ToolBody(name, bad, "", "any", 0)
 		if err != nil {
 			t.Fatalf("ToolBody(%q) errored: %v", bad, err)
 		}
@@ -85,7 +85,7 @@ func TestHistoryTranscriptRejectsTraversal(t *testing.T) {
 
 func TestHistoryTranscriptUnknownSessionIsEmptyNotNil(t *testing.T) {
 	name := firstProfile(t)
-	page, err := NewHistory().Transcript(name, "no-such-session", 0, 10)
+	page, err := NewHistory().Transcript(name, "no-such-session", "", 0, 10)
 	if err != nil {
 		t.Fatalf("unknown session errored: %v", err)
 	}

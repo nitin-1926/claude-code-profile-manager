@@ -13,12 +13,20 @@ export function TranscriptReader({
   profile,
   session,
   turnUuid,
+  relPath = '',
   onBack,
 }: {
   profile: string
   session: HistorySession
   /** When arriving from a search hit, the turn to land on and flash. */
   turnUuid?: string
+  /**
+   * Which of the session's transcripts to read. Empty is the session's own; a
+   * subagent path arrives from a search hit whose match was in work a subagent
+   * did. Claude Code does not copy that work back into the parent, so this is
+   * the only way to reach it.
+   */
+  relPath?: string
   onBack: () => void
 }) {
   const [page, setPage] = useState<HistoryPage | null>(null)
@@ -55,10 +63,10 @@ export function TranscriptReader({
     setError(null)
     void fetchPage(() =>
       turnUuid
-        ? api.history.transcriptAround(profile, session.id, turnUuid, PAGE)
-        : api.history.transcript(profile, session.id, 0, PAGE),
+        ? api.history.transcriptAround(profile, session.id, relPath, turnUuid, PAGE)
+        : api.history.transcript(profile, session.id, relPath, 0, PAGE),
     )
-  }, [profile, session.id, turnUuid, fetchPage])
+  }, [profile, session.id, relPath, turnUuid, fetchPage])
 
   // A search hit may point into a hidden subagent turn. Landing on nothing is
   // worse than showing more than asked, so the jump force-enables the toggle.
@@ -138,6 +146,7 @@ export function TranscriptReader({
         <p className="mt-1 truncate text-[11px] text-muted-foreground">
           {session.cwd ? tildePath(session.cwd) : '—'}
           {session.branch && ` · ${session.branch}`}
+          {relPath !== '' && ' · ' + relPath.split('/').pop()}
           {total > 0 && ` · ${total} turns`}
           {' · point-in-time read'}
         </p>
@@ -149,12 +158,11 @@ export function TranscriptReader({
             onClick={() => setShowThinking((v) => !v)}
             label={`thinking${thinkingCount ? ` (${thinkingCount})` : ''}`}
           />
-          <Toggle
-            active={showSidechain}
-            disabled={sidechainCount === 0}
-            onClick={() => setShowSidechain((v) => !v)}
-            label={`subagents${sidechainCount ? ` (${sidechainCount})` : ''}`}
-          />
+          {relPath !== '' && (
+            <span className="rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs">
+              subagent transcript
+            </span>
+          )}
           {prompts.length > 0 && (
             <>
               <span className="mx-1 h-4 w-px bg-border" />
@@ -221,7 +229,7 @@ export function TranscriptReader({
             label="Load earlier turns"
             onClick={() =>
               void fetchPage(() =>
-                api.history.transcript(profile, session.id, Math.max(0, offset - PAGE), PAGE),
+                api.history.transcript(profile, session.id, relPath, Math.max(0, offset - PAGE), PAGE),
               )
             }
           />
@@ -236,7 +244,7 @@ export function TranscriptReader({
               sessionId={session.id}
               showThinking={showThinking}
               isTarget={t.index === target}
-              expandAll={false}
+              relPath={relPath}
             />
           ))}
         </div>
@@ -246,7 +254,7 @@ export function TranscriptReader({
             busy={busy}
             label="Load later turns"
             onClick={() =>
-              void fetchPage(() => api.history.transcript(profile, session.id, offset + PAGE, PAGE))
+              void fetchPage(() => api.history.transcript(profile, session.id, relPath, offset + PAGE, PAGE))
             }
           />
         )}

@@ -46,8 +46,14 @@ type Entry struct {
 	LastTS    string                  `json:"last_ts,omitempty"`
 	Turns     int                     `json:"turns"`
 	RelPath   string                  `json:"rel_path"`
-	ModTime   int64                   `json:"mtime"`
-	Size      int64                   `json:"size"`
+	// SubPaths are the session's subagent transcripts, relative to projects/.
+	// They belong to this session — Claude Code does NOT copy their content back
+	// into the parent (measured: isSidechain is present on 68,167 lines across 77
+	// real parent transcripts and false on every one of them), so without these
+	// the work a subagent did is unreachable.
+	SubPaths []string `json:"sub_paths,omitempty"`
+	ModTime  int64    `json:"mtime"`
+	Size     int64    `json:"size"`
 }
 
 // Index is the sidecar, keyed by session id.
@@ -141,8 +147,15 @@ func BuildIndex(profileDir string) (*Index, error) {
 		if id == "" {
 			return nil
 		}
+		subRels := make([]string, 0, len(subs))
+		for _, sub := range subs {
+			if r, rerr := filepath.Rel(filepath.Join(profileDir, "projects"), sub); rerr == nil {
+				subRels = append(subRels, filepath.ToSlash(r))
+			}
+		}
 		ix.Entries[id] = &Entry{
 			SessionID: id,
+			SubPaths:  subRels,
 			Title:     meta.Title,
 			Model:     meta.Model,
 			ByModel:   meta.ByModel,
@@ -197,11 +210,7 @@ func skipTranscript(abs, rel string) bool {
 	if slices.Contains(strings.Split(filepath.ToSlash(rel), "/"), "subagents") {
 		return true
 	}
-	fi, err := os.Lstat(abs)
-	if err != nil || fi.Mode()&fs.ModeSymlink != 0 {
-		return true
-	}
-	return false
+	return isSymlink(abs)
 }
 
 // subagentTranscripts returns the subagent transcripts belonging to the session
@@ -245,6 +254,30 @@ func signature(fi os.FileInfo, subs []string) (mtime, size int64) {
 		}
 	}
 	return mtime, size
+}
+
+// parentSessionID maps a transcript's relative path to the session it belongs
+// to, and reports whether it is a subagent transcript.
+//
+// Subagent files live at projects/<enc-cwd>/<sessionID>/subagents/... (workflow
+// runs nest one level deeper), so the owning session is the path segment
+// immediately before "subagents".
+func parentSessionID(rel string) (id string, subagent bool) {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i, p := range parts {
+		if p == "subagents" && i > 0 {
+			return parts[i-1], true
+		}
+	}
+	return sessionIDFromPath(rel), false
+}
+
+// isSymlink reports whether path is a symbolic link. A shared or restored
+// profile can contain one pointing anywhere, so neither the index nor search
+// will open it.
+func isSymlink(abs string) bool {
+	fi, err := os.Lstat(abs)
+	return err != nil || fi.Mode()&fs.ModeSymlink != 0
 }
 
 // sessionIDFromPath takes the id from the filename, matching how Claude Code

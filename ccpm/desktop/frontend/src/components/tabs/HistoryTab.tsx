@@ -21,7 +21,12 @@ type ScopeId = (typeof SCOPES)[number]['id']
 /** Where the reader was opened from, so Escape can return there intact. */
 type Origin = { kind: 'list' } | { kind: 'search'; hit: SearchHit }
 
-type Reading = { session: HistorySession; origin: Origin }
+type Reading = {
+  session: HistorySession
+  origin: Origin
+  /** Which of the session's transcripts to open; "" is the session's own. */
+  relPath: string
+}
 
 export function HistoryTab({ profile }: { profile: string }) {
   const [sessions, setSessions] = useState<HistorySession[] | null>(null)
@@ -67,6 +72,7 @@ export function HistoryTab({ profile }: { profile: string }) {
         profile={profile}
         session={reading.session}
         turnUuid={reading.origin.kind === 'search' ? reading.origin.hit.turnUuid : undefined}
+        relPath={reading.relPath}
         onBack={() => setReading(null)}
       />
     )
@@ -122,7 +128,14 @@ export function HistoryTab({ profile }: { profile: string }) {
           onOpen={(hit) => {
             const session =
               sessions.find((s) => s.id === hit.sessionId) ?? sessionFromHit(hit)
-            setReading({ session, origin: { kind: 'search', hit } })
+            // A hit in a subagent transcript opens THAT file — Claude Code does
+            // not copy a subagent's conversation into its parent, so opening the
+            // parent would land on nothing.
+            setReading({
+              session,
+              origin: { kind: 'search', hit },
+              relPath: hit.subagent ? hit.relPath : '',
+            })
           }}
         />
       ) : (
@@ -131,7 +144,7 @@ export function HistoryTab({ profile }: { profile: string }) {
           total={sessions.length}
           filtering={query.trim().length > 0}
           profile={profile}
-          onOpen={(s) => setReading({ session: s, origin: { kind: 'list' } })}
+          onOpen={(s) => setReading({ session: s, origin: { kind: 'list' }, relPath: '' })}
         />
       )}
     </div>

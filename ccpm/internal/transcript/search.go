@@ -1,9 +1,9 @@
 package transcript
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,6 +79,10 @@ type Hit struct {
 	Cwd       string `json:"cwd,omitempty"`
 	RelPath   string `json:"relPath"`
 	ModTime   int64  `json:"mtime"`
+	// Subagent marks a hit that lives in one of the session's subagent
+	// transcripts rather than the main conversation. The session id is still the
+	// PARENT's, so results group under the session the user recognises.
+	Subagent bool `json:"subagent"`
 
 	TurnUUID  string `json:"turnUuid,omitempty"`
 	Role      string `json:"role"`
@@ -121,11 +125,12 @@ func emptyResult() SearchResult { return SearchResult{Hits: []Hit{}} }
 
 // candidate is one transcript queued for scanning.
 type candidate struct {
-	scope   Scope
-	abs     string
-	rel     string
-	id      string
-	modTime int64
+	scope    Scope
+	abs      string
+	rel      string
+	id       string
+	subagent bool
+	modTime  int64
 }
 
 // Search scans the given profiles for query and returns matching messages.
@@ -159,6 +164,9 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 
 	prefilter := prefilterNeedle(lowerQuery)
 	indexes := map[string]*Index{}
+	// A session can now match in both its own transcript and a subagent's, so
+	// count each session once rather than once per file.
+	seenSessions := map[string]bool{}
 
 	for i, c := range cands {
 		select {
@@ -194,7 +202,10 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 		if len(hits) == 0 {
 			continue
 		}
-		res.Sessions++
+		if !seenSessions[c.id] {
+			seenSessions[c.id] = true
+			res.Sessions++
+		}
 		// Session metadata comes from the sidecar when present, and falls back
 		// to what the file itself said. A session with no usage-bearing
 		// assistant line never gets a usage record, so relying on that store
@@ -211,14 +222,23 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 	return res
 }
 
-// collectCandidates enumerates every searchable transcript across the scopes,
-// applying the same subagent and symlink exclusions the index uses.
+// collectCandidates enumerates every searchable transcript across the scopes.
+//
+// Subagent transcripts ARE searched, attributed to the session that spawned
+// them. Excluding them would drop roughly three quarters of a profile's
+// transcript content from search — and unlike the session LIST, where they
+// would bury the real rows, in search they are the work itself. Their hits
+// carry the parent's session id so results group under a session the user
+// recognises, and Subagent marks them so the UI can say where they came from.
+//
+// Symlinked files are still refused: a shared or restored profile could link
+// anywhere.
 func collectCandidates(scopes []Scope) ([]candidate, int) {
 	var out []candidate
 	unreadable := 0
 	for _, s := range scopes {
 		err := usage.WalkTranscripts(s.Dir, "", func(abs, rel string) error {
-			if skipTranscript(abs, rel) {
+			if isSymlink(abs) {
 				return nil
 			}
 			fi, err := os.Stat(abs)
@@ -226,9 +246,10 @@ func collectCandidates(scopes []Scope) ([]candidate, int) {
 				unreadable++
 				return nil
 			}
+			id, sub := parentSessionID(rel)
 			out = append(out, candidate{
 				scope: s, abs: abs, rel: rel,
-				id:      sessionIDFromPath(rel),
+				id: id, subagent: sub,
 				modTime: fi.ModTime().Unix(),
 			})
 			return nil
@@ -257,6 +278,55 @@ func prefilterNeedle(lowerQuery string) []byte {
 	return []byte(lowerQuery)
 }
 
+// containsFold reports whether raw contains needle, ASCII-case-insensitively,
+// without allocating.
+//
+// The obvious spelling is bytes.Contains(bytes.ToLower(raw), needle), but
+// bytes.ToLower always allocates — even on its ASCII fast path — so that runs a
+// copy of every line of every transcript through the collector. Measured over a
+// 95 MB transcript: 213 ms and 110 MB allocated with ToLower, 84 ms and zero
+// with this. prefilterNeedle guarantees the needle is lowercase printable
+// ASCII, which is what makes the byte-wise fold below equivalent.
+func containsFold(raw, needle []byte) bool {
+	n := len(needle)
+	if n == 0 {
+		return true
+	}
+	if len(raw) < n {
+		return false
+	}
+	first := needle[0]
+	upper := first
+	if first >= 'a' && first <= 'z' {
+		upper = first - 32
+	}
+	for i := 0; i+n <= len(raw); i++ {
+		c := raw[i]
+		if c != first && c != upper {
+			continue
+		}
+		if equalFoldASCII(raw[i:i+n], needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// equalFoldASCII compares a candidate window against an already-lowercase
+// ASCII needle.
+func equalFoldASCII(a, lower []byte) bool {
+	for i := range lower {
+		c := a[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 32
+		}
+		if c != lower[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // scanFile streams one transcript and returns its hits, plus every match it saw
 // (including those past the per-session cap, so the UI can report honestly).
 func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []byte, opts SearchOpts, budget int) (_ []Hit, _ int, capped bool, _ error) {
@@ -280,7 +350,7 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 			default:
 			}
 		}
-		if prefilter != nil && !bytes.Contains(bytes.ToLower(raw), prefilter) {
+		if prefilter != nil && !containsFold(raw, prefilter) {
 			return true
 		}
 		var l rawLine
@@ -297,6 +367,7 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 			hit.SessionID = c.id
 			hit.RelPath = c.rel
 			hit.ModTime = c.modTime
+			hit.Subagent = c.subagent
 			hits = append(hits, hit)
 		}
 		// Stop the file once it has produced its quota. Continuing only to keep
@@ -429,43 +500,79 @@ func window(s string, at, matchLen, size int) (before, match, after string) {
 
 func utf8RuneStart(b byte) bool { return utf8.RuneStart(b) }
 
-// ResolvePath turns a hit or entry's RelPath into an absolute path, verifying
-// it stays inside the profile's projects/ directory.
+// ResolvePath turns a stored RelPath into an absolute path, proving it stays
+// inside the profile's projects/ directory.
 //
-// This is the guard between on-disk JSON and an os.Open. Session ids and
-// relative paths come out of transcript files, and a profile directory can be
-// shared or restored from elsewhere; filepath.Join cleans ".." but does not
-// sandbox, so without this check a crafted value is an arbitrary-file-read
-// primitive that renders whatever it points at into the reader.
+// This is the guard between on-disk JSON and an os.Open. Both the session id and
+// the relative path come out of files inside the profile, and a profile
+// directory can be shared, restored from a backup, or copied from another
+// machine — including its `usage/history.json`, which LoadIndex parses verbatim
+// and which BuildIndex deliberately never prunes. So RelPath is untrusted input.
+//
+// The check is CANONICAL, not lexical. An earlier version rejected rooted and
+// drive-qualified forms and then trusted filepath.Rel, with a separate Lstat on
+// the final component. That combination is defeated by a symlinked *directory*:
+// `projects/link -> /anywhere` with a real file beneath it passes the lexical
+// test and passes the leaf Lstat, because the leaf really is a regular file.
+// Verified escaping to an arbitrary path, and again with `projects` itself as a
+// symlink. Only resolving the whole path and re-asserting the prefix expresses
+// containment.
+//
+// Residual: EvalSymlinks is inherently check-then-use, so a local attacker who
+// can swap a path component between this call and the open could still win the
+// race. Closing that needs per-component O_NOFOLLOW, which Go does not expose
+// portably; it also requires write access to the profile directory, at which
+// point the attacker has easier options.
 func ResolvePath(profileDir, relPath string) (string, error) {
 	if relPath == "" {
 		return "", os.ErrNotExist
 	}
-	// Reject rooted and drive-qualified paths on EVERY platform rather than
-	// relying on filepath.IsAbs, which is platform-dependent in exactly the way
-	// that hurts here: IsAbs("/etc/passwd") is false on Windows and
-	// IsAbs(`C:\Windows\...`) is false everywhere else, so the same stored value
-	// would be refused on one OS and accepted on another.
-	//
-	// That asymmetry is not hypothetical: the threat model for this guard is a
-	// profile directory shared or restored from another machine, which is
-	// precisely how a Windows-shaped path ends up being resolved on macOS. A
-	// transcript's stored path is always relative, so anything rooted is wrong
-	// regardless of which OS is asking.
+	// Cheap lexical rejects first. These are platform-uniform on purpose:
+	// filepath.IsAbs("/etc/passwd") is false on Windows and IsAbs(`C:\...`) is
+	// false everywhere else, so relying on it alone accepted on one OS what it
+	// refused on another.
 	if relPath[0] == '/' || relPath[0] == '\\' || hasDrivePrefix(relPath) ||
 		filepath.IsAbs(relPath) || filepath.VolumeName(relPath) != "" {
 		return "", os.ErrNotExist
 	}
 	root := filepath.Join(profileDir, "projects")
 	full := filepath.Join(root, relPath)
-	rel, err := filepath.Rel(root, full)
+	if !within(root, full) {
+		return "", os.ErrNotExist
+	}
+
+	// projects/ itself must be a real directory. Resolving the root is what
+	// makes a legitimately relocated ~/.ccpm work, but if the LINK IS the root
+	// then resolving it just follows the attacker's pointer and every path under
+	// it passes containment. Lstat does not follow the final component, so a
+	// symlinked profile directory containing a real projects/ still resolves.
+	if fi, lerr := os.Lstat(root); lerr != nil || fi.Mode()&fs.ModeSymlink != 0 {
+		return "", os.ErrNotExist
+	}
+
+	// Canonical containment. The root is resolved too, so a legitimately
+	// symlinked profile directory (a synced or relocated ~/.ccpm) still works.
+	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", os.ErrNotExist
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	realFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", os.ErrNotExist // includes "does not exist"
+	}
+	if !within(realRoot, realFull) {
 		return "", os.ErrNotExist
 	}
-	return full, nil
+	return realFull, nil
+}
+
+// within reports whether child is at or below parent, lexically.
+func within(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // hasDrivePrefix reports whether p starts with a Windows drive designator like

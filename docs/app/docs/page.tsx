@@ -51,7 +51,9 @@ export default async function DocsPage() {
             effective host→global→profile config with provenance badges),{" "}
             <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
             <strong>Permissions</strong>, <strong>Settings</strong>,{" "}
-            <strong>Usage</strong>, and <strong>Health</strong>{" "}
+            <strong>Usage</strong>, <strong>History</strong> (browse, read and
+            search this profile&apos;s past Claude Code sessions), and{" "}
+            <strong>Health</strong>{" "}
             (<code>ccpm doctor</code>). Clone, rename,
             delete, open, and run from the toolbar; the view auto-refreshes when
             the CLI changes things underneath it. Three built-in themes

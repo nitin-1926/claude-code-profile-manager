@@ -112,8 +112,9 @@ export function SearchResults({
       <div className="rounded-xl border border-border bg-card p-8 text-center">
         <div className="text-sm font-medium">Search this profile's transcripts</div>
         <div className="mt-1 text-xs text-muted-foreground">
-          Matches conversation text and the commands and file paths Claude ran. Tool output is
-          excluded by default — it is where pasted secrets tend to live.
+          Matches conversation text and the commands and file paths Claude ran, in this
+          session and in the work its subagents did. Tool output is excluded by default — it
+          is where pasted secrets tend to live.
         </div>
       </div>
     )
@@ -191,6 +192,14 @@ export function SearchResults({
                 >
                   <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
                     <span>{h.role === 'user' ? 'You' : 'Claude'}</span>
+                    {h.subagent && (
+                      <span
+                        className="rounded bg-primary/15 px-1 py-px normal-case text-primary"
+                        title="Found in work a subagent did for this session"
+                      >
+                        subagent
+                      </span>
+                    )}
                     {h.source !== 'text' && (
                       <span className="inline-flex items-center gap-1">
                         <Wrench className="size-3" />

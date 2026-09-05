@@ -11,8 +11,8 @@ export function Search(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise
 
 export function Sessions(arg1:string):Promise<Array<services.HistorySession>>;
 
-export function ToolBody(arg1:string,arg2:string,arg3:string,arg4:number):Promise<services.HistoryToolBody>;
+export function ToolBody(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<services.HistoryToolBody>;
 
-export function Transcript(arg1:string,arg2:string,arg3:number,arg4:number):Promise<services.HistoryPage>;
+export function Transcript(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<services.HistoryPage>;
 
-export function TranscriptAround(arg1:string,arg2:string,arg3:string,arg4:number):Promise<services.HistoryPage>;
+export function TranscriptAround(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<services.HistoryPage>;

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -254,16 +255,16 @@ func workspaceLabel(in statusLineInput) string {
 
 	name := ""
 	if in.Workspace.Repo != nil {
-		name = in.Workspace.Repo.Name
+		name = safeLabel(in.Workspace.Repo.Name)
 	}
 	if name == "" && root != "" {
-		name = filepath.Base(root)
+		name = safeLabel(filepath.Base(root))
 	}
 	if name == "" {
 		if cur == "" {
 			return ""
 		}
-		return filepath.Base(cur)
+		return safeLabel(filepath.Base(cur))
 	}
 	if cur == "" || root == "" {
 		return name
@@ -276,7 +277,7 @@ func workspaceLabel(in statusLineInput) string {
 	// "repo/subdir", not a path anyone will open. Joining with the OS separator
 	// rendered the same session as repo\sub on Windows and repo/sub elsewhere,
 	// for a string whose whole job is to read the same to everyone.
-	return name + "/" + filepath.ToSlash(rel)
+	return name + "/" + safeLabel(filepath.ToSlash(rel))
 }
 
 // statusLineBranch resolves the current git branch.
@@ -290,7 +291,7 @@ func workspaceLabel(in statusLineInput) string {
 // nothing to cache.
 func statusLineBranch(in statusLineInput) string {
 	if in.Worktree != nil && in.Worktree.Branch != "" {
-		return in.Worktree.Branch
+		return safeLabel(in.Worktree.Branch)
 	}
 	dir := in.Workspace.CurrentDir
 	if dir == "" {
@@ -360,14 +361,51 @@ func branchFromHead(head string) string {
 		ref := strings.TrimSpace(rest)
 		// refs/heads/feat/x -> feat/x, keeping slashes inside the branch name.
 		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
-			return name
+			return safeLabel(name)
 		}
-		return filepath.Base(ref)
+		return safeLabel(filepath.Base(ref))
 	}
 	if len(h) >= 7 && isHex(h) {
 		return h[:7] // detached HEAD
 	}
 	return ""
+}
+
+// labelRunes caps a display label. Git's practical ref limit is far below this;
+// anything longer is not a branch name.
+const labelRunes = 96
+
+// safeLabel makes a string read from disk safe to print into a terminal.
+//
+// This output is rendered by Claude Code with ANSI interpreted, on every
+// assistant message. .git/HEAD is just a file — git's own check-ref-format
+// forbids control characters, but nothing writes that file through git when a
+// .git arrives out of band (an extracted archive, a synced tree), and
+// findGitEntry additionally follows a `gitdir:` pointer to an arbitrary path.
+// Without this, a crafted HEAD injects escape sequences that can retitle the
+// window, clear lines, or repaint the rows above — including the ones carrying
+// permission prompts.
+//
+// Rejects rather than strips: a branch name containing control bytes is not a
+// branch name, and showing a silently-mangled one is worse than showing none.
+func safeLabel(s string) string {
+	if s == "" || utf8.RuneCountInString(s) > labelRunes {
+		return ""
+	}
+	// Validity first, and not merely for tidiness: a RAW 0x9b byte is a
+	// single-byte CSI on many emulators and is not valid UTF-8 on its own, so
+	// ranging over runes decodes it to RuneError (0xFFFD) — which sails past a
+	// C1 range check. Rejecting invalid encoding is what actually catches it.
+	if !utf8.ValidString(s) {
+		return ""
+	}
+	for _, r := range s {
+		// C0, DEL, and the C1 range. Filtering only ESC is not enough.
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return ""
+		}
+	}
+	return s
 }
 
 func isHex(s string) bool {

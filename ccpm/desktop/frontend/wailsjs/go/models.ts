@@ -575,6 +575,7 @@ export namespace transcript {
 	    cwd?: string;
 	    relPath: string;
 	    mtime: number;
+	    subagent: boolean;
 	    turnUuid?: string;
 	    role: string;
 	    timestamp?: string;
@@ -597,6 +598,7 @@ export namespace transcript {
 	        this.cwd = source["cwd"];
 	        this.relPath = source["relPath"];
 	        this.mtime = source["mtime"];
+	        this.subagent = source["subagent"];
 	        this.turnUuid = source["turnUuid"];
 	        this.role = source["role"];
 	        this.timestamp = source["timestamp"];

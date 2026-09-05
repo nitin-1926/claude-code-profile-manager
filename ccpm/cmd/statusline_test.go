@@ -9,7 +9,13 @@ import (
 )
 
 // fixedNow is a deterministic clock for reset-time formatting.
-var fixedNow = time.Date(2026, 6, 25, 14, 0, 0, 0, time.UTC)
+//
+// time.Local, not time.UTC: the code under test compares a reset built by
+// time.Unix (always local) against time.Now (also local). Pinning the test's
+// clock to UTC while the expectation rendered in local time made the suite fail
+// for anyone east of about UTC+12, where the reset crosses local midnight and
+// resetClock correctly prefixes a weekday the expectation did not carry.
+var fixedNow = time.Date(2026, 6, 25, 14, 0, 0, 0, time.Local)
 
 func TestRenderStatusLine(t *testing.T) {
 	// resetsAt one hour after fixedNow, in UTC, so the formatted clock is 15:00
@@ -392,5 +398,64 @@ func TestWorkspaceLabelIsAlwaysForwardSlashed(t *testing.T) {
 	}
 	if got != "ccpm/desktop/frontend" {
 		t.Errorf("got %q, want ccpm/desktop/frontend", got)
+	}
+}
+
+// TestBranchFromHeadRejectsTerminalEscapes is the regression for an escape
+// injection. .git/HEAD is read off disk and printed into a terminal that
+// renders ANSI, on every assistant message — and findGitEntry follows a `gitdir:`
+// pointer to an arbitrary path, so the HEAD need not even be in the repo. A
+// crafted branch name could retitle the window, clear lines, or repaint the rows
+// above, which is where permission prompts live.
+func TestBranchFromHeadRejectsTerminalEscapes(t *testing.T) {
+	hostile := map[string]string{
+		"OSC title set":    "ref: refs/heads/main\x1b]0;OWNED\x07",
+		"CSI erase + home": "ref: refs/heads/main\x1b[2K\x1b[1G$ ",
+		"single-byte CSI":  "ref: refs/heads/main\x9b2K",
+		"embedded newline": "ref: refs/heads/main\nFAKE ROW",
+		"carriage return":  "ref: refs/heads/main\roverwrite",
+		"DEL":              "ref: refs/heads/main\x7f",
+		"NUL":              "ref: refs/heads/main\x00",
+		"absurdly long":    "ref: refs/heads/" + strings.Repeat("x", 5000),
+		"escapes via base": "ref: refs/tags/v1\x1b[31m",
+	}
+	for name, head := range hostile {
+		t.Run(name, func(t *testing.T) {
+			if got := branchFromHead(head); got != "" {
+				t.Errorf("accepted a hostile HEAD: %q", got)
+			}
+		})
+	}
+	// Legitimate names must still come through, including slashes and unicode.
+	for head, want := range map[string]string{
+		"ref: refs/heads/main\n":             "main",
+		"ref: refs/heads/feat/history-tab\n": "feat/history-tab",
+		"ref: refs/heads/fix-café\n":         "fix-café",
+	} {
+		if got := branchFromHead(head); got != want {
+			t.Errorf("branchFromHead(%q) = %q, want %q", head, got, want)
+		}
+	}
+}
+
+// TestRenderStatusLineNeverEmitsEscapesFromDisk is the end-to-end guard: no
+// matter what a crafted repo puts on disk, plain mode must contain no ESC.
+func TestRenderStatusLineNeverEmitsEscapesFromDisk(t *testing.T) {
+	repo := t.TempDir()
+	writeGit(t, repo, "ref: refs/heads/main\x1b]0;OWNED\x07\x1b[2K")
+	var in statusLineInput
+	in.Workspace.ProjectDir = repo
+	in.Workspace.CurrentDir = repo
+	in.Model.DisplayName = "Opus 5"
+
+	// Byte-wise, not strings.ContainsAny: 0x9b alone is not valid UTF-8, and
+	// ContainsAny requires valid UTF-8 in both arguments.
+	for _, row := range renderStatusLine(in, "work", fixedNow, false) {
+		for i := 0; i < len(row); i++ {
+			if b := row[i]; b < 0x20 || b == 0x7f || b == 0x9b {
+				t.Errorf("row leaked control byte %#x: %q", b, row)
+				break
+			}
+		}
 	}
 }

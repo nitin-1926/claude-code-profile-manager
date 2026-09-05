@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -247,23 +248,22 @@ func TestSearchIgnoresRawJSONKeys(t *testing.T) {
 	}
 }
 
-func TestSearchDoesNotDoubleCountSubagentContent(t *testing.T) {
-	// A subagent's text is copied into its parent as a sidechain turn. Scanning
-	// both would return every hit twice.
+func TestSearchDeDupesOnlyGenuineDuplication(t *testing.T) {
+	// Claude Code does NOT copy a subagent's conversation into its parent —
+	// measured across 77 real transcripts, isSidechain is false on all 68,167
+	// lines that carry it. An earlier version of this test fabricated a parent
+	// line with isSidechain:true, "proving" a de-duplication that was really
+	// just content loss. Text that appears in only one file must be found once;
+	// text genuinely present in both is two distinct messages and is two hits.
 	dir := t.TempDir()
-	writeSessionTranscript(t, dir, "/repo", "parent",
-		jl(t, map[string]any{"type": "assistant", "uuid": "sc1", "isSidechain": true, "sessionId": "s",
-			"message": map[string]any{"role": "assistant", "content": []any{
-				map[string]any{"type": "text", "text": "SHARED subagent finding"}}}}))
+	writeSessionTranscript(t, dir, "/repo", "parent", userLine(t, "u1", "UNIQUEPARENT text"))
 	sub := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
-	writeJSONL(t, sub, "agent-x.jsonl",
-		jl(t, map[string]any{"type": "assistant", "uuid": "a1", "sessionId": "agent-x",
-			"message": map[string]any{"role": "assistant", "content": []any{
-				map[string]any{"type": "text", "text": "SHARED subagent finding"}}}}))
+	writeJSONL(t, sub, "agent-x.jsonl", userLine(t, "s1", "UNIQUESUB text"))
 
-	res := Search(context.Background(), scopeOf(dir), "shared subagent finding", SearchOpts{})
-	if len(res.Hits) != 1 {
-		t.Errorf("got %d hits, want exactly 1 — the subagent file was scanned too", len(res.Hits))
+	for _, q := range []string{"uniqueparent", "uniquesub"} {
+		if res := Search(context.Background(), scopeOf(dir), q, SearchOpts{}); len(res.Hits) != 1 {
+			t.Errorf("%q: got %d hits, want 1", q, len(res.Hits))
+		}
 	}
 }
 
@@ -441,12 +441,20 @@ func TestResolvePathRejectsTraversal(t *testing.T) {
 			t.Errorf("ResolvePath accepted %q — that is an arbitrary-file-read primitive", bad)
 		}
 	}
+	// ResolvePath now canonicalises, so the target must actually exist.
 	good := filepath.Join("-repo", "s1.jsonl")
+	if err := os.MkdirAll(filepath.Join(dir, "projects", "-repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "projects", good), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	got, err := ResolvePath(dir, good)
 	if err != nil {
 		t.Fatalf("ResolvePath rejected a legitimate path: %v", err)
 	}
-	if want := filepath.Join(dir, "projects", good); got != want {
+	want, _ := filepath.EvalSymlinks(filepath.Join(dir, "projects", good))
+	if got != want {
 		t.Errorf("ResolvePath = %q, want %q", got, want)
 	}
 }
@@ -489,5 +497,116 @@ func TestSearchSeesFullToolContentNotJustThePreview(t *testing.T) {
 	// And the scope rule still holds: tool output stays out by default.
 	if res := Search(ctx, scopeOf(dir), "deepmarker", SearchOpts{}); len(res.Hits) != 0 {
 		t.Errorf("tool output matched in the default scope: %d hits", len(res.Hits))
+	}
+}
+
+// TestResolvePathRejectsSymlinkedDirectoryComponent is the regression for a
+// real sandbox escape. The guard used to be lexical plus an Lstat on the final
+// component; a symlinked DIRECTORY inside projects/ defeated both, because the
+// leaf under it genuinely is a regular file. The attacker's vehicle is a
+// hand-written usage/history.json inside a shared or restored profile, whose
+// rel_path LoadIndex parses verbatim.
+func TestResolvePathRejectsSymlinkedDirectoryComponent(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("symlinked directory component", func(t *testing.T) {
+		profile := t.TempDir()
+		projects := filepath.Join(profile, "projects")
+		if err := os.MkdirAll(projects, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(projects, "link")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if got, err := ResolvePath(profile, filepath.Join("link", "secret.jsonl")); err == nil {
+			t.Errorf("escaped the profile via a symlinked directory: %q", got)
+		}
+	})
+
+	t.Run("projects itself is a symlink", func(t *testing.T) {
+		profile := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(profile, "projects")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if got, err := ResolvePath(profile, "secret.jsonl"); err == nil {
+			t.Errorf("escaped via a symlinked projects/: %q", got)
+		}
+	})
+
+	t.Run("a legitimately symlinked profile directory still resolves", func(t *testing.T) {
+		// The root is canonicalised too, so a relocated or synced ~/.ccpm works.
+		real := t.TempDir()
+		projects := filepath.Join(real, "projects", "-repo")
+		if err := os.MkdirAll(projects, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(projects, "s1.jsonl"), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(t.TempDir(), "profile-link")
+		if err := os.Symlink(real, link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, err := ResolvePath(link, filepath.Join("-repo", "s1.jsonl")); err != nil {
+			t.Errorf("a symlinked profile dir must still work: %v", err)
+		}
+	})
+
+	t.Run("a path that does not exist is refused", func(t *testing.T) {
+		profile := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(profile, "projects"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ResolvePath(profile, "nope.jsonl"); err == nil {
+			t.Error("a nonexistent path must not resolve")
+		}
+	})
+}
+
+func TestContainsFold(t *testing.T) {
+	// The needle is always lowercase printable ASCII (prefilterNeedle enforces
+	// it), so only the haystack varies in case.
+	cases := []struct {
+		raw, needle string
+		want        bool
+	}{
+		{"the Fork Bomb here", "fork bomb", true},
+		{"FORK BOMB", "fork bomb", true},
+		{"fork bomb", "fork bomb", true},
+		{"no match here", "fork bomb", false},
+		{"forkbomb", "fork bomb", false},
+		{"partial fork bom", "fork bomb", false},
+		{"fork bomb", "", true},
+		{"ab", "abc", false},
+		{"aaab", "aab", true},           // overlapping candidate starts
+		{"café FORK", "fork", true},     // multi-byte bytes in the haystack
+		{"\x00\xff FORK", "fork", true}, // invalid UTF-8 in the haystack
+	}
+	for _, tc := range cases {
+		if got := containsFold([]byte(tc.raw), []byte(tc.needle)); got != tc.want {
+			t.Errorf("containsFold(%q, %q) = %v, want %v", tc.raw, tc.needle, got, tc.want)
+		}
+	}
+}
+
+// TestContainsFoldMatchesToLowerContains pins the fast path to the obvious
+// spelling it replaced, so the optimisation cannot drift from the semantics.
+func TestContainsFoldMatchesToLowerContains(t *testing.T) {
+	haystacks := []string{
+		"", "a", "The quick BROWN fox", "\x00\x01\x02", "ZZZ zzz ZzZ",
+		strings.Repeat("ab", 300) + "NEEDLE" + strings.Repeat("cd", 300),
+		"café naïve ÄÖÜ", "MiXeD CaSe MiXeD",
+	}
+	needles := []string{"a", "z", "needle", "the quick", "mixed case", "zzz", "xyz"}
+	for _, h := range haystacks {
+		for _, n := range needles {
+			want := bytes.Contains(bytes.ToLower([]byte(h)), []byte(n))
+			if got := containsFold([]byte(h), []byte(n)); got != want {
+				t.Errorf("containsFold(%q,%q)=%v but ToLower+Contains=%v", h, n, got, want)
+			}
+		}
 	}
 }

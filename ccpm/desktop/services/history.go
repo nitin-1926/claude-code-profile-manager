@@ -183,7 +183,17 @@ func transcriptExists(dir, relPath string) bool {
 // passes a path — only a session id, which is looked up in the sidecar — and
 // the resulting relative path is still sandboxed, because a profile directory
 // can be shared or restored from elsewhere.
-func resolveTranscript(profile, sessionID string) (string, error) {
+// resolveTranscriptPath resolves one of a session's transcripts. relPath picks a
+// subagent transcript; empty means the session's own.
+//
+// relPath is matched against an ALLOWLIST — the entry's own path plus the
+// subagent paths the index recorded — rather than being trusted and sandboxed.
+// The frontend gets a path back from a search hit and hands it straight to the
+// reader, so accepting an arbitrary one would make this method a file-open
+// primitive driven by a value that ultimately came off disk. ResolvePath still
+// runs afterwards; the allowlist is what keeps the input from being arbitrary
+// in the first place.
+func resolveTranscriptPath(profile, sessionID, relPath string) (string, error) {
 	dir := profileDir(profile)
 	if dir == "" {
 		return "", os.ErrNotExist
@@ -192,7 +202,14 @@ func resolveTranscript(profile, sessionID string) (string, error) {
 	if e == nil || e.RelPath == "" {
 		return "", os.ErrNotExist
 	}
-	full, err := transcript.ResolvePath(dir, e.RelPath)
+	want := e.RelPath
+	if relPath != "" {
+		if !slices.Contains(e.SubPaths, relPath) && relPath != e.RelPath {
+			return "", os.ErrNotExist
+		}
+		want = relPath
+	}
+	full, err := transcript.ResolvePath(dir, want)
 	if err != nil {
 		return "", err
 	}
@@ -213,8 +230,8 @@ func emptyPage() HistoryPage {
 }
 
 // Transcript returns a window of a session's conversation.
-func (s *HistoryService) Transcript(profile, sessionID string, offset, limit int) (HistoryPage, error) {
-	path, err := resolveTranscript(profile, sessionID)
+func (s *HistoryService) Transcript(profile, sessionID, relPath string, offset, limit int) (HistoryPage, error) {
+	path, err := resolveTranscriptPath(profile, sessionID, relPath)
 	if err != nil {
 		return emptyPage(), nil
 	}
@@ -232,8 +249,8 @@ func (s *HistoryService) Transcript(profile, sessionID string, offset, limit int
 // TranscriptAround opens the window containing a specific turn, for arriving
 // from a search hit. An unknown uuid falls back to the first page rather than
 // erroring — the transcript may have grown since the search ran.
-func (s *HistoryService) TranscriptAround(profile, sessionID, turnUUID string, limit int) (HistoryPage, error) {
-	path, err := resolveTranscript(profile, sessionID)
+func (s *HistoryService) TranscriptAround(profile, sessionID, relPath, turnUUID string, limit int) (HistoryPage, error) {
+	path, err := resolveTranscriptPath(profile, sessionID, relPath)
 	if err != nil {
 		return emptyPage(), nil
 	}
@@ -253,8 +270,8 @@ func (s *HistoryService) TranscriptAround(profile, sessionID, turnUUID string, l
 }
 
 // ToolBody returns one tool payload in full, for an expanded chip.
-func (s *HistoryService) ToolBody(profile, sessionID, turnUUID string, blockIndex int) (HistoryToolBody, error) {
-	path, err := resolveTranscript(profile, sessionID)
+func (s *HistoryService) ToolBody(profile, sessionID, relPath, turnUUID string, blockIndex int) (HistoryToolBody, error) {
+	path, err := resolveTranscriptPath(profile, sessionID, relPath)
 	if err != nil {
 		return HistoryToolBody{}, nil
 	}
