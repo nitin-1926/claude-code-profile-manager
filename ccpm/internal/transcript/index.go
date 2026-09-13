@@ -117,7 +117,23 @@ func BuildIndex(profileDir string) (*Index, error) {
 		// since their usage folds into this entry.
 		subs := subagentTranscripts(abs)
 		mtime, size := signature(fi, subs)
-		if prev, ok := ix.Entries[id]; ok && prev.ModTime == mtime && prev.Size == size {
+		subRels := relSubPaths(profileDir, subs)
+		// SubPaths is part of the freshness check, not just the signature.
+		//
+		// It was added after the subagent-aware signature, so sidecars written
+		// in between carry a matching mtime/size with no sub_paths at all. On a
+		// size-and-mtime check alone those entries look fresh forever and the
+		// field is never backfilled, leaving the session's subagent transcripts
+		// permanently unsearchable and unopenable — the reader's allowlist is
+		// built from RelPath plus SubPaths. Measured on three real profiles: 12
+		// sessions had subagent transcripts on disk and 8 of them had no
+		// sub_paths recorded.
+		//
+		// slices.Equal treats nil and empty as equal, so a session that simply
+		// has no subagents still short-circuits here rather than rebuilding on
+		// every pass.
+		if prev, ok := ix.Entries[id]; ok && prev.ModTime == mtime && prev.Size == size &&
+			slices.Equal(prev.SubPaths, subRels) {
 			return nil // unchanged since last build
 		}
 		meta, err := Scan(abs)
@@ -155,12 +171,6 @@ func BuildIndex(profileDir string) (*Index, error) {
 		}
 		if id == "" {
 			return nil
-		}
-		subRels := make([]string, 0, len(subs))
-		for _, sub := range subs {
-			if r, rerr := filepath.Rel(filepath.Join(profileDir, "projects"), sub); rerr == nil {
-				subRels = append(subRels, filepath.ToSlash(r))
-			}
 		}
 		ix.Entries[id] = &Entry{
 			SessionID: id,
@@ -245,6 +255,21 @@ func subagentTranscripts(abs string) []string {
 		return nil
 	})
 	sort.Strings(out) // stable signature regardless of walk order
+	return out
+}
+
+// relSubPaths converts absolute subagent transcript paths into the
+// projects-relative, forward-slashed form stored in Entry.SubPaths and matched
+// by the reader's allowlist. Always non-nil so an entry never serializes
+// sub_paths as null.
+func relSubPaths(profileDir string, subs []string) []string {
+	root := filepath.Join(profileDir, "projects")
+	out := make([]string, 0, len(subs))
+	for _, sub := range subs {
+		if r, rerr := filepath.Rel(root, sub); rerr == nil {
+			out = append(out, filepath.ToSlash(r))
+		}
+	}
 	return out
 }
 

@@ -339,6 +339,76 @@ func TestSearchPerSessionCap(t *testing.T) {
 	}
 }
 
+// TestSearchPerSessionCapSpansSubagentFiles is the regression for a quota that
+// multiplied. Every subagent transcript is its own scan candidate, so a quota
+// applied per file gave one session a fresh MaxPerSession for each of them — a
+// session with several matching subagents could then fill MaxResults on its own
+// and push every other session out of the results, which is the exact outcome
+// the cap exists to prevent.
+func TestSearchPerSessionCapSpansSubagentFiles(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 10)
+	for range 10 {
+		lines = append(lines, userLine(t, "u", "repeated hitme line"))
+	}
+	writeSessionTranscript(t, dir, "/repo", "parent", lines...)
+
+	// Three subagent transcripts under the same session, each full of matches.
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	for _, name := range []string{"agent-a.jsonl", "agent-b.jsonl", "agent-c.jsonl"} {
+		writeJSONL(t, subs, name, lines...)
+	}
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 3})
+	if len(res.Hits) != 3 {
+		t.Errorf("got %d hits, want 3 — one session spends one quota across all its files", len(res.Hits))
+	}
+	for _, h := range res.Hits {
+		if h.SessionID != "parent" {
+			t.Errorf("hit attributed to %q, want the parent session", h.SessionID)
+		}
+	}
+	if !res.Truncated {
+		t.Error("Truncated must be set when a session's remaining files go unscanned")
+	}
+	if res.Sessions != 1 {
+		t.Errorf("Sessions = %d, want 1", res.Sessions)
+	}
+}
+
+// TestSearchPerSessionCapDoesNotStarveOtherSessions is the consequence that
+// actually matters to a user: a chatty session with many subagents must not
+// consume the global result budget that other sessions need.
+func TestSearchPerSessionCapDoesNotStarveOtherSessions(t *testing.T) {
+	dir := t.TempDir()
+	many := make([]string, 0, 10)
+	for range 10 {
+		many = append(many, userLine(t, "u", "repeated hitme line"))
+	}
+	// The chatty session is NEWEST, so it is scanned first and would exhaust
+	// MaxResults before the others are reached.
+	writeSessionTranscript(t, dir, "/repo", "chatty", many...)
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "chatty", "subagents")
+	for _, name := range []string{"agent-a.jsonl", "agent-b.jsonl", "agent-c.jsonl"} {
+		writeJSONL(t, subs, name, many...)
+	}
+	for _, id := range []string{"quiet1", "quiet2"} {
+		writeSessionTranscript(t, dir, "/repo", id, userLine(t, "u", "one hitme here"))
+	}
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 2, MaxResults: 8})
+	seen := map[string]int{}
+	for _, h := range res.Hits {
+		seen[h.SessionID]++
+	}
+	if seen["chatty"] > 2 {
+		t.Errorf("chatty session emitted %d hits, want at most its quota of 2", seen["chatty"])
+	}
+	if seen["quiet1"] == 0 || seen["quiet2"] == 0 {
+		t.Errorf("a quiet session was starved out: %v", seen)
+	}
+}
+
 func TestSearchStopsReadingAtPerSessionCap(t *testing.T) {
 	// The bound that makes a common query usable: once a transcript has given
 	// its quota, the rest of the file is not decoded. A marker placed far past

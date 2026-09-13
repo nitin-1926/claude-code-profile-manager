@@ -40,7 +40,7 @@ type SearchOpts struct {
 	// content, low secret density, and carry the highest-recall queries
 	// (a filename, a git command, an error string).
 	IncludeToolResults bool
-	// MaxPerSession caps hits from one transcript so a single chatty session
+	// MaxPerSession caps hits from one SESSION so a single chatty session
 	// cannot fill the whole result set.
 	MaxPerSession int
 	// MaxResults caps the run. Reaching it stops the scan early, which is what
@@ -167,6 +167,12 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 	// A session can now match in both its own transcript and a subagent's, so
 	// count each session once rather than once per file.
 	seenSessions := map[string]bool{}
+	// ...and spend ONE MaxPerSession quota across all of them. Every subagent
+	// transcript is its own candidate, so a per-file quota silently multiplies:
+	// a session with six matching subagents could emit 7x MaxPerSession hits and
+	// crowd every other session out of MaxResults. The cap exists to stop one
+	// chatty session dominating the results, which a per-file reading defeats.
+	emitted := map[string]int{}
 
 	for i, c := range cands {
 		select {
@@ -188,12 +194,23 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 			indexes[c.scope.Dir] = ix
 		}
 
-		hits, matches, capped, err := scanFile(ctx, c, lowerQuery, prefilter, opts, opts.MaxResults-len(res.Hits))
+		// Scope-qualified: two profiles can legitimately hold the same session id.
+		quotaKey := c.scope.Dir + "\x00" + c.id
+		left := opts.MaxPerSession - emitted[quotaKey]
+		if left <= 0 {
+			// This session filled its quota in an earlier file, so its remaining
+			// matches go uncounted — the same floor the in-file cap creates.
+			res.Truncated = true
+			continue
+		}
+
+		hits, matches, capped, err := scanFile(ctx, c, lowerQuery, prefilter, opts, min(left, opts.MaxResults-len(res.Hits)))
 		if err != nil {
 			res.Unreadable++
 			continue
 		}
 		res.Matches += matches
+		emitted[quotaKey] += len(hits)
 		if scanCancelled(ctx) {
 			res.Cancelled = true
 			res.DroppedSessions = len(cands) - i - 1
@@ -340,7 +357,10 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 	matches := 0
 	lines := 0
 
-	quota := min(opts.MaxPerSession, budget)
+	// budget is already the smaller of this session's remaining per-session
+	// quota and the global result cap — the caller owns that arithmetic because
+	// only it can see the session's other files.
+	quota := budget
 	err := eachLine(c.abs, func(raw []byte, skipped bool) bool {
 		if skipped {
 			return true

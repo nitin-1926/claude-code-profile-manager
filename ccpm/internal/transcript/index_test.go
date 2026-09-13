@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -112,6 +113,83 @@ func TestBuildIndexSkipsSubagentTranscripts(t *testing.T) {
 	}
 	if ix.Entries["agent-abc123"] != nil {
 		t.Error("subagent transcript became its own session")
+	}
+}
+
+// TestBuildIndexBackfillsSubPathsIntoAStaleSidecar reproduces the shape a real
+// sidecar can be left in, and was: SubPaths landed after the subagent-aware
+// signature, so an entry written in between carries a correct mtime/size with
+// no sub_paths at all.
+//
+// On an mtime-and-size freshness check alone such an entry looks fresh forever,
+// so the field is never backfilled and the session's subagent transcripts stay
+// out of the reader's allowlist — unsearchable and unopenable, with nothing
+// visibly wrong. Measured across three real profiles before the fix: 12
+// sessions had subagent transcripts on disk, 8 of them had no sub_paths.
+//
+// The fixture is built by indexing for real and then editing the field out,
+// rather than by hand-writing a signature — a hand-computed one that happened
+// not to match would make this pass for the wrong reason.
+func TestBuildIndexBackfillsSubPathsIntoAStaleSidecar(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent", userLine(t, "u1", "parent prompt"))
+	sub := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	writeJSONL(t, sub, "agent-abc123.jsonl", userLine(t, "u1", "subagent prompt"))
+
+	ix, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ix.Entries["parent"].SubPaths
+	if len(want) != 1 {
+		t.Fatalf("fixture is wrong: a fresh index recorded %v, want one subagent path", want)
+	}
+
+	// Rewind to the pre-SubPaths shape, keeping the signature untouched.
+	ix.Entries["parent"].SubPaths = nil
+	if err := saveIndex(dir, ix); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadIndex(dir).Entries["parent"].SubPaths; len(got) != 0 {
+		t.Fatalf("fixture is wrong: sub_paths survived the rewind as %v", got)
+	}
+
+	// Nothing on disk changed, so a size/mtime check alone would return early.
+	again, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := again.Entries["parent"].SubPaths; !slices.Equal(got, want) {
+		t.Errorf("stale sidecar was not backfilled: sub_paths = %v, want %v", got, want)
+	}
+}
+
+// TestBuildIndexReusesEntriesWithNoSubagents guards the other side of that
+// check: adding SubPaths to the freshness comparison must not make a session
+// that simply has no subagents rebuild on every single pass. nil and empty have
+// to compare equal for that, which is why slices.Equal is the right test.
+func TestBuildIndexReusesEntriesWithNoSubagents(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "solo", userLine(t, "u1", "no subagents here"))
+
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(IndexPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A rebuild that changes nothing must not rewrite the file — saveIndex is
+	// only reached when an entry was actually touched.
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(IndexPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() {
+		t.Error("a subagent-less session was treated as changed and rewritten")
 	}
 }
 
