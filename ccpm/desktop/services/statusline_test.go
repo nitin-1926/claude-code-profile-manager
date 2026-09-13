@@ -21,6 +21,7 @@ func writeStatusLineConfig(t *testing.T, global, override map[string][]string) s
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	const name = "sl-test"
 	dir := filepath.Join(home, ".ccpm", "profiles", name)
@@ -215,6 +216,7 @@ func TestStatusLineSetArgs(t *testing.T) {
 func TestStatusLineGetUnreadableConfigStillDescribesTheDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if err := os.MkdirAll(filepath.Join(home, ".ccpm"), 0o700); err != nil {
 		t.Fatal(err)
 	}

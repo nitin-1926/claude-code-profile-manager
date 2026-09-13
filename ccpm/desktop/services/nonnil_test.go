@@ -41,6 +41,7 @@ func syntheticProfile(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
 
 	const name = "synthetic"
 	dir := filepath.Join(home, ".ccpm", "profiles", name)

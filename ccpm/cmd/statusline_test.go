@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
 )
 
@@ -215,7 +216,14 @@ func TestRenderStatusLine(t *testing.T) {
 func writeStatusLineHome(t *testing.T, global, override map[string][]string) string {
 	t.Helper()
 	home := t.TempDir()
+	// os.UserHomeDir reads $HOME on unix and %USERPROFILE% on Windows, so both
+	// have to move or the test silently reads the real ~/.ccpm. That is not
+	// hypothetical: setting only HOME made this pass on macOS and Linux while
+	// on Windows it fell through to the default layout — and two of the four
+	// subtests passed anyway, because "no config found" and "no layout
+	// configured" produce the same output. Hence the assertion below.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	const name = "render-test"
 	dir := filepath.Join(home, ".ccpm", "profiles", name)
@@ -240,6 +248,16 @@ func writeStatusLineHome(t *testing.T, global, override map[string][]string) str
 	}
 	if err := os.WriteFile(filepath.Join(home, ".ccpm", "config.json"), b, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// Fail loudly if the config the test just wrote is not the one the code
+	// will read. Without this the suite degrades into testing the default
+	// layout and still reports green.
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if _, ok := cfg.Profiles[name]; !ok {
+		t.Fatalf("the fixture config is not visible to config.Load — $HOME redirection did not take (profiles: %v)", cfg.Profiles)
 	}
 	return name
 }
