@@ -283,38 +283,68 @@ func intersect(want, available []string) []string {
 
 // applyStatusLineLayout writes layout to the global settings or to one
 // profile's override, then reports the result. A nil layout clears.
+//
+// The config passed in is NOT the one written. It was loaded before the picker
+// ran, and a picker waits on a human — long enough for `ccpm add` in another
+// terminal to create a profile, or `ccpm run` to stamp last_used. config.Save
+// serialises the whole struct, so writing that stale snapshot would erase them.
+// So this takes the lock, re-reads, applies just the status-line field, and
+// writes; the caller's copy is only used to answer "does this profile exist".
+//
+// The lock is deliberately NOT held across the prompt. AGENTS.md's lock policy
+// says config mutations must lock and that long-running work must not be
+// wrapped, and a prompt is unbounded — holding it there would block every other
+// ccpm command until the user answered.
 func applyStatusLineLayout(cfg *config.Config, profile string, layout *config.StatusLineLayout) error {
-	green := color.New(color.FgGreen, color.Bold)
+	if profile != "" {
+		if _, ok := cfg.Profiles[profile]; !ok {
+			return fmt.Errorf("profile %q not found", profile)
+		}
+	}
 
-	if profile == "" {
-		cfg.Settings.StatusLine = layout
-		if err := config.Save(cfg); err != nil {
+	var fresh *config.Config
+	err := withConfigLock(func() error {
+		c, err := config.Load()
+		if err != nil {
 			return err
 		}
+		if profile == "" {
+			c.Settings.StatusLine = layout
+		} else {
+			p, ok := c.Profiles[profile]
+			if !ok {
+				// Removed while the picker was open.
+				return fmt.Errorf("profile %q no longer exists", profile)
+			}
+			p.StatusLine = layout
+			c.Profiles[profile] = p
+		}
+		if err := config.Save(c); err != nil {
+			return err
+		}
+		fresh = c
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	green := color.New(color.FgGreen, color.Bold)
+	if profile == "" {
 		if layout == nil {
 			green.Println("✓ Status line restored to the default layout")
 		} else {
 			green.Println("✓ Status line layout saved for every profile")
 		}
-		printStatusLinePreview(statusline.Global(cfg))
+		printStatusLinePreview(statusline.Global(fresh))
 		return nil
-	}
-
-	p, ok := cfg.Profiles[profile]
-	if !ok {
-		return fmt.Errorf("profile %q not found", profile)
-	}
-	p.StatusLine = layout
-	cfg.Profiles[profile] = p
-	if err := config.Save(cfg); err != nil {
-		return err
 	}
 	if layout == nil {
 		green.Printf("✓ Profile %q now follows the global status line\n", profile)
 	} else {
 		green.Printf("✓ Status line layout saved for profile %q\n", profile)
 	}
-	printStatusLinePreview(statusline.Resolve(cfg, profile))
+	printStatusLinePreview(statusline.Resolve(fresh, profile))
 	return nil
 }
 
