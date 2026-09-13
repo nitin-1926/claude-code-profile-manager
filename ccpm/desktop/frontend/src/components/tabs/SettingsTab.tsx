@@ -51,13 +51,10 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
 
   return (
     <div className="px-6 py-5">
-      {/* Keyed on profile so a switch remounts rather than reusing state. The
-          generation guard inside handles stale RESPONSES, but the section also
-          holds pending edits: without a remount, unsaved changes made against
-          one profile stay on screen under the next profile's name, and its Save
-          button would write them there. HistoryTab needs no key because it is
-          read-only. */}
-      <StatusLineSection key={profile} profile={profile} />
+      {/* No key needed here: ProfileView remounts the whole tab subtree when
+          the profile changes, which is what stops this section's pending edits
+          surviving into another profile's Save button. */}
+      <StatusLineSection profile={profile} />
 
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

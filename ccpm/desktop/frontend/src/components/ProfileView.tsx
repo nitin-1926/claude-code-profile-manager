@@ -122,7 +122,21 @@ export function ProfileView({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <ErrorBoundary resetKey={`${profile.name}:${tab}`}>
+        {/* Keyed on the profile so switching profiles REMOUNTS the tab rather
+            than re-rendering it with new props.
+
+            Every tab clears its stale state in an effect, and effects run after
+            render — so the first frame under the new profile still shows the
+            previous one's. HistoryTab hands TranscriptReader the old session
+            (firing a cross-profile fetch that then errors), UsageTab keeps the
+            old 5-hour block, and SettingsTab's status-line editor kept pending
+            edits whose Save button would have written them to the newly
+            selected profile. Remounting removes the whole class at one line,
+            and no tab has state worth preserving across a profile switch.
+
+            The per-fetch generation guards inside the tabs stay: they cover
+            overlapping loads WITHIN one profile, which a key cannot. */}
+        <ErrorBoundary key={profile.name} resetKey={`${profile.name}:${tab}`}>
           {tab === 'Overview' && <OverviewTab profile={profile} />}
           {tab === 'Cascade' && <CascadeTab profile={profile.name} />}
           {tab === 'Assets' && <AssetsTab profile={profile.name} onMutated={onMutated} />}
