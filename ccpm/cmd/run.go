@@ -118,7 +118,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			if wrote, err := settingsmerge.EnsureDefaultStatusLine(name, settingsmerge.DefaultStatusLineCommand); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not set default statusLine: %v\n", err)
 			} else if wrote {
-				fmt.Fprintf(os.Stderr, "ccpm: enabled status line for profile %q — disable with `ccpm config set statusline false`\n", name)
+				fmt.Fprintf(os.Stderr, "ccpm: enabled status line for profile %q — choose its segments with `ccpm statusline configure`, disable with `ccpm config set statusline false`\n", name)
 			}
 		}
 
