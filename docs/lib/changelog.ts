@@ -46,6 +46,8 @@ export const CHANGELOG: ChangelogSeries[] = [
           "The desktop app's **Settings** tab has the same controls — a row per segment with Off / Row 1 / Row 2, a live preview of both rows, and a switch between the global default and this profile's override.",
           "Scripts can skip the prompts: `--row1`/`--row2`/`--off` take comma-separated keys and must name all nine between them. An incomplete list is refused rather than filled in, because a segment named nowhere is treated as newly introduced — that is how a layout saved today picks up a segment added in a later release instead of silently never showing it.",
           "Switching a segment on never invents data: the 5h and 7d windows still show nothing on an API-key profile, because Claude Code sends no rate limits for one. Switching `branch` off also stops ccpm reading `.git/HEAD` on every assistant message.",
+          "Order within a row is yours as well — move-up/move-down controls in the desktop app, and `--row1 a,b,c` renders in the order you give. The interactive picker keeps an order you already set instead of re-sorting it.",
+          "Fixed: every ccpm command printed its error message twice, once from cobra and once from ccpm. Now once.",
         ],
       },
       {

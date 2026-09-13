@@ -9,28 +9,38 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
 )
 
-// StatusLineSegment is one configurable field, with the labels the UI shows and
-// where it currently sits. Row is "off", "row1" or "row2" — strings rather than
-// the Go enum so the frontend never has to know the numbering.
+// StatusLineSegment is one configurable field's catalog entry: what it is
+// called and what it shows. It carries no position — where a segment sits is
+// StatusLineBuckets' job, because position is ordered and a per-segment tag
+// could not express the order of segments within a row.
 type StatusLineSegment struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
 	Description string `json:"description"`
-	Row         string `json:"row"`
+}
+
+// StatusLineBuckets is one layout: the keys on each row, in render order, plus
+// the ones switched off. Order is significant — it is the order the status line
+// prints — so these are lists, not sets.
+type StatusLineBuckets struct {
+	Row1 []string `json:"row1"`
+	Row2 []string `json:"row2"`
+	Off  []string `json:"off"`
 }
 
 // StatusLineConfig is everything the Settings tab needs to draw the section.
 //
-// Segments reflects Effective, so the checkboxes render straight from it.
-// Global is carried separately so the UI can show what "Use the global default"
-// would look like without a second round trip, and HasOverride decides which
-// scope the section opens on.
+// Segments is the catalog, in canonical order, for labels and descriptions.
+// Layout is what this profile actually renders; Global is the default it would
+// fall back to, carried so the UI can switch scope without a second round trip.
+// HasOverride decides which scope the section opens on.
 type StatusLineConfig struct {
 	Profile     string              `json:"profile"`
 	HasOverride bool                `json:"hasOverride"`
 	Enabled     bool                `json:"enabled"`
 	Segments    []StatusLineSegment `json:"segments"`
-	Global      []StatusLineSegment `json:"global"`
+	Layout      StatusLineBuckets   `json:"layout"`
+	Global      StatusLineBuckets   `json:"global"`
 }
 
 // StatusLineService reads and writes the segment layout for `ccpm statusline`.
@@ -50,20 +60,19 @@ func (s *StatusLineService) Get(profile string) StatusLineConfig {
 	out := StatusLineConfig{
 		Profile:  profile,
 		Enabled:  true,
-		Segments: []StatusLineSegment{},
-		Global:   []StatusLineSegment{},
+		Segments: catalog(),
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		// Still describe the built-in layout rather than blanking the section.
-		out.Segments = describeLayout(statusline.Default())
-		out.Global = describeLayout(statusline.Default())
+		out.Layout = buckets(statusline.Default())
+		out.Global = buckets(statusline.Default())
 		return out
 	}
 	out.Enabled = cfg.Settings.StatusLineEnabled()
 	out.HasOverride = statusline.HasOverride(cfg, profile)
-	out.Segments = describeLayout(statusline.Resolve(cfg, profile))
-	out.Global = describeLayout(statusline.Global(cfg))
+	out.Layout = buckets(statusline.Resolve(cfg, profile))
+	out.Global = buckets(statusline.Global(cfg))
 	return out
 }
 
@@ -95,33 +104,34 @@ func (s *StatusLineService) Reset(profile string) CmdResult {
 	return runCCPM(args...)
 }
 
-// describeLayout pairs the catalog with a layout. It walks Segments rather than
-// the layout's rows so the UI always lists every segment in a stable order,
-// including the ones switched off — a hidden segment still needs a row in the
-// table for the user to switch it back on.
+// catalog is the full segment list with its labels, in canonical order. Every
+// segment appears whatever its position, because a switched-off one still needs
+// a row in the table for the user to switch it back on.
 //
-// Always returns a non-nil slice: a nil one marshals to JSON null and makes the
-// frontend's .map throw, which is what nonnil_test.go guards.
-func describeLayout(l statusline.Layout) []StatusLineSegment {
+// Always non-nil: a nil slice marshals to JSON null and makes the frontend's
+// .map throw, which is what nonnil_test.go guards.
+func catalog() []StatusLineSegment {
 	out := make([]StatusLineSegment, 0, len(statusline.Segments))
 	for _, s := range statusline.Segments {
-		out = append(out, StatusLineSegment{
-			Key:         s.Key,
-			Label:       s.Label,
-			Description: s.Description,
-			Row:         rowName(l.Row(s.Key)),
-		})
+		out = append(out, StatusLineSegment{Key: s.Key, Label: s.Label, Description: s.Description})
 	}
 	return out
 }
 
-func rowName(r statusline.Row) string {
-	switch r {
-	case statusline.Row1:
-		return "row1"
-	case statusline.Row2:
-		return "row2"
-	default:
-		return "off"
+// buckets converts a resolved layout into the wire shape, preserving the order
+// within each row — that order is what the status line prints, and it is the
+// thing the UI's move-up/move-down controls exist to change.
+func buckets(l statusline.Layout) StatusLineBuckets {
+	return StatusLineBuckets{
+		Row1: nonNil(l.Row1),
+		Row2: nonNil(l.Row2),
+		Off:  nonNil(l.Off),
 	}
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

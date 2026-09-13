@@ -131,7 +131,7 @@ func TestUnknownProfileSafe(t *testing.T) {
 	}
 
 	sl := NewStatusLine().Get(ghost)
-	assertNoNullArrays(t, sl, "segments", "global")
+	assertNoNullArrays(t, sl, "segments", "row1", "row2", "off")
 	if sl.HasOverride {
 		t.Error("a profile that does not exist cannot have a status line override")
 	}
@@ -140,20 +140,34 @@ func TestUnknownProfileSafe(t *testing.T) {
 func TestStatusLineNoNullArrays(t *testing.T) {
 	for _, name := range []string{firstProfile(t), ""} {
 		c := NewStatusLine().Get(name)
-		assertNoNullArrays(t, c, "segments", "global")
+		// row1/row2/off appear inside both Layout and Global, so naming them
+		// once covers both nested objects.
+		assertNoNullArrays(t, c, "segments", "row1", "row2", "off")
 		if len(c.Segments) == 0 {
 			t.Errorf("StatusLine.Get(%q) returned no segments — the Settings section would render empty", name)
 		}
-		// Every segment must carry a row the frontend understands, or its
-		// radio group renders with nothing selected.
 		for _, s := range c.Segments {
-			switch s.Row {
-			case "off", "row1", "row2":
-			default:
-				t.Errorf("segment %q has row %q, want off/row1/row2", s.Key, s.Row)
-			}
 			if s.Label == "" {
 				t.Errorf("segment %q has no label", s.Key)
+			}
+		}
+		// Every catalog segment must be placed exactly once, in each layout.
+		// A segment in none would be invisible in the UI with no way to switch
+		// it back on; one in two would render twice.
+		for _, b := range []StatusLineBuckets{c.Layout, c.Global} {
+			placed := map[string]int{}
+			for _, bucket := range [][]string{b.Row1, b.Row2, b.Off} {
+				for _, k := range bucket {
+					placed[k]++
+				}
+			}
+			for _, s := range c.Segments {
+				if placed[s.Key] != 1 {
+					t.Errorf("StatusLine.Get(%q): segment %q placed %d times, want exactly 1", name, s.Key, placed[s.Key])
+				}
+			}
+			if len(placed) != len(c.Segments) {
+				t.Errorf("StatusLine.Get(%q): layout names %d keys, catalog has %d", name, len(placed), len(c.Segments))
 			}
 		}
 	}

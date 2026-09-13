@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
-import type { CmdResult, StatusLineConfig, StatusLineRow, StatusLineSegment } from '@/types'
+import type { CmdResult, StatusLineBuckets, StatusLineConfig, StatusLineRow, StatusLineSegment } from '@/types'
 import { useToast } from '@/components/ui/Toast'
 import { cn } from '@/lib/utils'
-import { RotateCcw } from 'lucide-react'
+import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
 
 /** Which layout the section is editing. */
 type Scope = 'global' | 'profile'
@@ -14,31 +14,41 @@ const ROWS: { value: StatusLineRow; label: string }[] = [
   { value: 'row2', label: 'Row 2' },
 ]
 
+const GROUPS: { row: StatusLineRow; title: string; empty: string }[] = [
+  { row: 'row1', title: 'Row 1', empty: 'Nothing on row 1 — it will not be printed.' },
+  { row: 'row2', title: 'Row 2', empty: 'Nothing on row 2 — it will not be printed.' },
+  { row: 'off', title: 'Hidden', empty: 'Every segment is showing.' },
+]
+
 /**
- * StatusLineSection edits which segments `ccpm statusline` renders, and on
- * which of its two rows.
+ * StatusLineSection edits which segments `ccpm statusline` renders, on which of
+ * its two rows, and in what order.
  *
  * Two scopes share one control: the global default, and this profile's
  * override. Editing under "This profile" creates the override; Reset removes it
  * so the profile follows the global again.
  *
- * Deliberately a plain effect rather than useLive. Saving writes
- * ~/.ccpm/config.json, which the Go watcher watches, so a useLive subscription
- * would refetch its own write on a 300 ms delay and fight the optimistic state
- * below. HistoryTab and UsageTab avoid the identical loop the same way.
+ * State is three ordered lists rather than a segment→row map. Order within a
+ * row is what the status line actually prints, and a map cannot express it —
+ * with one, saving would silently re-sort a row someone had arranged by hand.
+ *
+ * Deliberately a plain effect, not useLive. Saving writes ~/.ccpm/config.json,
+ * which the Go watcher watches, so a useLive subscription would refetch its own
+ * write on a 300 ms delay and fight the local state. HistoryTab and UsageTab
+ * avoid the identical loop the same way.
  */
 export function StatusLineSection({ profile }: { profile: string }) {
   const [cfg, setCfg] = useState<StatusLineConfig | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [scope, setScope] = useState<Scope>('global')
-  const [rows, setRows] = useState<Record<string, StatusLineRow>>({})
+  const [draft, setDraft] = useState<StatusLineBuckets>(emptyBuckets)
   const [busy, setBusy] = useState(false)
   const toast = useToast()
 
   // Fetches carry a generation so a response for a profile the user has since
   // switched away from is discarded rather than painting one profile's layout
-  // under another's name — the same guard HistoryTab uses, and the worst
-  // available bug in an app whose whole premise is isolation.
+  // under another's name. SettingsTab also keys this component on profile, so a
+  // switch remounts; this guards overlapping loads within one profile.
   const gen = useRef(0)
 
   const load = useCallback(
@@ -53,7 +63,7 @@ export function StatusLineSection({ profile }: { profile: string }) {
         // what this profile's sessions are showing rather than a default guess.
         const next = preferred ?? (c.hasOverride ? 'profile' : 'global')
         setScope(next)
-        setRows(toRowMap(next === 'profile' ? c.segments : c.global))
+        setDraft(clone(next === 'profile' ? c.layout : c.global))
       } catch (e) {
         if (mine === gen.current) setError(String(e))
       }
@@ -71,7 +81,32 @@ export function StatusLineSection({ profile }: { profile: string }) {
     // Seed the profile scope from whatever it currently resolves to, so
     // switching to it and saving reproduces today's status line rather than
     // silently resetting to the built-in.
-    setRows(toRowMap(next === 'profile' ? cfg.segments : cfg.global))
+    setDraft(clone(next === 'profile' ? cfg.layout : cfg.global))
+  }
+
+  /** Move one segment to a different row, appending it at that row's end. */
+  function place(key: string, to: StatusLineRow) {
+    setDraft((d) => {
+      const next: StatusLineBuckets = {
+        row1: d.row1.filter((k) => k !== key),
+        row2: d.row2.filter((k) => k !== key),
+        off: d.off.filter((k) => k !== key),
+      }
+      next[to] = [...next[to], key]
+      return next
+    })
+  }
+
+  /** Move one segment up or down within the row it is already on. */
+  function nudge(key: string, row: StatusLineRow, delta: -1 | 1) {
+    setDraft((d) => {
+      const list = [...d[row]]
+      const i = list.indexOf(key)
+      const j = i + delta
+      if (i < 0 || j < 0 || j >= list.length) return d
+      ;[list[i], list[j]] = [list[j], list[i]]
+      return { ...d, [row]: list }
+    })
   }
 
   function report(action: string, r: CmdResult) {
@@ -80,19 +115,12 @@ export function StatusLineSection({ profile }: { profile: string }) {
   }
 
   async function save() {
-    if (!cfg) return
     const action = scope === 'profile' ? `Saved for ${profile}` : 'Saved for every profile'
     setBusy(true)
     try {
-      const bucket = (want: StatusLineRow) => cfg.segments.filter((s) => rows[s.key] === want).map((s) => s.key)
       // Every segment is sent exactly once — the CLI refuses an incomplete
       // layout rather than guessing, so a bug here surfaces as a visible error.
-      const r = await api.statusline.set(
-        scope === 'profile' ? profile : '',
-        bucket('row1'),
-        bucket('row2'),
-        bucket('off'),
-      )
+      const r = await api.statusline.set(scope === 'profile' ? profile : '', draft.row1, draft.row2, draft.off)
       report(action, r)
       if (r.ok) await load(scope)
     } catch (e) {
@@ -132,10 +160,11 @@ export function StatusLineSection({ profile }: { profile: string }) {
       </div>
     )
 
-  const saved = scope === 'profile' ? cfg.segments : cfg.global
-  const dirty = saved.some((s) => rows[s.key] !== s.row)
+  const saved = scope === 'profile' ? cfg.layout : cfg.global
+  const dirty = !sameBuckets(saved, draft)
   // A profile with no override has nothing of its own to reset.
   const canReset = scope === 'profile' ? cfg.hasOverride : true
+  const byKey = new Map(cfg.segments.map((s) => [s.key, s]))
 
   return (
     <div className="mb-6">
@@ -160,7 +189,7 @@ export function StatusLineSection({ profile }: { profile: string }) {
 
       <p className="mb-3 text-xs text-muted-foreground">
         {scope === 'global'
-          ? 'Which segments every profile’s status line shows, and on which row.'
+          ? 'Which segments every profile’s status line shows, on which row, and in what order.'
           : cfg.hasOverride
             ? `${profile} has its own layout, which wins over the global default.`
             : `${profile} follows the global default. Saving here gives it a layout of its own.`}{' '}
@@ -177,18 +206,35 @@ export function StatusLineSection({ profile }: { profile: string }) {
         )}
       </p>
 
-      <Preview segments={cfg.segments} rows={rows} />
+      <Preview draft={draft} />
 
       <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
-        {cfg.segments.map((s, i) => (
-          <SegmentRow
-            key={s.key}
-            segment={s}
-            value={rows[s.key] ?? 'off'}
-            first={i === 0}
-            disabled={busy}
-            onChange={(row) => setRows((r) => ({ ...r, [s.key]: row }))}
-          />
+        {GROUPS.map((g) => (
+          <div key={g.row}>
+            <div className="border-b border-border bg-muted/40 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {g.title}
+            </div>
+            {draft[g.row].length === 0 ? (
+              <div className="border-b border-border px-4 py-2.5 text-[11px] text-muted-foreground">{g.empty}</div>
+            ) : (
+              draft[g.row].map((key, i) => {
+                const seg = byKey.get(key)
+                if (!seg) return null
+                return (
+                  <SegmentRow
+                    key={key}
+                    segment={seg}
+                    row={g.row}
+                    disabled={busy}
+                    canMoveUp={g.row !== 'off' && i > 0}
+                    canMoveDown={g.row !== 'off' && i < draft[g.row].length - 1}
+                    onPlace={(to) => place(key, to)}
+                    onNudge={(delta) => nudge(key, g.row, delta)}
+                  />
+                )
+              })
+            )}
+          </div>
         ))}
       </div>
 
@@ -216,23 +262,41 @@ export function StatusLineSection({ profile }: { profile: string }) {
 
 function SegmentRow({
   segment,
-  value,
-  first,
+  row,
   disabled,
-  onChange,
+  canMoveUp,
+  canMoveDown,
+  onPlace,
+  onNudge,
 }: {
   segment: StatusLineSegment
-  value: StatusLineRow
-  first: boolean
+  row: StatusLineRow
   disabled: boolean
-  onChange: (row: StatusLineRow) => void
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onPlace: (to: StatusLineRow) => void
+  onNudge: (delta: -1 | 1) => void
 }) {
   return (
-    <div className={cn('flex items-center gap-3 px-4 py-2.5', !first && 'border-t border-border')}>
+    <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0">
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs text-foreground">{segment.label}</div>
         <div className="truncate text-[11px] text-muted-foreground">{segment.description}</div>
       </div>
+
+      {/* Reordering only means something on a row that is printed, so the
+          hidden group gets no arrows rather than disabled ones. */}
+      {row !== 'off' && (
+        <div className="flex shrink-0 items-center gap-0.5">
+          <MoveButton label={`Move ${segment.label} earlier`} disabled={disabled || !canMoveUp} onClick={() => onNudge(-1)}>
+            <ChevronUp className="size-3" />
+          </MoveButton>
+          <MoveButton label={`Move ${segment.label} later`} disabled={disabled || !canMoveDown} onClick={() => onNudge(1)}>
+            <ChevronDown className="size-3" />
+          </MoveButton>
+        </div>
+      )}
+
       <div
         role="radiogroup"
         aria-label={segment.label}
@@ -242,14 +306,12 @@ function SegmentRow({
           <button
             key={r.value}
             role="radio"
-            aria-checked={value === r.value}
+            aria-checked={row === r.value}
             disabled={disabled}
-            onClick={() => onChange(r.value)}
+            onClick={() => onPlace(r.value)}
             className={cn(
               'cursor-pointer rounded px-2 py-0.5 text-[11px] transition-colors disabled:cursor-default disabled:opacity-50',
-              value === r.value
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground',
+              row === r.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {r.label}
@@ -260,21 +322,41 @@ function SegmentRow({
   )
 }
 
+function MoveButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string
+  disabled: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-25 disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
+  )
+}
+
 /**
  * Preview renders the pending layout against sample values, so the effect of a
  * click is visible before saving. Deliberately mirrors `ccpm statusline
  * configure`'s printed preview; the sample covers every segment so nothing
  * reads as broken merely for want of data.
  */
-function Preview({ segments, rows }: { segments: StatusLineSegment[]; rows: Record<string, StatusLineRow> }) {
-  const line = (want: StatusLineRow) =>
-    segments
-      .filter((s) => rows[s.key] === want)
-      .map((s) => SAMPLE[s.key] ?? s.label)
-      .join(' · ')
-
-  const one = line('row1')
-  const two = line('row2')
+function Preview({ draft }: { draft: StatusLineBuckets }) {
+  const line = (keys: string[]) => keys.map((k) => SAMPLE[k] ?? k).join(' · ')
+  const one = line(draft.row1)
+  const two = line(draft.row2)
 
   return (
     <div className="rounded-xl border border-border bg-background px-4 py-3 font-mono text-[11px] leading-relaxed">
@@ -303,8 +385,16 @@ const SAMPLE: Record<string, string> = {
   cost: '$1.23',
 }
 
-function toRowMap(segments: StatusLineSegment[]): Record<string, StatusLineRow> {
-  const out: Record<string, StatusLineRow> = {}
-  for (const s of segments) out[s.key] = s.row
-  return out
+const emptyBuckets = (): StatusLineBuckets => ({ row1: [], row2: [], off: [] })
+
+const clone = (b: StatusLineBuckets): StatusLineBuckets => ({
+  row1: [...b.row1],
+  row2: [...b.row2],
+  off: [...b.off],
+})
+
+/** Order-sensitive comparison — a reordered row is a real change to save. */
+function sameBuckets(a: StatusLineBuckets, b: StatusLineBuckets): boolean {
+  const same = (x: string[], y: string[]) => x.length === y.length && x.every((v, i) => v === y[i])
+  return same(a.row1, b.row1) && same(a.row2, b.row2) && same(a.off, b.off)
 }

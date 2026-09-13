@@ -240,6 +240,104 @@ func TestSplitSegments(t *testing.T) {
 	}
 }
 
+// TestKeepOrder covers the picker's order preservation. huh hands back
+// selections in the order they were OFFERED, which is catalog order, so without
+// this a picker run would silently re-sort a row someone had arranged by hand
+// in config.json — the flags accept an order that the interactive path would
+// then quietly throw away.
+func TestKeepOrder(t *testing.T) {
+	cases := []struct {
+		name   string
+		chosen []string // as huh returns it: catalog order
+		prev   []string // the user's existing arrangement
+		want   []string
+	}{
+		{
+			name:   "an unchanged selection keeps the previous order",
+			chosen: []string{"a", "b", "c"},
+			prev:   []string{"c", "a", "b"},
+			want:   []string{"c", "a", "b"},
+		},
+		{
+			name:   "a newly added segment is appended, the rest hold their order",
+			chosen: []string{"a", "b", "c"},
+			prev:   []string{"c", "a"},
+			want:   []string{"c", "a", "b"},
+		},
+		{
+			name:   "a removed segment simply drops out",
+			chosen: []string{"a", "c"},
+			prev:   []string{"c", "a", "b"},
+			want:   []string{"c", "a"},
+		},
+		{
+			name:   "no previous order falls back to what was chosen",
+			chosen: []string{"a", "b"},
+			prev:   nil,
+			want:   []string{"a", "b"},
+		},
+		{
+			name:   "keys in prev that are no longer chosen do not resurrect",
+			chosen: []string{"b"},
+			prev:   []string{"a", "b", "c"},
+			want:   []string{"b"},
+		},
+		{
+			name:   "an empty selection stays empty",
+			chosen: nil,
+			prev:   []string{"a", "b"},
+			want:   []string{},
+		},
+		{
+			name:   "a duplicate in prev cannot duplicate the output",
+			chosen: []string{"a", "b"},
+			prev:   []string{"b", "b", "a"},
+			want:   []string{"b", "a"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := keepOrder(tc.chosen, tc.prev); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("keepOrder(%v, %v) = %v, want %v", tc.chosen, tc.prev, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestKeepOrderIsAPermutation is the invariant that matters most: whatever the
+// previous arrangement was, the result must contain exactly the chosen keys.
+// Losing one would silently drop a segment from the layout, and layoutFromFlags
+// would then reject the write with a confusing "missing" error.
+func TestKeepOrderIsAPermutation(t *testing.T) {
+	chosen := []string{statusline.Profile, statusline.Model, statusline.Cost}
+	for _, prev := range [][]string{
+		nil,
+		{},
+		{statusline.Cost},
+		{statusline.Cost, statusline.Profile, statusline.Model},
+		{"gone", statusline.Model, "also-gone"},
+		{statusline.Model, statusline.Model},
+	} {
+		got := keepOrder(chosen, prev)
+		if len(got) != len(chosen) {
+			t.Errorf("keepOrder(%v, %v) returned %d keys, want %d", chosen, prev, len(got), len(chosen))
+			continue
+		}
+		seen := map[string]bool{}
+		for _, k := range got {
+			if seen[k] {
+				t.Errorf("keepOrder(%v, %v) = %v — duplicated %q", chosen, prev, got, k)
+			}
+			seen[k] = true
+		}
+		for _, k := range chosen {
+			if !seen[k] {
+				t.Errorf("keepOrder(%v, %v) = %v — dropped %q", chosen, prev, got, k)
+			}
+		}
+	}
+}
+
 func TestExceptAndIntersect(t *testing.T) {
 	all := []string{"a", "b", "c", "d"}
 	if got := except(all, []string{"b", "d", "zz"}); !reflect.DeepEqual(got, []string{"a", "c"}) {

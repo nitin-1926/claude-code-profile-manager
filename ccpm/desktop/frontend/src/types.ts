@@ -265,11 +265,21 @@ export interface SearchResult {
  *  the frontend never has to know the enum's numbering. */
 export type StatusLineRow = 'off' | 'row1' | 'row2'
 
+/** A segment's catalog entry. Carries no position — that lives in
+ *  StatusLineBuckets, because position is ordered and a per-segment tag could
+ *  not express the order of segments within a row. */
 export interface StatusLineSegment {
   key: string
   label: string
   description: string
-  row: StatusLineRow
+}
+
+/** One layout: the keys on each row in render order, plus the hidden ones.
+ *  Order is significant — it is the order the status line prints. */
+export interface StatusLineBuckets {
+  row1: string[]
+  row2: string[]
+  off: string[]
 }
 
 export interface StatusLineConfig {
@@ -279,9 +289,11 @@ export interface StatusLineConfig {
   /** Whether `ccpm run` injects the status line at all — the separate
    *  `ccpm config set statusline` switch. Segments are configurable either way. */
   enabled: boolean
-  /** The layout in force for this profile, one entry per catalog segment
-   *  including the switched-off ones (they still need a row in the table). */
+  /** The catalog, in canonical order: every segment, with its labels. */
   segments: StatusLineSegment[]
-  /** The global default, so the UI can show it without a second round trip. */
-  global: StatusLineSegment[]
+  /** What this profile actually renders. */
+  layout: StatusLineBuckets
+  /** The global default it would fall back to, so the UI can switch scope
+   *  without a second round trip. */
+  global: StatusLineBuckets
 }

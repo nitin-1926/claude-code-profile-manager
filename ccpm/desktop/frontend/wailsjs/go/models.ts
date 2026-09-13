@@ -384,11 +384,26 @@ export namespace services {
 	        this.value = source["value"];
 	    }
 	}
+	export class StatusLineBuckets {
+	    row1: string[];
+	    row2: string[];
+	    off: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StatusLineBuckets(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.row1 = source["row1"];
+	        this.row2 = source["row2"];
+	        this.off = source["off"];
+	    }
+	}
 	export class StatusLineSegment {
 	    key: string;
 	    label: string;
 	    description: string;
-	    row: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new StatusLineSegment(source);
@@ -399,7 +414,6 @@ export namespace services {
 	        this.key = source["key"];
 	        this.label = source["label"];
 	        this.description = source["description"];
-	        this.row = source["row"];
 	    }
 	}
 	export class StatusLineConfig {
@@ -407,7 +421,8 @@ export namespace services {
 	    hasOverride: boolean;
 	    enabled: boolean;
 	    segments: StatusLineSegment[];
-	    global: StatusLineSegment[];
+	    layout: StatusLineBuckets;
+	    global: StatusLineBuckets;
 	
 	    static createFrom(source: any = {}) {
 	        return new StatusLineConfig(source);
@@ -419,7 +434,8 @@ export namespace services {
 	        this.hasOverride = source["hasOverride"];
 	        this.enabled = source["enabled"];
 	        this.segments = this.convertValues(source["segments"], StatusLineSegment);
-	        this.global = this.convertValues(source["global"], StatusLineSegment);
+	        this.layout = this.convertValues(source["layout"], StatusLineBuckets);
+	        this.global = this.convertValues(source["global"], StatusLineBuckets);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -192,9 +192,46 @@ func promptStatusLineLayout(cfg *config.Config, profile string) error {
 		return err
 	}
 
-	layout := statusline.Layout{Row1: row1, Row2: row2, Off: except(remaining, row2)}
+	layout := statusline.Layout{
+		// huh returns selections in the order they were OFFERED, which is
+		// catalog order — so a picker run would otherwise silently re-sort a row
+		// the user had ordered by hand in config.json. Keeping the previous
+		// order for segments that stayed put means opening the picker to toggle
+		// one thing does not quietly rearrange everything else.
+		Row1: keepOrder(row1, current.Row1),
+		Row2: keepOrder(row2, current.Row2),
+		Off:  except(remaining, row2),
+	}
 	stored := layout.Store()
 	return applyStatusLineLayout(cfg, profile, &stored)
+}
+
+// keepOrder returns chosen, ordered to match prev where the two overlap, with
+// anything new appended in the order chosen already had (catalog order).
+//
+// It is deliberately not a sort: prev is the user's own arrangement and may be
+// in no order the catalog knows about, so entries present in both keep their
+// relative positions from prev and the rest follow.
+func keepOrder(chosen, prev []string) []string {
+	want := make(map[string]bool, len(chosen))
+	for _, k := range chosen {
+		want[k] = true
+	}
+	out := make([]string, 0, len(chosen))
+	seen := make(map[string]bool, len(chosen))
+	for _, k := range prev {
+		if want[k] && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	for _, k := range chosen {
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func pickRow(title string, choices, defaults []string) ([]string, error) {

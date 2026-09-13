@@ -354,7 +354,7 @@ ccpm statusline configure --row1 profile,model --row2 five_hour,seven_day \
                           --off workspace,branch,context,effort,cost
 ```
 
-Layouts live in `~/.ccpm/config.json` (`settings.statusline`, or `profiles.<name>.statusline`). The desktop app's **Settings** tab has the same controls with a live preview.
+Order within a row is yours too: the desktop app has move-up/move-down controls per segment, `--row1 a,b,c` renders in the order given, and the picker keeps an order you already set rather than re-sorting it. Layouts live in `~/.ccpm/config.json` (`settings.statusline`, or `profiles.<name>.statusline`). The desktop app's **Settings** tab has the same controls with a live preview.
 
 Turning a segment on never invents data — enabling the 5h window on an API-key profile still shows nothing. Turning `branch` off also stops ccpm reading `.git/HEAD` on every assistant message.
 
