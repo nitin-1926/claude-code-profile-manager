@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
 )
 
 // statusLineInput is the subset of the JSON Claude Code pipes to a statusLine
@@ -109,8 +110,15 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 	var in statusLineInput
 	_ = json.Unmarshal(raw, &in) // best-effort; missing fields just don't render
 
+	// One config read serves both the profile name and the segment layout. Load
+	// failures are not reported — a nil config resolves to the default layout
+	// and an empty profile name, which still renders something useful.
+	cfg, _ := config.Load()
+	profile := statusLineProfileName(cfg)
+
 	// Claude Code renders each printed line as its own row.
-	for _, row := range renderStatusLine(in, statusLineProfileName(), time.Now(), statusLineColorEnabled()) {
+	layout := statusline.Resolve(cfg, profile)
+	for _, row := range renderStatusLine(in, profile, time.Now(), statusLineColorEnabled(), layout) {
 		fmt.Fprintln(cmd.OutOrStdout(), row)
 	}
 	return nil
@@ -183,66 +191,90 @@ func ctxColor(used int) string {
 // renderStatusLine builds the status line from decoded input, as one row per
 // returned string — Claude Code renders each printed line as its own row.
 //
-// Row 1 is this session: profile, repo/directory, branch, model, context used.
-// Row 2 is the budget: reasoning effort, the 5h and 7d windows with their
-// resets, session spend.
+// Which segments appear, and on which row, comes from layout — the user's
+// choice, resolved from their profile override or the global default by
+// internal/statusline. The shipped default is row 1 for this session (profile,
+// repo/directory, branch, model, context used) and row 2 for the budget
+// (reasoning effort, the 5h and 7d windows with their renewals, session spend).
 //
-// The split is by what you consult them for, not by how fast they change. Row 1
-// answers "what am I talking to, and where" — the things you check when you
-// switch windows and need to know you are in the right place. Row 2 answers
-// "how much is left", which is a separate question you ask at a different
-// moment. Model and context belong with identity: which model is answering, and
-// how much of its window is gone, are both about the conversation in front of
-// you rather than about a quota.
+// That default splits by what you consult them for, not by how fast they
+// change. Row 1 answers "what am I talking to, and where" — the things you
+// check when you switch windows and need to know you are in the right place.
+// Row 2 answers "how much is left", a separate question asked at a different
+// moment. Model and context sit with identity because which model is answering,
+// and how much of its window is gone, are both about the conversation in front
+// of you rather than about a quota.
 //
-// Pure (the clock and the color toggle are injected) so it is unit-testable.
-// Segments drop out when their data is absent, and a row with no segments is
-// omitted entirely rather than printed blank — an API-key profile outside a
-// repo collapses to a single row.
-func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool) []string {
+// Pure (the clock, the color toggle and the layout are injected) so it is
+// unit-testable. A segment still drops out when its data is absent even if the
+// layout asks for it, and a row with no segments is omitted entirely rather
+// than printed blank — so an API-key profile outside a repo collapses to a
+// single row, and switching every row-2 segment off does too, with no special
+// case for either.
+func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool, layout statusline.Layout) []string {
 	sep := " · "
 	if color {
 		sep = " " + cGrey + "·" + cReset + " "
 	}
 
-	var session []string
-	if profile != "" {
-		session = append(session, paint(color, cBold+cProfile, "⬢ "+profile))
-	}
-	if loc := workspaceLabel(in); loc != "" {
-		session = append(session, paint(color, cDir, loc))
-	}
-	if br := statusLineBranch(in); br != "" {
-		session = append(session, paint(color, cBranch, "⎇ "+br))
-	}
-	if name := in.Model.DisplayName; name != "" {
-		session = append(session, paint(color, cModel, name))
-	} else if in.Model.ID != "" {
-		session = append(session, paint(color, cModel, in.Model.ID))
-	}
-	if in.ContextWindow.UsedPercentage > 0 {
-		pct := roundPct(in.ContextWindow.UsedPercentage)
-		session = append(session, paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct)))
-	}
-
-	var budget []string
-	if in.Effort != nil && in.Effort.Level != "" {
-		budget = append(budget, paint(color, cEffort, "effort "+in.Effort.Level))
-	}
-	if in.RateLimits != nil {
-		if w := in.RateLimits.FiveHour; w != nil {
-			budget = append(budget, formatWindow("5h", w, now, color))
+	// Built lazily: only a segment the layout actually places is rendered, so
+	// switching `branch` off also stops gitBranchAt walking the filesystem on
+	// every assistant message.
+	render := func(key string) string {
+		switch key {
+		case statusline.Profile:
+			if profile == "" {
+				return ""
+			}
+			return paint(color, cBold+cProfile, "⬢ "+profile)
+		case statusline.Workspace:
+			if loc := workspaceLabel(in); loc != "" {
+				return paint(color, cDir, loc)
+			}
+		case statusline.Branch:
+			if br := statusLineBranch(in); br != "" {
+				return paint(color, cBranch, "⎇ "+br)
+			}
+		case statusline.Model:
+			if name := in.Model.DisplayName; name != "" {
+				return paint(color, cModel, name)
+			}
+			if in.Model.ID != "" {
+				return paint(color, cModel, in.Model.ID)
+			}
+		case statusline.Context:
+			if in.ContextWindow.UsedPercentage > 0 {
+				pct := roundPct(in.ContextWindow.UsedPercentage)
+				return paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct))
+			}
+		case statusline.Effort:
+			if in.Effort != nil && in.Effort.Level != "" {
+				return paint(color, cEffort, "effort "+in.Effort.Level)
+			}
+		case statusline.FiveHour:
+			if in.RateLimits != nil && in.RateLimits.FiveHour != nil {
+				return formatWindow("5h", in.RateLimits.FiveHour, now, color)
+			}
+		case statusline.SevenDay:
+			if in.RateLimits != nil && in.RateLimits.SevenDay != nil {
+				return formatWindow("7d", in.RateLimits.SevenDay, now, color)
+			}
+		case statusline.Cost:
+			if in.Cost.TotalCostUSD > 0 {
+				return paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD))
+			}
 		}
-		if w := in.RateLimits.SevenDay; w != nil {
-			budget = append(budget, formatWindow("7d", w, now, color))
-		}
-	}
-	if in.Cost.TotalCostUSD > 0 {
-		budget = append(budget, paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD)))
+		return ""
 	}
 
 	rows := make([]string, 0, 2)
-	for _, segs := range [][]string{session, budget} {
+	for _, keys := range [][]string{layout.Row1, layout.Row2} {
+		var segs []string
+		for _, key := range keys {
+			if s := render(key); s != "" {
+				segs = append(segs, s)
+			}
+		}
 		if len(segs) > 0 {
 			rows = append(rows, strings.Join(segs, sep))
 		}
@@ -471,16 +503,16 @@ func roundPct(p float64) int {
 // $CCPM_ACTIVE_PROFILE, then $CLAUDE_CONFIG_DIR matched back to a known profile
 // dir. Unlike `ccpm prompt`, it never falls back to the configured default —
 // the status line reflects the session's actual binding, not a guess.
-func statusLineProfileName() string {
+//
+// cfg is passed in rather than loaded here so the render path reads
+// ~/.ccpm/config.json once for both the profile name and the segment layout.
+// nil is fine: only the $CLAUDE_CONFIG_DIR match needs it.
+func statusLineProfileName(cfg *config.Config) string {
 	if n := strings.TrimSpace(os.Getenv("CCPM_ACTIVE_PROFILE")); n != "" {
 		return n
 	}
 	dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
-	if dir == "" {
-		return ""
-	}
-	cfg, err := config.Load()
-	if err != nil {
+	if dir == "" || cfg == nil {
 		return ""
 	}
 	want := filepath.Clean(dir)

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
 )
 
 // fixedNow is a deterministic clock for reset-time formatting.
@@ -46,7 +48,10 @@ func TestRenderStatusLine(t *testing.T) {
 		name    string
 		in      statusLineInput
 		profile string
-		want    []string
+		// layout is the zero Layout for most cases, meaning "use the shipped
+		// default"; cases that exercise a user's own choices set it explicitly.
+		layout statusline.Layout
+		want   []string
 	}{
 		{
 			name:    "subscription splits the session from its budget",
@@ -127,13 +132,66 @@ func TestRenderStatusLine(t *testing.T) {
 			profile: "ci",
 			want:    []string{"⬢ ci · Haiku 4.5 · ctx 12%"},
 		},
+		{
+			name:    "a switched-off segment is not rendered even though its data is present",
+			in:      subscription(),
+			profile: "work",
+			layout: statusline.Layout{
+				Row1: []string{statusline.Profile, statusline.Model},
+				Row2: []string{statusline.Cost},
+				Off:  []string{statusline.Context, statusline.Effort, statusline.FiveHour, statusline.SevenDay},
+			},
+			want: []string{"⬢ work · Sonnet 4.6", "$1.23"},
+		},
+		{
+			name:    "a segment moved to the other row renders there",
+			in:      subscription(),
+			profile: "work",
+			layout: statusline.Layout{
+				Row1: []string{statusline.Profile, statusline.Model, statusline.Effort},
+				Row2: []string{statusline.Context, statusline.Cost},
+			},
+			want: []string{"⬢ work · Sonnet 4.6 · effort high", "ctx 34% · $1.23"},
+		},
+		{
+			name:    "layout order wins over catalog order",
+			in:      subscription(),
+			profile: "work",
+			layout: statusline.Layout{
+				Row1: []string{statusline.Cost, statusline.Model, statusline.Profile},
+			},
+			want: []string{"$1.23 · Sonnet 4.6 · ⬢ work"},
+		},
+		{
+			name:    "emptying row 2 collapses to a single row",
+			in:      subscription(),
+			profile: "work",
+			layout: statusline.Layout{
+				Row1: []string{statusline.Profile, statusline.Model},
+				Off:  []string{statusline.Context, statusline.Effort, statusline.FiveHour, statusline.SevenDay, statusline.Cost},
+			},
+			want: []string{"⬢ work · Sonnet 4.6"},
+		},
+		{
+			name:    "everything on row 2 leaves row 1 unprinted rather than blank",
+			in:      subscription(),
+			profile: "work",
+			layout: statusline.Layout{
+				Row2: []string{statusline.Profile, statusline.Model},
+			},
+			want: []string{"⬢ work · Sonnet 4.6"},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			layout := tc.layout
+			if len(layout.Row1) == 0 && len(layout.Row2) == 0 {
+				layout = statusline.Default()
+			}
 			// color=false keeps the assertions on plain text; coloring is
 			// covered separately in TestRenderStatusLineColorized.
-			got := renderStatusLine(tc.in, tc.profile, fixedNow, false)
+			got := renderStatusLine(tc.in, tc.profile, fixedNow, false, layout)
 			if len(got) != len(tc.want) {
 				t.Fatalf("renderStatusLine rows:\n got %q\nwant %q", got, tc.want)
 			}
@@ -144,6 +202,63 @@ func TestRenderStatusLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRenderStatusLineEverythingOffPrintsNothing covers the layout a user can
+// reach by switching all nine segments off. Claude Code renders whatever the
+// command prints, so emitting a blank line here would leave a permanently empty
+// row pinned to the bottom of their session.
+func TestRenderStatusLineEverythingOffPrintsNothing(t *testing.T) {
+	var in statusLineInput
+	in.Model.DisplayName = "Opus 5"
+	in.Cost.TotalCostUSD = 9.99
+	in.ContextWindow.UsedPercentage = 50
+
+	got := renderStatusLine(in, "work", fixedNow, false, statusline.Layout{Off: allSegmentKeys()})
+	if len(got) != 0 {
+		t.Fatalf("want no rows at all, got %q", got)
+	}
+}
+
+// TestRenderStatusLineSkipsBranchLookupWhenOff pins the behaviour that makes
+// switching `branch` off worth doing: the segment reads .git off disk on every
+// assistant message, so it must not be resolved when the layout omits it.
+func TestRenderStatusLineSkipsBranchLookupWhenOff(t *testing.T) {
+	repo := t.TempDir()
+	writeGit(t, repo, "ref: refs/heads/should-not-appear\n")
+
+	var in statusLineInput
+	in.Workspace.ProjectDir = repo
+	in.Workspace.CurrentDir = repo
+
+	// Branch present: the on-disk HEAD is read and rendered.
+	with := renderStatusLine(in, "", fixedNow, false, statusline.Layout{
+		Row1: []string{statusline.Branch},
+	})
+	if len(with) != 1 || !strings.Contains(with[0], "should-not-appear") {
+		t.Fatalf("branch segment did not render its on-disk branch: %q", with)
+	}
+
+	// Branch off: nothing to render, so nothing reads the repo.
+	without := renderStatusLine(in, "", fixedNow, false, statusline.Layout{
+		Row1: []string{statusline.Workspace},
+		Off:  []string{statusline.Branch},
+	})
+	for _, row := range without {
+		if strings.Contains(row, "should-not-appear") {
+			t.Errorf("branch leaked into a layout that switched it off: %q", row)
+		}
+	}
+}
+
+// allSegmentKeys is every key in the catalog, for tests that need to account
+// for all of them without restating the list as it grows.
+func allSegmentKeys() []string {
+	keys := make([]string, 0, len(statusline.Segments))
+	for _, s := range statusline.Segments {
+		keys = append(keys, s.Key)
+	}
+	return keys
 }
 
 // TestRenderStatusLineWorkspaceRow covers the session row's repo/directory and
@@ -167,7 +282,7 @@ func TestRenderStatusLineWorkspaceRow(t *testing.T) {
 		Name  string `json:"name"`
 	}{Host: "github.com", Owner: "nitin-1926", Name: "claude-code-profile-manager"}
 
-	rows := renderStatusLine(in, "work", fixedNow, false)
+	rows := renderStatusLine(in, "work", fixedNow, false, statusline.Default())
 	if len(rows) != 1 {
 		t.Fatalf("want only the session row, got %q", rows)
 	}
@@ -350,13 +465,13 @@ func TestRenderStatusLineColorized(t *testing.T) {
 		SevenDay *rateWindow `json:"seven_day"`
 	}{FiveHour: &rateWindow{UsedPercentage: 90}} // 10% left → red percent
 
-	got := strings.Join(renderStatusLine(in, "work", fixedNow, true), "\n")
+	got := strings.Join(renderStatusLine(in, "work", fixedNow, true, statusline.Default()), "\n")
 	for _, want := range []string{cProfile, cOrange, cRed, cReset} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("colored output missing %q\n got %q", want, got)
 		}
 	}
-	plain := strings.Join(renderStatusLine(in, "work", fixedNow, false), "\n")
+	plain := strings.Join(renderStatusLine(in, "work", fixedNow, false, statusline.Default()), "\n")
 	if strings.Contains(plain, "\033") {
 		t.Fatalf("plain output unexpectedly contains ANSI: %q", plain)
 	}
@@ -462,7 +577,7 @@ func TestRenderStatusLineNeverEmitsEscapesFromDisk(t *testing.T) {
 
 	// Byte-wise, not strings.ContainsAny: 0x9b alone is not valid UTF-8, and
 	// ContainsAny requires valid UTF-8 in both arguments.
-	for _, row := range renderStatusLine(in, "work", fixedNow, false) {
+	for _, row := range renderStatusLine(in, "work", fixedNow, false, statusline.Default()) {
 		for i := 0; i < len(row); i++ {
 			if b := row[i]; b < 0x20 || b == 0x7f || b == 0x9b {
 				t.Errorf("row leaked control byte %#x: %q", b, row)
