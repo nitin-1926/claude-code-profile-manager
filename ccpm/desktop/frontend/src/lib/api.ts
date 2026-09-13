@@ -37,6 +37,11 @@ import {
   CancelSearch as HistoryCancelSearch,
   Resume as HistoryResume,
 } from '../../wailsjs/go/services/HistoryService'
+import {
+  Get as StatusLineGet,
+  Set as StatusLineSet,
+  Reset as StatusLineReset,
+} from '../../wailsjs/go/services/StatusLineService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
 import { Check as UpdaterCheck, Install as UpdaterInstall } from '../../wailsjs/go/services/Updater'
@@ -54,6 +59,7 @@ import type {
   Profile,
   SearchResult,
   SettingKV,
+  StatusLineConfig,
   UpdateInfo,
   UpdateProgress,
   Usage,
@@ -89,6 +95,15 @@ export const api = {
       HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
     cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
     resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<CmdResult>,
+  },
+  statusline: {
+    get: (profile: string) => StatusLineGet(profile) as unknown as Promise<StatusLineConfig>,
+    // profile '' targets the global default; a name writes that profile's
+    // override. The three lists must together name every segment exactly once —
+    // the CLI rejects anything else rather than guessing.
+    set: (profile: string, row1: string[], row2: string[], off: string[]) =>
+      StatusLineSet(profile, row1, row2, off) as unknown as Promise<CmdResult>,
+    reset: (profile: string) => StatusLineReset(profile) as unknown as Promise<CmdResult>,
   },
   details: {
     get: (name: string) => DetailsGet(name) as unknown as Promise<Details>,

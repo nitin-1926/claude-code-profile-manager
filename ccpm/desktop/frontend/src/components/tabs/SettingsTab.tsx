@@ -5,6 +5,7 @@ import type { CmdResult, SettingKV } from '@/types'
 import { useToast } from '@/components/ui/Toast'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
+import { StatusLineSection } from '@/components/settings/StatusLineSection'
 import { Plus, Save } from 'lucide-react'
 
 export function SettingsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
@@ -50,6 +51,8 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
 
   return (
     <div className="px-6 py-5">
+      <StatusLineSection profile={profile} />
+
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Effective settings · {rows.length}

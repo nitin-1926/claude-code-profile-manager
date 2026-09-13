@@ -260,3 +260,28 @@ export interface SearchResult {
   unreadable: number
   cancelled: boolean
 }
+
+/** Where a status line segment sits. Mirrors the Go service's string form so
+ *  the frontend never has to know the enum's numbering. */
+export type StatusLineRow = 'off' | 'row1' | 'row2'
+
+export interface StatusLineSegment {
+  key: string
+  label: string
+  description: string
+  row: StatusLineRow
+}
+
+export interface StatusLineConfig {
+  profile: string
+  /** True when this profile has its own layout rather than following the global default. */
+  hasOverride: boolean
+  /** Whether `ccpm run` injects the status line at all — the separate
+   *  `ccpm config set statusline` switch. Segments are configurable either way. */
+  enabled: boolean
+  /** The layout in force for this profile, one entry per catalog segment
+   *  including the switched-off ones (they still need a row in the table). */
+  segments: StatusLineSegment[]
+  /** The global default, so the UI can show it without a second round trip. */
+  global: StatusLineSegment[]
+}
