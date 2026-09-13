@@ -118,7 +118,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 			if wrote, err := settingsmerge.EnsureDefaultStatusLine(name, settingsmerge.DefaultStatusLineCommand); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not set default statusLine: %v\n", err)
 			} else if wrote {
-				fmt.Fprintf(os.Stderr, "ccpm: enabled status line for profile %q — choose its segments with `ccpm statusline configure`, disable with `ccpm config set statusline false`\n", name)
+				// Both suggested commands are global unless told otherwise, so the
+				// message says so: a user who reads "for profile %q" and then runs
+				// `ccpm statusline configure` would otherwise change every profile
+				// without meaning to.
+				fmt.Fprintf(os.Stderr, "ccpm: enabled status line for profile %q — pick its segments with `ccpm statusline configure` (add `--profile %s` for this profile only), disable everywhere with `ccpm config set statusline false`\n", name, name)
 			}
 		}
 

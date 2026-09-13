@@ -152,6 +152,70 @@ func TestLayoutFromFlagsRoundTripsThroughNormalize(t *testing.T) {
 	}
 }
 
+// TestDocumentedExamplesActuallyRun parses the invocations out of the command's
+// own help text and feeds them to the real validator.
+//
+// The help shipped an example — `--off branch,effort --profile work` — that
+// layoutFromFlags rejects outright, because it named two of the nine segments
+// and the flags require all of them. A user copying it got an error from the
+// documentation. Nothing catches that class of bug except executing the docs,
+// so this does.
+func TestDocumentedExamplesActuallyRun(t *testing.T) {
+	// Unwrap shell line continuations, then take each `ccpm statusline
+	// configure ...` line as one invocation.
+	help := strings.ReplaceAll(statusLineConfigureCmd.Long, "\\\n", " ")
+
+	found := 0
+	for _, line := range strings.Split(help, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ccpm statusline configure") {
+			continue
+		}
+		found++
+		t.Run(line, func(t *testing.T) {
+			row1, row2, off, reset := parseExampleFlags(t, line)
+			if reset {
+				return // --reset takes no segment lists
+			}
+			if row1 == "" && row2 == "" && off == "" {
+				return // the bare interactive form
+			}
+			if _, err := layoutFromFlags(row1, row2, off); err != nil {
+				t.Errorf("the help text documents a command that fails:\n  %s\n  %v", line, err)
+			}
+		})
+	}
+	if found < 3 {
+		t.Fatalf("only found %d example invocations in the help text — the parser has drifted from the docs", found)
+	}
+}
+
+// parseExampleFlags pulls --row1/--row2/--off/--reset out of one example line.
+func parseExampleFlags(t *testing.T, line string) (row1, row2, off string, reset bool) {
+	t.Helper()
+	fields := strings.Fields(line)
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "--reset":
+			reset = true
+		case "--row1", "--row2", "--off", "--profile":
+			if i+1 >= len(fields) {
+				t.Fatalf("flag %s has no value in %q", fields[i], line)
+			}
+			switch fields[i] {
+			case "--row1":
+				row1 = fields[i+1]
+			case "--row2":
+				row2 = fields[i+1]
+			case "--off":
+				off = fields[i+1]
+			}
+			i++
+		}
+	}
+	return row1, row2, off, reset
+}
+
 func TestSplitSegments(t *testing.T) {
 	cases := map[string][]string{
 		"":            {},

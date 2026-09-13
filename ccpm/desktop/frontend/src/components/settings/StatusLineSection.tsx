@@ -81,6 +81,7 @@ export function StatusLineSection({ profile }: { profile: string }) {
 
   async function save() {
     if (!cfg) return
+    const action = scope === 'profile' ? `Saved for ${profile}` : 'Saved for every profile'
     setBusy(true)
     try {
       const bucket = (want: StatusLineRow) => cfg.segments.filter((s) => rows[s.key] === want).map((s) => s.key)
@@ -92,19 +93,27 @@ export function StatusLineSection({ profile }: { profile: string }) {
         bucket('row2'),
         bucket('off'),
       )
-      report(scope === 'profile' ? `Saved for ${profile}` : 'Saved for every profile', r)
+      report(action, r)
       if (r.ok) await load(scope)
+    } catch (e) {
+      // The bridge call itself can reject (the app closing mid-call, a binding
+      // fault). Without this the click fails silently and leaves an unhandled
+      // rejection, so the user sees a spinner stop and nothing else.
+      toast({ kind: 'error', title: `${action} failed`, desc: String(e) })
     } finally {
       setBusy(false)
     }
   }
 
   async function reset() {
+    const action = scope === 'profile' ? `${profile} follows the global status line` : 'Restored the default layout'
     setBusy(true)
     try {
       const r = await api.statusline.reset(scope === 'profile' ? profile : '')
-      report(scope === 'profile' ? `${profile} follows the global status line` : 'Restored the default layout', r)
+      report(action, r)
       if (r.ok) await load('global')
+    } catch (e) {
+      toast({ kind: 'error', title: 'Reset failed', desc: String(e) })
     } finally {
       setBusy(false)
     }
@@ -116,7 +125,12 @@ export function StatusLineSection({ profile }: { profile: string }) {
         Could not load the status line config: {error}
       </div>
     )
-  if (!cfg) return null
+  if (!cfg)
+    return (
+      <div className="mb-6 rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+        Loading status line settings…
+      </div>
+    )
 
   const saved = scope === 'profile' ? cfg.segments : cfg.global
   const dirty = saved.some((s) => rows[s.key] !== s.row)

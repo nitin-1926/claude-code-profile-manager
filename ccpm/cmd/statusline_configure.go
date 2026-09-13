@@ -42,11 +42,14 @@ so enabling the 5h window on an API-key profile shows nothing rather than a
 blank segment.
 
 For scripts and for the desktop app, pass the rows explicitly instead of
-prompting — every segment must be accounted for exactly once:
+prompting. Every segment must be accounted for exactly once across the three
+flags — an incomplete list is refused rather than filled in, because a segment
+named nowhere is treated as newly introduced and placed at its default:
 
   ccpm statusline configure --row1 profile,workspace,branch,model,context \
                             --row2 effort,five_hour,seven_day,cost
-  ccpm statusline configure --off branch,effort --profile work
+  ccpm statusline configure --row1 profile,model --row2 five_hour,seven_day \
+                            --off workspace,branch,context,effort,cost --profile work
   ccpm statusline configure --reset`,
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,
