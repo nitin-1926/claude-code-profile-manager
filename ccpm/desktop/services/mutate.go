@@ -207,21 +207,50 @@ func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
 // The `cd` for workdir is composed here rather than by callers: the path goes
 // through shellQuote like any other argument and only the `&&` is emitted
 // outside the quoting, so a directory name cannot introduce a second command.
+// errControlChar is the exact refusal a caller gets for a control character.
+// Exported as a constant so the test can assert THIS error rather than merely
+// "an error" — asserting presence is what let the previous version pass on a
+// machine where the CLI could not be found at all.
+const errControlChar = "refusing to run a command containing a control character"
+
+// terminalArgsOK reports whether every value is safe to compose into the
+// AppleScript that `terminal` hands to `do script`.
+//
+// Reject control characters for every caller, in the shared funnel rather than
+// at each call site. A newline does not escape the single quotes — it stays
+// inside them — but Go's %q renders it as \n and AppleScript's parser turns
+// that back into a real newline, so `do script` would type a broken command
+// into Terminal. Refusing is clearer than emitting something confusing.
+//
+// Split out from terminal so the guard is testable on its own. terminal itself
+// opens a real Terminal window on the developer's machine for any input that
+// PASSES, so a test that fed it a clean value to prove the guard is not
+// over-eager would spawn a window on every run — which is exactly what happened
+// before this was extracted.
+func terminalArgsOK(workdir string, args []string) bool {
+	for _, a := range append([]string{workdir}, args...) {
+		if strings.ContainsAny(a, "\n\r\x00") {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *MutateService) terminal(workdir string, args ...string) CmdResult {
+	// Validate BEFORE resolving the binary, deliberately.
+	//
+	// With the order reversed, a machine without ccpm on PATH returns the
+	// unrelated "not found" error for hostile input too — which made the test
+	// for this guard unfalsifiable: it asserted only that *some* error came
+	// back, so it stayed green on CI containers and would have stayed green
+	// with the guard deleted outright. Input validation does not depend on
+	// binary discovery, so there is no reason for it to run second.
+	if !terminalArgsOK(workdir, args) {
+		return CmdResult{Error: errControlChar}
+	}
 	bin := findCCPM()
 	if bin == "" {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
-	}
-	// Reject control characters for every caller, in the shared funnel rather
-	// than at each call site. A newline does not escape single quotes — it stays
-	// inside them — but Go's %q renders it as \n and AppleScript's parser turns
-	// that back into a real newline, so `do script` would type a broken command
-	// into Terminal. Refusing is clearer than emitting something confusing, and
-	// putting the check here means the next caller cannot rediscover it.
-	for _, a := range append([]string{workdir}, args...) {
-		if strings.ContainsAny(a, "\n\r\x00") {
-			return CmdResult{Error: "refusing to run a command containing a control character"}
-		}
 	}
 	full := composeCommand(bin, workdir, args...)
 	if runtime.GOOS != "darwin" {

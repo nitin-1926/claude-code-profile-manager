@@ -60,14 +60,68 @@ func TestTerminalEmptyWorkdirEmitsNoCd(t *testing.T) {
 // and AppleScript's parser materialises it back into a real newline, so
 // `do script` types a broken command. The funnel refuses rather than emitting it.
 func TestTerminalRejectsControlCharacters(t *testing.T) {
+	// Hostile input ONLY goes through m.terminal, because a refusal returns
+	// before osascript is ever reached. Never feed this a clean value: terminal
+	// really does open a Terminal window on the developer's machine, and a
+	// "clean input is not refused" case here spawned one on every test run.
+	// That direction is covered by TestTerminalArgsOK against the pure guard.
+	//
+	// Asserting the SPECIFIC refusal matters too. terminal used to resolve the
+	// ccpm binary before validating, so on a machine without ccpm on PATH every
+	// case returned "ccpm CLI not found on PATH" and the test passed — it would
+	// have passed with the guard deleted outright.
 	m := NewMutate()
 	for _, bad := range []string{"/tmp/a\nb", "/tmp/a\rb", "/tmp/a\x00b"} {
-		if r := m.terminal(bad, "run", "work"); r.OK || r.Error == "" {
-			t.Errorf("terminal accepted a workdir containing a control character: %q -> %+v", bad, r)
+		r := m.terminal(bad, "run", "work")
+		if r.OK || r.Error != errControlChar {
+			t.Errorf("workdir %q: got %+v, want the control-character refusal", bad, r)
 		}
 	}
-	if r := m.terminal("", "run", "wo\nrk"); r.OK || r.Error == "" {
-		t.Error("terminal accepted an argument containing a newline")
+	for _, bad := range []string{"wo\nrk", "wo\rrk", "wo\x00rk"} {
+		r := m.terminal("", "run", bad)
+		if r.OK || r.Error != errControlChar {
+			t.Errorf("argument %q: got %+v, want the control-character refusal", bad, r)
+		}
+	}
+}
+
+// TestTerminalArgsOK exercises the guard directly, including the clean cases —
+// which is only safe because this function composes nothing and launches
+// nothing. Without the clean cases the test above would still pass against a
+// validator that rejected every input.
+func TestTerminalArgsOK(t *testing.T) {
+	clean := []struct {
+		workdir string
+		args    []string
+	}{
+		{"", []string{"run", "work"}},
+		{"/tmp", []string{"run", "work"}},
+		{"/Users/a/My Projects/repo", []string{"run", "work-2"}},
+		{"/tmp/caf\u00e9", []string{"run", "profil\u00e9"}},
+		{"/tmp/it's", []string{"run", "a;b|c$(d)"}}, // shell metacharacters are shellQuote's job, not this guard's
+		{"", nil},
+	}
+	for _, c := range clean {
+		if !terminalArgsOK(c.workdir, c.args) {
+			t.Errorf("terminalArgsOK(%q, %q) = false, want true", c.workdir, c.args)
+		}
+	}
+
+	hostile := []struct {
+		workdir string
+		args    []string
+	}{
+		{"/tmp/a\nb", []string{"run", "work"}},
+		{"/tmp/a\rb", []string{"run", "work"}},
+		{"/tmp/a\x00b", []string{"run", "work"}},
+		{"", []string{"run", "wo\nrk"}},
+		{"", []string{"run", "work", "extra\r"}},
+		{"\n", nil},
+	}
+	for _, c := range hostile {
+		if terminalArgsOK(c.workdir, c.args) {
+			t.Errorf("terminalArgsOK(%q, %q) = true, want false", c.workdir, c.args)
+		}
 	}
 }
 
