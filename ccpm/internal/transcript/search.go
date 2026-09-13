@@ -225,8 +225,12 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 		if len(hits) == 0 {
 			continue
 		}
-		if !seenSessions[c.id] {
-			seenSessions[c.id] = true
+		// Keyed the same way as the quota above. Session ids are unique within
+		// a profile but not across them, so counting on the bare id would merge
+		// two profiles' sessions into one row of "N matches in M sessions" the
+		// day this is called with more than one scope.
+		if !seenSessions[quotaKey] {
+			seenSessions[quotaKey] = true
 			res.Sessions++
 		}
 		// Session metadata comes from the sidecar when present, and falls back

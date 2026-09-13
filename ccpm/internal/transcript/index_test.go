@@ -116,6 +116,131 @@ func TestBuildIndexSkipsSubagentTranscripts(t *testing.T) {
 	}
 }
 
+// usageAsstLine is an assistant line carrying a real usage block, in the shape
+// real transcripts produce (distinct uuid, message.id and requestId present).
+func usageAsstLine(t *testing.T, uuid, msgID, model string, in, out int64) string {
+	t.Helper()
+	return jl(t, map[string]any{
+		"type": "assistant", "uuid": uuid, "requestId": "req_" + msgID,
+		"sessionId": "s1", "cwd": "/repo", "timestamp": "2026-06-27T10:00:00Z",
+		"message": map[string]any{"id": msgID, "role": "assistant", "model": model,
+			"content": []any{map[string]any{"type": "text", "text": "ok"}},
+			"usage": map[string]any{"input_tokens": in, "output_tokens": out,
+				"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}},
+	})
+}
+
+// TestBuildIndexFoldsSubagentTokensIntoTheParent pins the folding that exists
+// because subagent lines carry the PARENT's sessionId — internal/usage already
+// bills their tokens to this session, so a History row that skipped them read
+// 5-14% lower than the Usage tab for the same session.
+//
+// Nothing covered it: removing the fold loop entirely left the suite green,
+// because TestBuildIndexDedupMatchesUsagePackage — the test whose whole job is
+// agreeing with usage — has a fixture with no subagent transcripts at all,
+// while 14 of 79 real transcripts on this machine have them.
+func TestBuildIndexFoldsSubagentTokensIntoTheParent(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "do the thing"),
+		usageAsstLine(t, "a1", "msg_p", "claude-opus-5", 100, 10),
+	)
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	writeJSONL(t, subs, "agent-a.jsonl", usageAsstLine(t, "s1", "msg_s1", "claude-opus-5", 1000, 100))
+	writeJSONL(t, subs, "agent-b.jsonl", usageAsstLine(t, "s2", "msg_s2", "claude-opus-5", 2000, 200))
+
+	ix, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := ix.Entries["parent"]
+	if e == nil {
+		t.Fatal("parent session missing")
+	}
+	tok := e.ByModel["claude-opus-5"]
+	// 100+1000+2000 in, 10+100+200 out. Asserting the exact total, not merely
+	// "more than the parent alone", so a fold that double-counts also fails.
+	if tok.Input != 3100 || tok.Output != 310 {
+		t.Errorf("tokens = in %d / out %d, want in 3100 / out 310 — subagent usage was not folded in",
+			tok.Input, tok.Output)
+	}
+}
+
+// TestBuildIndexFoldsNestedWorkflowSubagents covers the deeper nesting that a
+// flat directory read would miss. Workflow runs write to
+// subagents/workflows/wf_<id>/agent-*.jsonl, and getting this wrong once
+// already left a real session's tally 10% short. Every other fixture writes
+// subagent files flat, so the recursive walk was untested.
+//
+// Real data on this machine: 24 of 279 subagent transcripts are nested.
+func TestBuildIndexFoldsNestedWorkflowSubagents(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "run a workflow"),
+		usageAsstLine(t, "a1", "msg_p", "claude-opus-5", 100, 10),
+	)
+	nested := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents", "workflows", "wf_abc123")
+	writeJSONL(t, nested, "agent-deep.jsonl", usageAsstLine(t, "d1", "msg_d", "claude-opus-5", 5000, 500))
+
+	ix, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := ix.Entries["parent"]
+	if e == nil {
+		t.Fatal("parent session missing")
+	}
+	if tok := e.ByModel["claude-opus-5"]; tok.Input != 5100 {
+		t.Errorf("input tokens = %d, want 5100 — a nested workflow subagent was not walked", tok.Input)
+	}
+	// It must also be reachable by the reader, not merely counted.
+	found := false
+	for _, p := range e.SubPaths {
+		if strings.Contains(p, "workflows/wf_abc123/agent-deep.jsonl") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("nested subagent missing from SubPaths %v — the reader could not open it", e.SubPaths)
+	}
+}
+
+// TestBuildIndexRescansWhenOnlyASubagentChanged pins the other half of the
+// freshness signature. The parent file is untouched, so a signature covering
+// only the parent would treat the entry as fresh and never pick up the new
+// subagent turn whose tokens belong to this session's total.
+func TestBuildIndexRescansWhenOnlyASubagentChanged(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "start"),
+		usageAsstLine(t, "a1", "msg_p", "claude-opus-5", 100, 10),
+	)
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	writeJSONL(t, subs, "agent-a.jsonl", usageAsstLine(t, "s1", "msg_s1", "claude-opus-5", 1000, 100))
+
+	ix, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ix.Entries["parent"].ByModel["claude-opus-5"].Input; got != 1100 {
+		t.Fatalf("baseline input = %d, want 1100", got)
+	}
+
+	// Grow the subagent transcript. The parent's own mtime and size do not move.
+	writeJSONL(t, subs, "agent-a.jsonl",
+		usageAsstLine(t, "s1", "msg_s1", "claude-opus-5", 1000, 100),
+		usageAsstLine(t, "s2", "msg_s2", "claude-opus-5", 7000, 700),
+	)
+
+	again, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := again.Entries["parent"].ByModel["claude-opus-5"].Input; got != 8100 {
+		t.Errorf("input = %d, want 8100 — a changed subagent did not invalidate the parent's entry", got)
+	}
+}
+
 // TestBuildIndexBackfillsSubPathsIntoAStaleSidecar reproduces the shape a real
 // sidecar can be left in, and was: SubPaths landed after the subagent-aware
 // signature, so an entry written in between carries a correct mtime/size with

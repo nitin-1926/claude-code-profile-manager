@@ -82,16 +82,27 @@ func (s *StatusLineService) Get(profile string) StatusLineConfig {
 // anything else rather than guessing, so a UI bug surfaces as a visible error
 // instead of a silently reshuffled status line.
 func (s *StatusLineService) Set(profile string, row1, row2, off []string) CmdResult {
+	return runCCPM(statusLineSetArgs(profile, row1, row2, off)...)
+}
+
+// statusLineSetArgs builds the argv for a Set. Split out from Set so the
+// composition is testable without shelling out — dropping --off entirely, or
+// swapping row1 and row2, produced a working binary and a silently wrong write
+// with nothing to catch it.
+func statusLineSetArgs(profile string, row1, row2, off []string) []string {
 	args := []string{
 		"statusline", "configure",
 		"--row1", strings.Join(row1, ","),
 		"--row2", strings.Join(row2, ","),
+		// Always sent, even when empty: the CLI requires every segment to be
+		// accounted for exactly once, so omitting the flag turns a deliberate
+		// "nothing hidden" into an incomplete layout it will reject.
 		"--off", strings.Join(off, ","),
 	}
 	if profile != "" {
 		args = append(args, "--profile", profile)
 	}
-	return runCCPM(args...)
+	return args
 }
 
 // Reset drops profile's override so it follows the global default again, or

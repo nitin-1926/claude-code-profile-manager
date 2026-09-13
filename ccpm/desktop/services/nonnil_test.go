@@ -4,11 +4,17 @@ package services
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // firstProfile returns a real profile name to exercise, or skips.
+//
+// Use this only where the test genuinely needs a profile with REAL data on the
+// machine (transcripts, usage). For tests that only check DTO shape, use
+// syntheticProfile — skipping there means the guard does not run on CI.
 func firstProfile(t *testing.T) string {
 	t.Helper()
 	ps, err := NewProfiles().List()
@@ -16,6 +22,55 @@ func firstProfile(t *testing.T) string {
 		t.Skip("no profiles registered on this machine")
 	}
 	return ps[0].Name
+}
+
+// syntheticProfile points $HOME at a scratch directory containing exactly one
+// registered, empty profile, and returns its name.
+//
+// The DTO-shape guards below used to call firstProfile and skip when the
+// machine had no profiles — so on a clean CI runner 12 of the package's tests
+// skipped, including the nil-slice guard itself. The invariant they protect
+// (a nil slice marshals to null and blanks the frontend) is exactly the kind
+// that regresses unnoticed, and it was being checked only on the maintainer's
+// laptop.
+//
+// An empty profile is also the stronger fixture for this: every list really is
+// empty, so any path that forgets to initialise a slice returns nil rather than
+// being accidentally covered by real data.
+func syntheticProfile(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	const name = "synthetic"
+	dir := filepath.Join(home, ".ccpm", "profiles", name)
+	if err := os.MkdirAll(filepath.Join(dir, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := map[string]any{
+		"version":         "1",
+		"default_profile": name,
+		"profiles": map[string]any{
+			name: map[string]any{
+				"name": name, "dir": dir, "auth_method": "oauth",
+				"created_at": "2026-01-01T00:00:00Z", "last_used": "2026-01-01T00:00:00Z",
+			},
+		},
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ccpm", "config.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Confirm the fixture is actually visible through the same path the
+	// services use, rather than trusting the layout.
+	ps, err := NewProfiles().List()
+	if err != nil || len(ps) != 1 || ps[0].Name != name {
+		t.Fatalf("synthetic profile not registered: %v %+v", err, ps)
+	}
+	return name
 }
 
 // assertNoNullArrays fails if any of the named JSON array fields serialized to
@@ -36,7 +91,7 @@ func assertNoNullArrays(t *testing.T, v interface{}, fields ...string) {
 }
 
 func TestDetailsNoNullArrays(t *testing.T) {
-	name := firstProfile(t)
+	name := syntheticProfile(t)
 	d, err := NewDetails().Get(name)
 	if err != nil {
 		t.Fatalf("Details.Get: %v", err)
@@ -51,7 +106,7 @@ func TestDetailsNoNullArrays(t *testing.T) {
 }
 
 func TestUsageNoNullArrays(t *testing.T) {
-	name := firstProfile(t)
+	name := syntheticProfile(t)
 	for _, win := range []string{"all", "7d", "30d"} {
 		u, err := NewUsage().Get(name, win)
 		if err != nil {
@@ -62,7 +117,7 @@ func TestUsageNoNullArrays(t *testing.T) {
 }
 
 func TestCascadeNoNullArrays(t *testing.T) {
-	name := firstProfile(t)
+	name := syntheticProfile(t)
 	c, err := NewCascade().Get(name)
 	if err != nil {
 		t.Fatalf("Cascade.Get: %v", err)
@@ -71,7 +126,7 @@ func TestCascadeNoNullArrays(t *testing.T) {
 }
 
 func TestSettingsReturnsSlice(t *testing.T) {
-	name := firstProfile(t)
+	name := syntheticProfile(t)
 	s, err := NewSettings().Get(name)
 	if err != nil {
 		t.Fatalf("Settings.Get: %v", err)
@@ -138,7 +193,7 @@ func TestUnknownProfileSafe(t *testing.T) {
 }
 
 func TestStatusLineNoNullArrays(t *testing.T) {
-	for _, name := range []string{firstProfile(t), ""} {
+	for _, name := range []string{syntheticProfile(t), ""} {
 		c := NewStatusLine().Get(name)
 		// row1/row2/off appear inside both Layout and Global, so naming them
 		// once covers both nested objects.

@@ -376,6 +376,68 @@ func TestSearchPerSessionCapSpansSubagentFiles(t *testing.T) {
 	}
 }
 
+// TestSearchPerSessionCapCarriesPartialSpendForward is the near-neighbour of
+// the bug the per-session quota fixed, and it needs its own fixture.
+//
+// TestSearchPerSessionCapSpansSubagentFiles cannot see it: there the parent
+// file exhausts the whole quota by itself, so the state 0 < emitted <
+// MaxPerSession never occurs and passing `opts.MaxPerSession` instead of the
+// REMAINING quota looks identical. Here the parent produces 2 of a quota of 3,
+// so the subagent must be allowed exactly 1 more — a budget that ignores what
+// the parent already spent lets it emit 3 for a total of 5.
+func TestSearchPerSessionCapCarriesPartialSpendForward(t *testing.T) {
+	dir := t.TempDir()
+	// Parent: exactly 2 matches, below the quota of 3.
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "hitme once"),
+		userLine(t, "u2", "hitme twice"),
+	)
+	// Subagent: plenty more.
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	many := make([]string, 0, 5)
+	for range 5 {
+		many = append(many, userLine(t, "s", "hitme from the subagent"))
+	}
+	writeJSONL(t, subs, "agent-a.jsonl", many...)
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 3})
+	if len(res.Hits) != 3 {
+		t.Errorf("got %d hits, want 3 — the subagent was given a fresh quota instead of the remaining 1", len(res.Hits))
+	}
+	// And the split must be right: 2 from the parent, 1 from the subagent.
+	var parent, sub int
+	for _, h := range res.Hits {
+		if h.Subagent {
+			sub++
+		} else {
+			parent++
+		}
+	}
+	if parent != 2 || sub != 1 {
+		t.Errorf("hits split parent=%d subagent=%d, want 2 and 1", parent, sub)
+	}
+}
+
+// TestSearchCountsEachSessionOnceAcrossItsFiles pins the Sessions counter,
+// which is rendered as "N matches in M sessions". Counting per file rather than
+// per session survived every existing fixture, because none had one session
+// emitting hits from two different files.
+func TestSearchCountsEachSessionOnceAcrossItsFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent", userLine(t, "u1", "hitme in the parent"))
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	writeJSONL(t, subs, "agent-a.jsonl", userLine(t, "s1", "hitme in a subagent"))
+	writeJSONL(t, subs, "agent-b.jsonl", userLine(t, "s2", "hitme in another subagent"))
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 10})
+	if len(res.Hits) != 3 {
+		t.Fatalf("got %d hits, want all 3", len(res.Hits))
+	}
+	if res.Sessions != 1 {
+		t.Errorf("Sessions = %d, want 1 — three files, one session", res.Sessions)
+	}
+}
+
 // TestSearchPerSessionCapDoesNotStarveOtherSessions is the consequence that
 // actually matters to a user: a chatty session with many subagents must not
 // consume the global result budget that other sessions need.
@@ -527,6 +589,115 @@ func TestResolvePathRejectsTraversal(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(filepath.Join(dir, "projects", good))
 	if got != want {
 		t.Errorf("ResolvePath = %q, want %q", got, want)
+	}
+}
+
+// TestSearchRefusesSymlinkedTranscripts is the search-side twin of
+// TestBuildIndexSkipsSymlinkedTranscripts, which did not exist.
+//
+// It matters because search does NOT go through ResolvePath: collectCandidates
+// hands scanFile an absolute path straight from the walk, and eachLine opens it.
+// The symlink refusal in collectCandidates is therefore the only thing standing
+// between a shared or restored profile and having an arbitrary file's contents
+// returned as search snippets. Deleting that check survived the whole suite.
+func TestSearchRefusesSymlinkedTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	// A real transcript, so the search has something legitimate to find.
+	writeSessionTranscript(t, dir, "/repo", "real", userLine(t, "u1", "hitme in the real one"))
+
+	secret := filepath.Join(t.TempDir(), "id_rsa")
+	if err := os.WriteFile(secret, []byte(`{"type":"user","uuid":"x","sessionId":"s","message":{"role":"user","content":"hitme SUPERSECRET"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "evil.jsonl")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// Confirm the premise: the link really does resolve to the secret.
+	if b, err := os.ReadFile(link); err != nil || !strings.Contains(string(b), "SUPERSECRET") {
+		t.Fatalf("fixture is wrong: the symlink does not read back the target (%v)", err)
+	}
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{})
+	for _, h := range res.Hits {
+		if strings.Contains(h.Before+h.Match+h.After, "SUPERSECRET") {
+			t.Fatalf("search returned content from a symlinked file: %+v", h)
+		}
+		if h.SessionID == "evil" {
+			t.Errorf("search scanned a symlinked transcript as session %q", h.SessionID)
+		}
+	}
+	// The legitimate transcript must still be found — a guard that refuses
+	// everything would pass the assertions above.
+	if len(res.Hits) == 0 {
+		t.Error("the real transcript was not searched")
+	}
+}
+
+// TestResolvePathRejectsSiblingDirectoryEscape covers the case a plain prefix
+// comparison lets through. "<profile>/projects-evil" IS prefixed by
+// "<profile>/projects", so a containment check written as
+// strings.HasPrefix(child, parent) accepts ../projects-evil/x.jsonl.
+//
+// The other traversal cases cannot catch this: ../outside.jsonl does not share
+// the prefix, so it is refused either way, and the whole test passed with the
+// real check swapped for HasPrefix. within() uses filepath.Rel precisely to
+// avoid this, and nothing pinned that until now.
+func TestResolvePathRejectsSiblingDirectoryEscape(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A real, readable file in a sibling whose name extends "projects".
+	evil := filepath.Join(dir, "projects-evil")
+	if err := os.MkdirAll(evil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(evil, "secret.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{
+		filepath.Join("..", "projects-evil", "secret.jsonl"),
+		filepath.Join("sub", "..", "..", "projects-evil", "secret.jsonl"),
+	} {
+		if p, err := ResolvePath(dir, bad); err == nil {
+			t.Errorf("ResolvePath accepted sibling-directory escape %q -> %q", bad, p)
+		}
+	}
+}
+
+// TestResolvePathRejectsRootedPathsThatExist is the non-vacuous version of the
+// rooted-path cases above.
+//
+// Those pass on POSIX for the wrong reason: `\Windows\System32\config\SAM` and
+// `C:\...` name files that do not exist, so EvalSymlinks fails and the request
+// is refused whether or not the portable guard runs. Deleting the entire
+// drive-letter/rooted check survived the suite.
+//
+// Here the hostile names are created as real files INSIDE projects/, so
+// existence cannot do the rejecting: only the rooted-form guard can. On POSIX
+// these are ordinary (if bizarre) filenames; on Windows they are rooted paths.
+// Either way they must be refused, which is the cross-platform parity the
+// original test claimed to pin.
+func TestResolvePathRejectsRootedPathsThatExist(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "projects")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{`\Windows`, `C:`} {
+		p := filepath.Join(root, name)
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			// Windows cannot create these names; the guard is what matters there.
+			t.Logf("skipping %q on this filesystem: %v", name, err)
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("fixture %q was not created: %v", name, err)
+		}
+		if got, err := ResolvePath(dir, name); err == nil {
+			t.Errorf("ResolvePath accepted rooted-form %q -> %q; the portable guard did not fire", name, got)
+		}
 	}
 }
 
