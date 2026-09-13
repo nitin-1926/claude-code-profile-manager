@@ -75,9 +75,9 @@ var statusLineRenderCmd = &cobra.Command{
 	Long: `Reads Claude Code's status JSON on stdin and prints a two-row status.
 
   Row 1  the active ccpm profile, the repo (with the subdirectory you are in),
-         and the git branch.
-  Row 2  the model, context usage, reasoning effort, the subscription usage
-         windows (5h / 7d used, Pro/Max accounts only), and session cost.
+         the git branch, the model, and how much of its context is used.
+  Row 2  reasoning effort, the subscription usage windows (5h / 7d used and
+         when each renews, Pro/Max accounts only), and session cost.
 
 Segments drop out when their data is absent, and a row with nothing to say is
 not printed at all — so an API-key profile outside a repo collapses to a single
@@ -183,58 +183,66 @@ func ctxColor(used int) string {
 // renderStatusLine builds the status line from decoded input, as one row per
 // returned string — Claude Code renders each printed line as its own row.
 //
-// Row 1 is where you are: profile, repo/directory, branch.
-// Row 2 is what it is costing: model, context, effort, the usage windows, spend.
+// Row 1 is this session: profile, repo/directory, branch, model, context used.
+// Row 2 is the budget: reasoning effort, the 5h and 7d windows with their
+// resets, session spend.
 //
-// Splitting them this way keeps the volatile numbers on their own row, so the
-// identity line stays still while usage ticks. Pure (the clock and the color
-// toggle are injected) so it is unit-testable. Segments drop out when their data
-// is absent, and a row with no segments is omitted entirely rather than printed
-// blank — an API-key profile outside a repo collapses to a single row.
+// The split is by what you consult them for, not by how fast they change. Row 1
+// answers "what am I talking to, and where" — the things you check when you
+// switch windows and need to know you are in the right place. Row 2 answers
+// "how much is left", which is a separate question you ask at a different
+// moment. Model and context belong with identity: which model is answering, and
+// how much of its window is gone, are both about the conversation in front of
+// you rather than about a quota.
+//
+// Pure (the clock and the color toggle are injected) so it is unit-testable.
+// Segments drop out when their data is absent, and a row with no segments is
+// omitted entirely rather than printed blank — an API-key profile outside a
+// repo collapses to a single row.
 func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool) []string {
 	sep := " · "
 	if color {
 		sep = " " + cGrey + "·" + cReset + " "
 	}
 
-	var where []string
+	var session []string
 	if profile != "" {
-		where = append(where, paint(color, cBold+cProfile, "⬢ "+profile))
+		session = append(session, paint(color, cBold+cProfile, "⬢ "+profile))
 	}
 	if loc := workspaceLabel(in); loc != "" {
-		where = append(where, paint(color, cDir, loc))
+		session = append(session, paint(color, cDir, loc))
 	}
 	if br := statusLineBranch(in); br != "" {
-		where = append(where, paint(color, cBranch, "⎇ "+br))
+		session = append(session, paint(color, cBranch, "⎇ "+br))
 	}
-
-	var usage []string
 	if name := in.Model.DisplayName; name != "" {
-		usage = append(usage, paint(color, cModel, name))
+		session = append(session, paint(color, cModel, name))
 	} else if in.Model.ID != "" {
-		usage = append(usage, paint(color, cModel, in.Model.ID))
+		session = append(session, paint(color, cModel, in.Model.ID))
 	}
 	if in.ContextWindow.UsedPercentage > 0 {
 		pct := roundPct(in.ContextWindow.UsedPercentage)
-		usage = append(usage, paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct)))
+		session = append(session, paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct)))
 	}
+
+	var budget []string
 	if in.Effort != nil && in.Effort.Level != "" {
-		usage = append(usage, paint(color, cEffort, "effort "+in.Effort.Level))
+		budget = append(budget, paint(color, cEffort, "effort "+in.Effort.Level))
 	}
 	if in.RateLimits != nil {
 		if w := in.RateLimits.FiveHour; w != nil {
-			usage = append(usage, formatWindow("5h", w, now, color))
+			budget = append(budget, formatWindow("5h", w, now, color))
 		}
 		if w := in.RateLimits.SevenDay; w != nil {
-			usage = append(usage, formatWindow("7d", w, now, color))
+			budget = append(budget, formatWindow("7d", w, now, color))
 		}
 	}
 	if in.Cost.TotalCostUSD > 0 {
-		usage = append(usage, paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD)))
+		budget = append(budget, paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD)))
 	}
 
 	rows := make([]string, 0, 2)
-	for _, segs := range [][]string{where, usage} {
+	for _, segs := range [][]string{session, budget} {
 		if len(segs) > 0 {
 			rows = append(rows, strings.Join(segs, sep))
 		}
@@ -438,18 +446,20 @@ func formatWindow(label string, w *rateWindow, now time.Time, color bool) string
 	return s
 }
 
-// resetClock formats a reset time, naming the weekday once it is not today.
-// A bare "08:25" on the seven-day window reads as this morning when it is
-// actually two days out, which is the opposite of the reassurance it should
-// give; the five-hour window always lands today and stays a plain clock.
+// resetClock formats a reset time, naming the calendar date once it is not
+// today. A bare "08:25" on the seven-day window reads as this morning when it
+// is actually four days out, which is the opposite of the reassurance it should
+// give — and a bare weekday still makes you count forward from today to work
+// out when that is. The weekday is kept alongside the date because "Sat" is the
+// part you plan around; the date is the part you can act on.
+//
+// A reset landing today stays a plain clock: the five-hour window almost always
+// does, and repeating today's date on every render is noise.
 func resetClock(reset, now time.Time) string {
 	if reset.YearDay() == now.YearDay() && reset.Year() == now.Year() {
 		return reset.Format("15:04")
 	}
-	if reset.Sub(now) < 7*24*time.Hour {
-		return reset.Format("Mon 15:04")
-	}
-	return reset.Format("2 Jan 15:04")
+	return reset.Format("Mon 2 Jan 15:04")
 }
 
 func roundPct(p float64) int {

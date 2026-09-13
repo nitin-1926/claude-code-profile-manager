@@ -14,7 +14,7 @@ import (
 // time.Unix (always local) against time.Now (also local). Pinning the test's
 // clock to UTC while the expectation rendered in local time made the suite fail
 // for anyone east of about UTC+12, where the reset crosses local midnight and
-// resetClock correctly prefixes a weekday the expectation did not carry.
+// resetClock correctly prefixes a date the expectation did not carry.
 var fixedNow = time.Date(2026, 6, 25, 14, 0, 0, 0, time.Local)
 
 func TestRenderStatusLine(t *testing.T) {
@@ -49,13 +49,13 @@ func TestRenderStatusLine(t *testing.T) {
 		want    []string
 	}{
 		{
-			name:    "subscription splits identity from usage",
+			name:    "subscription splits the session from its budget",
 			in:      subscription(),
 			profile: "work",
 			want: []string{
-				"⬢ work",
+				"⬢ work · Sonnet 4.6 · ctx 34%",
 				// Windows show percent USED (matching Claude's /usage), not remaining.
-				"Sonnet 4.6 · ctx 34% · effort high · 5h 42% ↺" + wantReset + " · 7d 12% · $1.23",
+				"effort high · 5h 42% ↺" + wantReset + " · 7d 12% · $1.23",
 			},
 		},
 		{
@@ -67,7 +67,7 @@ func TestRenderStatusLine(t *testing.T) {
 				return in
 			}(),
 			profile: "personal",
-			want:    []string{"⬢ personal", "Opus 4.8 · $0.12"},
+			want:    []string{"⬢ personal · Opus 4.8", "$0.12"},
 		},
 		{
 			name: "falls back to model id when no display name",
@@ -77,7 +77,7 @@ func TestRenderStatusLine(t *testing.T) {
 				return in
 			}(),
 			profile: "work",
-			want:    []string{"⬢ work", "claude-opus-4-8"},
+			want:    []string{"⬢ work · claude-opus-4-8"},
 		},
 		{
 			name:    "nothing to show prints nothing at all",
@@ -86,7 +86,7 @@ func TestRenderStatusLine(t *testing.T) {
 			want:    []string{},
 		},
 		{
-			name: "usage row alone when no profile or workspace resolves",
+			name: "session row alone when no profile or workspace resolves",
 			in: func() statusLineInput {
 				var in statusLineInput
 				in.Model.DisplayName = "Haiku 4.5"
@@ -96,7 +96,17 @@ func TestRenderStatusLine(t *testing.T) {
 			want:    []string{"Haiku 4.5"},
 		},
 		{
-			name: "identity row alone when there is no usage yet",
+			name: "budget row alone when the session row has nothing to say",
+			in: func() statusLineInput {
+				var in statusLineInput
+				in.Cost.TotalCostUSD = 4.5
+				return in
+			}(),
+			profile: "",
+			want:    []string{"$4.50"},
+		},
+		{
+			name: "session row alone when there is no budget yet",
 			in: func() statusLineInput {
 				var in statusLineInput
 				in.Workspace.CurrentDir = "/tmp/nowhere"
@@ -115,7 +125,7 @@ func TestRenderStatusLine(t *testing.T) {
 				return in
 			}(),
 			profile: "ci",
-			want:    []string{"⬢ ci", "Haiku 4.5 · ctx 12%"},
+			want:    []string{"⬢ ci · Haiku 4.5 · ctx 12%"},
 		},
 	}
 
@@ -136,7 +146,7 @@ func TestRenderStatusLine(t *testing.T) {
 	}
 }
 
-// TestRenderStatusLineWorkspaceRow covers the identity row's repo/directory and
+// TestRenderStatusLineWorkspaceRow covers the session row's repo/directory and
 // branch resolution against a real .git on disk.
 func TestRenderStatusLineWorkspaceRow(t *testing.T) {
 	repo := t.TempDir()
@@ -159,7 +169,7 @@ func TestRenderStatusLineWorkspaceRow(t *testing.T) {
 
 	rows := renderStatusLine(in, "work", fixedNow, false)
 	if len(rows) != 1 {
-		t.Fatalf("want only the identity row, got %q", rows)
+		t.Fatalf("want only the session row, got %q", rows)
 	}
 	want := "⬢ work · claude-code-profile-manager/ccpm/internal · ⎇ feat/history-tab"
 	if rows[0] != want {
@@ -362,18 +372,20 @@ func TestFormatWindowPastResetDropsClock(t *testing.T) {
 	}
 }
 
-// TestResetClockNamesTheDayWhenNotToday guards the seven-day window's clock: a
-// bare "08:25" for a reset two days out reads as this morning.
-func TestResetClockNamesTheDayWhenNotToday(t *testing.T) {
+// TestResetClockDatesTheRenewalWhenNotToday guards the seven-day window's
+// clock. A bare "08:25" for a reset four days out reads as this morning, and a
+// bare weekday still leaves you counting forward from today to work out the
+// date it renews on.
+func TestResetClockDatesTheRenewalWhenNotToday(t *testing.T) {
 	cases := []struct {
 		name  string
 		reset time.Time
 		want  string
 	}{
 		{"later today stays a plain clock", fixedNow.Add(2 * time.Hour), "16:00"},
-		{"tomorrow names the weekday", fixedNow.Add(26 * time.Hour), "Fri 16:00"},
-		{"a few days out names the weekday", fixedNow.Add(3 * 24 * time.Hour), "Sun 14:00"},
-		{"beyond a week gives a date", fixedNow.Add(9 * 24 * time.Hour), "4 Jul 14:00"},
+		{"tomorrow gets a date", fixedNow.Add(26 * time.Hour), "Fri 26 Jun 16:00"},
+		{"a few days out gets a date", fixedNow.Add(3 * 24 * time.Hour), "Sun 28 Jun 14:00"},
+		{"beyond a week gets a date", fixedNow.Add(9 * 24 * time.Hour), "Sat 4 Jul 14:00"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
