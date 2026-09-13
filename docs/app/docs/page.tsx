@@ -51,7 +51,9 @@ export default async function DocsPage() {
             effective host→global→profile config with provenance badges),{" "}
             <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
             <strong>Permissions</strong>, <strong>Settings</strong>,{" "}
-            <strong>Usage</strong>, and <strong>Health</strong>{" "}
+            <strong>Usage</strong>, <strong>History</strong> (browse, read and
+            search this profile&apos;s past Claude Code sessions), and{" "}
+            <strong>Health</strong>{" "}
             (<code>ccpm doctor</code>). Clone, rename,
             delete, open, and run from the toolbar; the view auto-refreshes when
             the CLI changes things underneath it. Three built-in themes
@@ -878,7 +880,10 @@ ccpm settings outputstyle Explanatory --profile work`}
             <code>outputstyle</code>) require <code>--profile</code>. The
             statusline wrapper writes the native{" "}
             <code>&#123;type: &quot;command&quot;, command: ...&#125;</code>{" "}
-            shape so it stays loadable by native claude.
+            shape so it stays loadable by native claude. It points a profile at
+            a status-line command; to choose which segments ccpm&apos;s own
+            status line shows, use <code>ccpm statusline configure</code>{" "}
+            instead.
           </p>
 
           <H2 id="mcp-auth">MCP auth model</H2>

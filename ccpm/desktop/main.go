@@ -25,6 +25,8 @@ func main() {
 	mutate := services.NewMutate()
 	details := services.NewDetails()
 	settings := services.NewSettings()
+	history := services.NewHistory()
+	statusline := services.NewStatusLine()
 
 	err := wails.Run(&options.App{
 		Title:     "CCPM",
@@ -61,6 +63,8 @@ func main() {
 			mutate,
 			details,
 			settings,
+			history,
+			statusline,
 			updater,
 		},
 	})

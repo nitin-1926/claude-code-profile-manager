@@ -32,16 +32,16 @@ type CascadeAsset struct {
 	Name       string  `json:"name"`
 	Layer      Layer   `json:"layer"`
 	Source     string  `json:"source"`               // resolved target (tilde'd)
-	ShadowedIn []Layer `json:"shadowedIn,omitempty"`  // other layers that also define this name
+	ShadowedIn []Layer `json:"shadowedIn,omitempty"` // other layers that also define this name
 }
 
 // CascadeSetting is one top-level effective settings key plus its provenance.
 type CascadeSetting struct {
 	Key          string  `json:"key"`
-	Layer        Layer   `json:"layer"`          // winning layer
-	Contributors []Layer `json:"contributors"`   // every layer that sets it
-	Value        string  `json:"value"`          // compact JSON of the effective value
-	Merged       bool    `json:"merged"`         // object value with >1 contributor
+	Layer        Layer   `json:"layer"`        // winning layer
+	Contributors []Layer `json:"contributors"` // every layer that sets it
+	Value        string  `json:"value"`        // compact JSON of the effective value
+	Merged       bool    `json:"merged"`       // object value with >1 contributor
 }
 
 // Cascade is the full effective-config picture for a profile.

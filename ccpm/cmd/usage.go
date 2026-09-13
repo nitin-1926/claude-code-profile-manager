@@ -78,7 +78,7 @@ func usageProfileName(cfg *config.Config, args []string) (string, error) {
 	if len(args) == 1 {
 		return args[0], nil
 	}
-	if n := statusLineProfileName(); n != "" {
+	if n := statusLineProfileName(cfg); n != "" {
 		return n, nil
 	}
 	if cfg.DefaultProfile != "" {
@@ -178,7 +178,7 @@ func runUsageSync(cmd *cobra.Command, args []string) error {
 	name := ""
 	if len(args) == 1 {
 		name = args[0]
-	} else if n := statusLineProfileName(); n != "" {
+	} else if n := statusLineProfileName(cfg); n != "" {
 		name = n
 	} else {
 		name = cfg.DefaultProfile

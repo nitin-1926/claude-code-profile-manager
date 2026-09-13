@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -67,7 +66,14 @@ func Execute() {
 	cobra.OnInitialize(configureLogging)
 	registerProfileFlagCompletion(rootCmd)
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// Deliberately NOT printing the error here. Cobra already printed it
+		// ("Error: <msg>"), and printing again is what made every ccpm failure
+		// emit the same message twice.
+		//
+		// Cobra is the one kept because it prints more than the message: for an
+		// unknown command or flag it also emits "Run 'ccpm --help' for usage.",
+		// which silencing cobra and printing here ourselves quietly removed.
+		// Execute's job is the exit code, which is the part cobra cannot do.
 		var coded *codedError
 		if errors.As(err, &coded) {
 			os.Exit(coded.code)

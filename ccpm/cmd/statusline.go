@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
 )
 
 // statusLineInput is the subset of the JSON Claude Code pipes to a statusLine
@@ -19,6 +21,31 @@ import (
 // decode only what we display so newer keys are ignored rather than erroring.
 // See https://code.claude.com/docs/en/statusline for the full schema.
 type statusLineInput struct {
+	// Cwd duplicates workspace.current_dir; Claude Code sends both and
+	// documents current_dir as preferred. Kept as a fallback for older clients.
+	Cwd       string `json:"cwd"`
+	Workspace struct {
+		CurrentDir string `json:"current_dir"`
+		ProjectDir string `json:"project_dir"`
+		// Repo is present only inside a git repository that has an `origin`
+		// remote configured.
+		Repo *struct {
+			Host  string `json:"host"`
+			Owner string `json:"owner"`
+			Name  string `json:"name"`
+		} `json:"repo"`
+	} `json:"workspace"`
+	// Worktree is present only inside a Claude Code managed worktree, and is the
+	// one place the payload names a git branch — everywhere else we read it off
+	// disk ourselves.
+	Worktree *struct {
+		Branch string `json:"branch"`
+	} `json:"worktree"`
+	// Effort is present only when the active model supports the reasoning-effort
+	// parameter, so the segment is absent for models that do not.
+	Effort *struct {
+		Level string `json:"level"`
+	} `json:"effort"`
 	Model struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"display_name"`
@@ -46,10 +73,19 @@ type rateWindow struct {
 var statusLineRenderCmd = &cobra.Command{
 	Use:   "statusline",
 	Short: "Render the Claude Code status line for the active ccpm profile",
-	Long: `Reads Claude Code's status JSON on stdin and prints a one-line status
-showing the active ccpm profile, model, context usage, subscription usage
-windows (5h / 7d used, Pro/Max accounts only), and session cost. Output is
-ANSI-coloured unless NO_COLOR is set.
+	Long: `Reads Claude Code's status JSON on stdin and prints a two-row status.
+
+  Row 1  the active ccpm profile, the repo (with the subdirectory you are in),
+         the git branch, the model, and how much of its context is used.
+  Row 2  reasoning effort, the subscription usage windows (5h / 7d used and
+         when each renews, Pro/Max accounts only), and session cost.
+
+Which segments appear, and on which row, is configurable per profile or
+globally — see 'ccpm statusline configure'. The rows above are the defaults.
+
+A segment drops out when Claude Code sent no data for it, and a row with
+nothing left on it is not printed at all. Output is ANSI-coloured unless
+NO_COLOR is set.
 
 You don't normally run this yourself — Claude Code invokes it as the
 configured statusLine command. 'ccpm run' wires it in automatically for
@@ -77,9 +113,16 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 	var in statusLineInput
 	_ = json.Unmarshal(raw, &in) // best-effort; missing fields just don't render
 
-	line := renderStatusLine(in, statusLineProfileName(), time.Now(), statusLineColorEnabled())
-	if line != "" {
-		fmt.Fprintln(cmd.OutOrStdout(), line)
+	// One config read serves both the profile name and the segment layout. Load
+	// failures are not reported — a nil config resolves to the default layout
+	// and an empty profile name, which still renders something useful.
+	cfg, _ := config.Load()
+	profile := statusLineProfileName(cfg)
+
+	// Claude Code renders each printed line as its own row.
+	layout := statusline.Resolve(cfg, profile)
+	for _, row := range renderStatusLine(in, profile, time.Now(), statusLineColorEnabled(), layout) {
+		fmt.Fprintln(cmd.OutOrStdout(), row)
 	}
 	return nil
 }
@@ -100,6 +143,9 @@ const (
 	cOrange  = "\033[38;5;208m" // 5h / 7d window labels
 	cYellow  = "\033[38;5;221m" // reset clock
 	cCost    = "\033[38;5;109m" // estimated cost
+	cDir     = "\033[38;5;110m" // repo / directory
+	cBranch  = "\033[38;5;114m" // git branch
+	cEffort  = "\033[38;5;180m" // reasoning effort
 )
 
 // statusLineColorEnabled reports whether to emit ANSI color, following the
@@ -113,11 +159,47 @@ func statusLineColorEnabled() bool {
 
 // paint wraps s in an ANSI color when on; otherwise returns s unchanged so the
 // renderer stays a pure string builder that tests can assert against plainly.
+//
+// It is also the funnel where a segment carrying terminal control characters is
+// dropped. Every segment is composed here before being joined, so guarding this
+// one function covers all nine and any added later — the individual guards on
+// the branch and workspace labels were not enough, because the profile name
+// (read from ~/.ccpm/config.json) and the model and effort strings (read from
+// the status JSON) reached the terminal untouched.
+//
+// That matters because Claude Code renders this output with ANSI interpreted,
+// on every assistant message, directly above where permission prompts appear:
+// an OSC sequence can retitle the window and a CSI can erase and repaint the
+// lines above. Dropping the whole segment rather than stripping the bytes
+// matches safeLabel — a value containing control characters is not a value, and
+// showing a silently mangled one is worse than showing none.
 func paint(on bool, code, s string) string {
+	if !safeSegment(s) {
+		return ""
+	}
 	if !on {
 		return s
 	}
 	return code + s + cReset
+}
+
+// safeSegment reports whether a composed segment is safe to print into a
+// terminal: valid UTF-8, with no C0, DEL, or C1 control characters.
+//
+// No length cap here — the cap belongs on the individual free-form labels,
+// where safeLabel applies it, not on a composed segment whose own literals
+// ("ctx 42%", "5h 90% ↺16:15") are known-good and where a cap would truncate
+// legitimate output.
+func safeSegment(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return false
+		}
+	}
+	return true
 }
 
 // headroomColor grades a usage window by how much is LEFT: healthy at ≥50%
@@ -145,40 +227,309 @@ func ctxColor(used int) string {
 	}
 }
 
-// renderStatusLine builds the status line from decoded input. Pure (now and the
-// color toggle are injected) so it is unit-testable. Segments drop out when
-// their data is absent, so an API-key profile collapses to
-// "⬢ work · Opus 4.8 · $0.12" (wrapped in ANSI color when enabled).
-func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool) string {
-	var segs []string
-	if profile != "" {
-		segs = append(segs, paint(color, cBold+cProfile, "⬢ "+profile))
-	}
-	if name := in.Model.DisplayName; name != "" {
-		segs = append(segs, paint(color, cModel, name))
-	} else if in.Model.ID != "" {
-		segs = append(segs, paint(color, cModel, in.Model.ID))
-	}
-	if in.ContextWindow.UsedPercentage > 0 {
-		pct := roundPct(in.ContextWindow.UsedPercentage)
-		segs = append(segs, paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct)))
-	}
-	if in.RateLimits != nil {
-		if w := in.RateLimits.FiveHour; w != nil {
-			segs = append(segs, formatWindow("5h", w, now, color))
-		}
-		if w := in.RateLimits.SevenDay; w != nil {
-			segs = append(segs, formatWindow("7d", w, now, color))
-		}
-	}
-	if in.Cost.TotalCostUSD > 0 {
-		segs = append(segs, paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD)))
-	}
+// renderStatusLine builds the status line from decoded input, as one row per
+// returned string — Claude Code renders each printed line as its own row.
+//
+// Which segments appear, and on which row, comes from layout — the user's
+// choice, resolved from their profile override or the global default by
+// internal/statusline. The shipped default is row 1 for this session (profile,
+// repo/directory, branch, model, context used) and row 2 for the budget
+// (reasoning effort, the 5h and 7d windows with their renewals, session spend).
+//
+// That default splits by what you consult them for, not by how fast they
+// change. Row 1 answers "what am I talking to, and where" — the things you
+// check when you switch windows and need to know you are in the right place.
+// Row 2 answers "how much is left", a separate question asked at a different
+// moment. Model and context sit with identity because which model is answering,
+// and how much of its window is gone, are both about the conversation in front
+// of you rather than about a quota.
+//
+// Pure (the clock, the color toggle and the layout are injected) so it is
+// unit-testable. A segment still drops out when its data is absent even if the
+// layout asks for it, and a row with no segments is omitted entirely rather
+// than printed blank — so an API-key profile outside a repo collapses to a
+// single row, and switching every row-2 segment off does too, with no special
+// case for either.
+func renderStatusLine(in statusLineInput, profile string, now time.Time, color bool, layout statusline.Layout) []string {
 	sep := " · "
 	if color {
 		sep = " " + cGrey + "·" + cReset + " "
 	}
-	return strings.Join(segs, sep)
+
+	// Built lazily: only a segment the layout actually places is rendered, so
+	// switching `branch` off also stops gitBranchAt walking the filesystem on
+	// every assistant message.
+	render := func(key string) string {
+		switch key {
+		case statusline.Profile:
+			// safeLabel as well as paint's own guard: this one also caps the
+			// length, which paint deliberately does not. A profile name comes
+			// from config.json or $CCPM_ACTIVE_PROFILE, so it is free-form
+			// external text exactly like the branch and workspace labels.
+			if n := safeLabel(profile); n != "" {
+				return paint(color, cBold+cProfile, "⬢ "+n)
+			}
+		case statusline.Workspace:
+			if loc := workspaceLabel(in); loc != "" {
+				return paint(color, cDir, loc)
+			}
+		case statusline.Branch:
+			if br := statusLineBranch(in); br != "" {
+				return paint(color, cBranch, "⎇ "+br)
+			}
+		case statusline.Model:
+			// Capped for the same reason as the profile name: an over-long
+			// model string would push everything else off the line, and paint's
+			// guard deliberately does not cap.
+			if name := safeLabel(in.Model.DisplayName); name != "" {
+				return paint(color, cModel, name)
+			}
+			if id := safeLabel(in.Model.ID); id != "" {
+				return paint(color, cModel, id)
+			}
+		case statusline.Context:
+			if in.ContextWindow.UsedPercentage > 0 {
+				pct := roundPct(in.ContextWindow.UsedPercentage)
+				return paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct))
+			}
+		case statusline.Effort:
+			if in.Effort == nil {
+				return ""
+			}
+			if lvl := safeLabel(in.Effort.Level); lvl != "" {
+				return paint(color, cEffort, "effort "+lvl)
+			}
+		case statusline.FiveHour:
+			if in.RateLimits != nil && in.RateLimits.FiveHour != nil {
+				return formatWindow("5h", in.RateLimits.FiveHour, now, color)
+			}
+		case statusline.SevenDay:
+			if in.RateLimits != nil && in.RateLimits.SevenDay != nil {
+				return formatWindow("7d", in.RateLimits.SevenDay, now, color)
+			}
+		case statusline.Cost:
+			if in.Cost.TotalCostUSD > 0 {
+				return paint(color, cCost, fmt.Sprintf("$%.2f", in.Cost.TotalCostUSD))
+			}
+		}
+		return ""
+	}
+
+	rows := make([]string, 0, 2)
+	for _, keys := range [][]string{layout.Row1, layout.Row2} {
+		var segs []string
+		for _, key := range keys {
+			if s := render(key); s != "" {
+				segs = append(segs, s)
+			}
+		}
+		if len(segs) > 0 {
+			rows = append(rows, strings.Join(segs, sep))
+		}
+	}
+	return rows
+}
+
+// workspaceLabel renders "repo/subdir", or just the directory name when there is
+// no repo. The subdirectory is included only when the session has moved below
+// the launch directory, which is exactly when the repo name alone stops being
+// enough to say where you are.
+func workspaceLabel(in statusLineInput) string {
+	cur := in.Workspace.CurrentDir
+	if cur == "" {
+		cur = in.Cwd
+	}
+	root := in.Workspace.ProjectDir
+
+	name := ""
+	if in.Workspace.Repo != nil {
+		name = safeLabel(in.Workspace.Repo.Name)
+	}
+	if name == "" && root != "" {
+		name = safeLabel(filepath.Base(root))
+	}
+	if name == "" {
+		if cur == "" {
+			return ""
+		}
+		return safeLabel(filepath.Base(cur))
+	}
+	if cur == "" || root == "" {
+		return name
+	}
+	rel, err := filepath.Rel(root, cur)
+	if err != nil || rel == "." || rel == "" || strings.HasPrefix(rel, "..") {
+		return name
+	}
+	// Forward slashes on every platform: this is a display label in the shape
+	// "repo/subdir", not a path anyone will open. Joining with the OS separator
+	// rendered the same session as repo\sub on Windows and repo/sub elsewhere,
+	// for a string whose whole job is to read the same to everyone.
+	return name + "/" + safeLabel(filepath.ToSlash(rel))
+}
+
+// statusLineBranch resolves the current git branch.
+//
+// The status-line payload carries a branch only for Claude Code's own
+// worktrees, so everywhere else it is read straight off disk. That is
+// deliberate: the documented approach is to shell out to `git branch
+// --show-current`, but this command runs on every assistant message, and
+// spawning a process each time is exactly the cost the docs warn about. Reading
+// .git/HEAD is a couple of stats and one small read, with no subprocess and
+// nothing to cache.
+func statusLineBranch(in statusLineInput) string {
+	if in.Worktree != nil && in.Worktree.Branch != "" {
+		return safeLabel(in.Worktree.Branch)
+	}
+	dir := in.Workspace.CurrentDir
+	if dir == "" {
+		dir = in.Cwd
+	}
+	return gitBranchAt(dir)
+}
+
+// gitBranchAt walks up from dir looking for a .git entry and reads the branch
+// out of its HEAD. Returns "" when there is no repository, and a short SHA when
+// HEAD is detached.
+func gitBranchAt(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	gitPath := findGitEntry(dir)
+	if gitPath == "" {
+		return ""
+	}
+	head, err := readSmall(filepath.Join(gitPath, "HEAD"))
+	if err != nil {
+		return ""
+	}
+	return branchFromHead(head)
+}
+
+// gitFileBytes bounds the two git files this command reads. A real HEAD is
+// under 256 bytes ("ref: refs/heads/" plus a name) and a real `.git` file is a
+// single `gitdir:` line, so 4 KB is generous by an order of magnitude.
+const gitFileBytes = 4 << 10
+
+// readSmall reads at most gitFileBytes from path.
+//
+// os.ReadFile would allocate whatever is there, and this runs on every
+// assistant message against a repository the user may have merely opened —
+// an extracted archive or a synced tree can carry any .git it likes. Measured
+// before the bound: a 200 MB HEAD drove 435 MB of RSS per render, and nothing
+// would surface it, because a status line swallows its errors by design.
+// safeLabel's 96-rune cap only applies after the allocation, so it is no help.
+func readSmall(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, gitFileBytes))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// findGitEntry returns the git directory governing dir, or "".
+//
+// A .git FILE rather than a directory means a linked worktree or a submodule;
+// it holds "gitdir: <path>" pointing at the real one, which is where HEAD lives.
+func findGitEntry(dir string) string {
+	// Bounded so a pathological path cannot walk forever.
+	for range 64 {
+		candidate := filepath.Join(dir, ".git")
+		fi, err := os.Stat(candidate)
+		switch {
+		case err == nil && fi.IsDir():
+			return candidate
+		case err == nil:
+			b, rerr := readSmall(candidate)
+			if rerr != nil {
+				return ""
+			}
+			target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(b), "gitdir:"))
+			if target == "" {
+				return ""
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(dir, target)
+			}
+			return target
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// branchFromHead parses a .git/HEAD payload: a symbolic ref for a branch, or a
+// raw object id when detached.
+func branchFromHead(head string) string {
+	h := strings.TrimSpace(head)
+	if rest, ok := strings.CutPrefix(h, "ref:"); ok {
+		ref := strings.TrimSpace(rest)
+		// refs/heads/feat/x -> feat/x, keeping slashes inside the branch name.
+		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			return safeLabel(name)
+		}
+		return safeLabel(filepath.Base(ref))
+	}
+	if len(h) >= 7 && isHex(h) {
+		return h[:7] // detached HEAD
+	}
+	return ""
+}
+
+// labelRunes caps a display label. Git's practical ref limit is far below this;
+// anything longer is not a branch name.
+const labelRunes = 96
+
+// safeLabel makes a string read from disk safe to print into a terminal.
+//
+// This output is rendered by Claude Code with ANSI interpreted, on every
+// assistant message. .git/HEAD is just a file — git's own check-ref-format
+// forbids control characters, but nothing writes that file through git when a
+// .git arrives out of band (an extracted archive, a synced tree), and
+// findGitEntry additionally follows a `gitdir:` pointer to an arbitrary path.
+// Without this, a crafted HEAD injects escape sequences that can retitle the
+// window, clear lines, or repaint the rows above — including the ones carrying
+// permission prompts.
+//
+// Rejects rather than strips: a branch name containing control bytes is not a
+// branch name, and showing a silently-mangled one is worse than showing none.
+func safeLabel(s string) string {
+	if s == "" || utf8.RuneCountInString(s) > labelRunes {
+		return ""
+	}
+	// Validity first, and not merely for tidiness: a RAW 0x9b byte is a
+	// single-byte CSI on many emulators and is not valid UTF-8 on its own, so
+	// ranging over runes decodes it to RuneError (0xFFFD) — which sails past a
+	// C1 range check. Rejecting invalid encoding is what actually catches it.
+	if !utf8.ValidString(s) {
+		return ""
+	}
+	for _, r := range s {
+		// C0, DEL, and the C1 range. Filtering only ESC is not enough.
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return ""
+		}
+	}
+	return s
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // formatWindow renders a rate-limit window as label + percent-USED + reset
@@ -195,10 +546,26 @@ func formatWindow(label string, w *rateWindow, now time.Time, color bool) string
 	s := paint(color, cOrange, label) + " " + paint(color, headroomColor(remaining), fmt.Sprintf("%d%%", used))
 	if w.ResetsAt > 0 {
 		if reset := time.Unix(w.ResetsAt, 0); reset.After(now) {
-			s += " " + paint(color, cYellow, "↺"+reset.Format("15:04"))
+			s += " " + paint(color, cYellow, "↺"+resetClock(reset, now))
 		}
 	}
 	return s
+}
+
+// resetClock formats a reset time, naming the calendar date once it is not
+// today. A bare "08:25" on the seven-day window reads as this morning when it
+// is actually four days out, which is the opposite of the reassurance it should
+// give — and a bare weekday still makes you count forward from today to work
+// out when that is. The weekday is kept alongside the date because "Sat" is the
+// part you plan around; the date is the part you can act on.
+//
+// A reset landing today stays a plain clock: the five-hour window almost always
+// does, and repeating today's date on every render is noise.
+func resetClock(reset, now time.Time) string {
+	if reset.YearDay() == now.YearDay() && reset.Year() == now.Year() {
+		return reset.Format("15:04")
+	}
+	return reset.Format("Mon 2 Jan 15:04")
 }
 
 func roundPct(p float64) int {
@@ -210,16 +577,16 @@ func roundPct(p float64) int {
 // $CCPM_ACTIVE_PROFILE, then $CLAUDE_CONFIG_DIR matched back to a known profile
 // dir. Unlike `ccpm prompt`, it never falls back to the configured default —
 // the status line reflects the session's actual binding, not a guess.
-func statusLineProfileName() string {
+//
+// cfg is passed in rather than loaded here so the render path reads
+// ~/.ccpm/config.json once for both the profile name and the segment layout.
+// nil is fine: only the $CLAUDE_CONFIG_DIR match needs it.
+func statusLineProfileName(cfg *config.Config) string {
 	if n := strings.TrimSpace(os.Getenv("CCPM_ACTIVE_PROFILE")); n != "" {
 		return n
 	}
 	dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
-	if dir == "" {
-		return ""
-	}
-	cfg, err := config.Load()
-	if err != nil {
+	if dir == "" || cfg == nil {
 		return ""
 	}
 	want := filepath.Clean(dir)

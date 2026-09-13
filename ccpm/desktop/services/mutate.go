@@ -97,7 +97,7 @@ func (s *MutateService) Launch(name string) CmdResult {
 	if err := profile.ValidateName(name); err != nil {
 		return CmdResult{Error: err.Error()}
 	}
-	return s.terminal("run", name)
+	return s.terminal("", "run", name)
 }
 
 // CreateInTerminal opens a Terminal running `ccpm add <name>` (the interactive
@@ -106,12 +106,12 @@ func (s *MutateService) CreateInTerminal(name string) CmdResult {
 	if err := profile.ValidateName(name); err != nil {
 		return CmdResult{Error: err.Error()}
 	}
-	return s.terminal("add", name)
+	return s.terminal("", "add", name)
 }
 
 // ImportInTerminal opens a Terminal running the import-from-host wizard.
 func (s *MutateService) ImportInTerminal() CmdResult {
-	return s.terminal("add")
+	return s.terminal("", "add")
 }
 
 // --- asset-level writes (profile-scoped) ---
@@ -195,23 +195,64 @@ func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
 	return runCCPM("env", "unset", key, "--profile", profile)
 }
 
-// terminal launches a new Terminal window running `<ccpm> <args...>`.
+// terminal launches a new Terminal window running `<ccpm> <args...>`, optionally
+// after cd-ing into workdir.
 //
 // AppleScript's `do script` hands its argument to a shell, and %q only escapes
 // the AppleScript string literal — `;`, `|`, `$(…)` and backticks survive it
 // intact. Every argument is therefore single-quoted for the shell here, in the
 // one function all Terminal launches route through, so a profile name can
 // never break out into a second command.
-func (s *MutateService) terminal(args ...string) CmdResult {
+//
+// The `cd` for workdir is composed here rather than by callers: the path goes
+// through shellQuote like any other argument and only the `&&` is emitted
+// outside the quoting, so a directory name cannot introduce a second command.
+// errControlChar is the exact refusal a caller gets for a control character.
+// Exported as a constant so the test can assert THIS error rather than merely
+// "an error" — asserting presence is what let the previous version pass on a
+// machine where the CLI could not be found at all.
+const errControlChar = "refusing to run a command containing a control character"
+
+// terminalArgsOK reports whether every value is safe to compose into the
+// AppleScript that `terminal` hands to `do script`.
+//
+// Reject control characters for every caller, in the shared funnel rather than
+// at each call site. A newline does not escape the single quotes — it stays
+// inside them — but Go's %q renders it as \n and AppleScript's parser turns
+// that back into a real newline, so `do script` would type a broken command
+// into Terminal. Refusing is clearer than emitting something confusing.
+//
+// Split out from terminal so the guard is testable on its own. terminal itself
+// opens a real Terminal window on the developer's machine for any input that
+// PASSES, so a test that fed it a clean value to prove the guard is not
+// over-eager would spawn a window on every run — which is exactly what happened
+// before this was extracted.
+func terminalArgsOK(workdir string, args []string) bool {
+	for _, a := range append([]string{workdir}, args...) {
+		if strings.ContainsAny(a, "\n\r\x00") {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *MutateService) terminal(workdir string, args ...string) CmdResult {
+	// Validate BEFORE resolving the binary, deliberately.
+	//
+	// With the order reversed, a machine without ccpm on PATH returns the
+	// unrelated "not found" error for hostile input too — which made the test
+	// for this guard unfalsifiable: it asserted only that *some* error came
+	// back, so it stayed green on CI containers and would have stayed green
+	// with the guard deleted outright. Input validation does not depend on
+	// binary discovery, so there is no reason for it to run second.
+	if !terminalArgsOK(workdir, args) {
+		return CmdResult{Error: errControlChar}
+	}
 	bin := findCCPM()
 	if bin == "" {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
 	}
-	quoted := make([]string, 0, len(args)+1)
-	for _, a := range append([]string{bin}, args...) {
-		quoted = append(quoted, shellQuote(a))
-	}
-	full := strings.Join(quoted, " ")
+	full := composeCommand(bin, workdir, args...)
 	if runtime.GOOS != "darwin" {
 		return CmdResult{OK: false, Output: full, Error: "open a terminal and run: " + full}
 	}
@@ -219,10 +260,51 @@ func (s *MutateService) terminal(args ...string) CmdResult {
 	activate
 	do script %q
 end tell`, full)
-	if err := exec.Command("osascript", "-e", script).Start(); err != nil {
-		return CmdResult{Error: err.Error(), Output: full}
+	// Run, not Start: Start only reports a failure to launch osascript itself,
+	// so a script osascript refuses to compile (a non-UTF-8 byte in a path
+	// renders as \xNN via %q, which AppleScript rejects) would return OK.
+	//
+	// Bounded, because waiting is now possible: osascript does not return while
+	// macOS is showing the Automation consent sheet ("CCPM wants to control
+	// Terminal"), which is guaranteed on first use and waits on a human. Without
+	// a deadline that blocks the Wails goroutine forever and the button silently
+	// does nothing. runCCPM above bounds its shell-out for the same reason.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "osascript", "-e", script).CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return CmdResult{
+				Error:  "Terminal did not respond within 30s — if macOS asked for permission to control Terminal, grant it and try again",
+				Output: full,
+			}
+		}
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return CmdResult{Error: msg, Output: full}
 	}
 	return CmdResult{OK: true, Output: full}
+}
+
+// composeCommand builds the shell command terminal() hands to AppleScript.
+//
+// Split out of terminal() so the quoting tests can exercise the real thing. They
+// used to call a copy of these lines living in the test file, which cannot catch
+// a change to the original: a reviewer deleted the shellQuote around workdir —
+// a live command injection, since Resume passes a directory read out of on-disk
+// JSON — and all five tests stayed green.
+func composeCommand(bin, workdir string, args ...string) string {
+	quoted := make([]string, 0, len(args)+1)
+	for _, a := range append([]string{bin}, args...) {
+		quoted = append(quoted, shellQuote(a))
+	}
+	full := strings.Join(quoted, " ")
+	if workdir != "" {
+		// Only the && sits outside the quoting; the path itself goes through it.
+		full = "cd " + shellQuote(workdir) + " && " + full
+	}
+	return full
 }
 
 // shellQuote wraps s in single quotes for /bin/sh. Inside single quotes the
