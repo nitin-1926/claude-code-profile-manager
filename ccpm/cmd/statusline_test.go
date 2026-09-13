@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
 )
@@ -202,6 +206,114 @@ func TestRenderStatusLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+// writeStatusLineHome points $HOME at a scratch config holding one profile,
+// with an optional global layout and per-profile override, and returns the
+// profile name. The JSON is written by hand because that is the on-disk shape
+// the command must actually read.
+func writeStatusLineHome(t *testing.T, global, override map[string][]string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	const name = "render-test"
+	dir := filepath.Join(home, ".ccpm", "profiles", name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prof := map[string]any{"name": name, "dir": dir, "auth_method": "oauth"}
+	if override != nil {
+		prof["statusline"] = override
+	}
+	settings := map[string]any{}
+	if global != nil {
+		settings["statusline"] = global
+	}
+	b, err := json.Marshal(map[string]any{
+		"version": "1", "default_profile": name,
+		"profiles": map[string]any{name: prof},
+		"settings": settings,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ccpm", "config.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+// renderVia runs the real command end to end: stdin payload in, rows out.
+func renderVia(t *testing.T, profile, payload string) string {
+	t.Helper()
+	t.Setenv("CCPM_ACTIVE_PROFILE", profile)
+	t.Setenv("NO_COLOR", "1")
+	c := &cobra.Command{}
+	var out bytes.Buffer
+	c.SetIn(strings.NewReader(payload))
+	c.SetOut(&out)
+	if err := runStatusLineRender(c, nil); err != nil {
+		t.Fatalf("runStatusLineRender: %v", err)
+	}
+	return out.String()
+}
+
+// TestStatusLineCommandResolvesTheConfiguredLayout is the end-to-end wiring
+// test the command had none of. renderStatusLine and statusline.Resolve were
+// both well covered in isolation, but nothing checked that the command joins
+// them: replacing `statusline.Resolve(cfg, profile)` with `statusline.Default()`
+// — i.e. ignoring every layout any user ever configures — passed the whole
+// suite.
+func TestStatusLineCommandResolvesTheConfiguredLayout(t *testing.T) {
+	const payload = `{"model":{"display_name":"Opus 5"},"context_window":{"used_percentage":34},"cost":{"total_cost_usd":1.23}}`
+
+	t.Run("global layout is applied", func(t *testing.T) {
+		name := writeStatusLineHome(t, map[string][]string{
+			"row1": {statusline.Cost},
+			"row2": {statusline.Model},
+			"off":  {statusline.Profile, statusline.Workspace, statusline.Branch, statusline.Context, statusline.Effort, statusline.FiveHour, statusline.SevenDay},
+		}, nil)
+
+		got := renderVia(t, name, payload)
+		want := "$1.23\nOpus 5\n"
+		if got != want {
+			t.Errorf("got %q, want %q — the configured layout was not used", got, want)
+		}
+	})
+
+	t.Run("a profile override beats the global", func(t *testing.T) {
+		name := writeStatusLineHome(t,
+			map[string][]string{ // global: cost only
+				"row1": {statusline.Cost},
+				"off":  {statusline.Profile, statusline.Workspace, statusline.Branch, statusline.Model, statusline.Context, statusline.Effort, statusline.FiveHour, statusline.SevenDay},
+			},
+			map[string][]string{ // override: model only
+				"row1": {statusline.Model},
+				"off":  {statusline.Profile, statusline.Workspace, statusline.Branch, statusline.Context, statusline.Effort, statusline.FiveHour, statusline.SevenDay, statusline.Cost},
+			})
+
+		got := renderVia(t, name, payload)
+		if got != "Opus 5\n" {
+			t.Errorf("got %q, want %q — the profile override was ignored", got, "Opus 5\n")
+		}
+	})
+
+	t.Run("no layout configured falls back to the built-in", func(t *testing.T) {
+		name := writeStatusLineHome(t, nil, nil)
+		got := renderVia(t, name, payload)
+		want := "⬢ " + name + " · Opus 5 · ctx 34%\n$1.23\n"
+		if got != want {
+			t.Errorf("got %q, want the default layout %q", got, want)
+		}
+	})
+
+	t.Run("a malformed payload prints nothing and does not fail", func(t *testing.T) {
+		name := writeStatusLineHome(t, nil, nil)
+		if got := renderVia(t, name, "{not json"); got != "⬢ "+name+"\n" {
+			t.Errorf("got %q, want just the profile row", got)
+		}
+	})
 }
 
 // TestRenderStatusLineEverythingOffPrintsNothing covers the layout a user can
@@ -561,6 +673,85 @@ func TestBranchFromHeadRejectsTerminalEscapes(t *testing.T) {
 	} {
 		if got := branchFromHead(head); got != want {
 			t.Errorf("branchFromHead(%q) = %q, want %q", head, got, want)
+		}
+	}
+}
+
+// TestEverySegmentRejectsTerminalEscapes closes the hole the per-label guards
+// left. safeLabel covered the branch and the workspace, but the profile name
+// (read from ~/.ccpm/config.json) and the model and effort strings (read from
+// the status JSON) reached the terminal untouched — verified before the fix, an
+// OSC title-set and a CSI erase both came out raw.
+//
+// It matters because Claude Code renders this with ANSI interpreted on every
+// assistant message, immediately above where permission prompts are drawn. The
+// guard now lives in paint, so this walks every segment rather than the two
+// that happened to be hardened.
+func TestEverySegmentRejectsTerminalEscapes(t *testing.T) {
+	hostile := map[string]string{
+		"OSC title set":    "\x1b]0;OWNED\x07",
+		"CSI erase + home": "\x1b[2K\x1b[1G",
+		"single-byte CSI":  "\x9b2K",
+		"newline":          "\nFAKE ROW",
+		"carriage return":  "\roverwrite",
+		"DEL":              "\x7f",
+		"NUL":              "\x00",
+	}
+
+	for name, evil := range hostile {
+		t.Run(name, func(t *testing.T) {
+			// Feed the hostile string through every free-form input at once.
+			var in statusLineInput
+			in.Model.DisplayName = "Opus" + evil
+			in.Effort = &struct {
+				Level string `json:"level"`
+			}{Level: "high" + evil}
+			in.Workspace.Repo = &struct {
+				Host  string `json:"host"`
+				Owner string `json:"owner"`
+				Name  string `json:"name"`
+			}{Name: "repo" + evil}
+			in.Worktree = &struct {
+				Branch string `json:"branch"`
+			}{Branch: "main" + evil}
+			in.ContextWindow.UsedPercentage = 34
+
+			rows := renderStatusLine(in, "work"+evil, fixedNow, false, statusline.Default())
+			for _, row := range rows {
+				for i := 0; i < len(row); i++ {
+					if b := row[i]; b < 0x20 || b == 0x7f || b == 0x9b {
+						t.Fatalf("segment leaked control byte %#x: %q", b, row)
+					}
+				}
+			}
+			// The clean segment must survive — rejecting a poisoned segment
+			// must not take the whole status line down with it.
+			joined := strings.Join(rows, "|")
+			if !strings.Contains(joined, "ctx 34%") {
+				t.Errorf("a hostile neighbour removed the clean segment too: %q", rows)
+			}
+		})
+	}
+}
+
+// TestPaintRejectsControlCharacters pins the funnel directly, so a future
+// segment that forgets its own guard is still covered.
+func TestPaintRejectsControlCharacters(t *testing.T) {
+	if got := paint(false, cModel, "clean"); got != "clean" {
+		t.Errorf("paint mangled a clean string: %q", got)
+	}
+	if got := paint(true, cModel, "clean"); !strings.Contains(got, "clean") {
+		t.Errorf("colored paint dropped a clean string: %q", got)
+	}
+	// Unicode the status line actually uses must pass.
+	for _, ok := range []string{"⬢ work", "⎇ feat/x", "↺16:15", "$1.23", "café"} {
+		if paint(false, cModel, ok) != ok {
+			t.Errorf("paint rejected legitimate text %q", ok)
+		}
+	}
+	for _, bad := range []string{"a\x1bb", "a\x00b", "a\nb", "a\x7fb", "a\x9bb", "a\xffb"} {
+		if got := paint(false, cModel, bad); got != "" {
+			t.Errorf("paint(%q) = %q, want it dropped", bad, got)
 		}
 	}
 }

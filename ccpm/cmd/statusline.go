@@ -156,11 +156,47 @@ func statusLineColorEnabled() bool {
 
 // paint wraps s in an ANSI color when on; otherwise returns s unchanged so the
 // renderer stays a pure string builder that tests can assert against plainly.
+//
+// It is also the funnel where a segment carrying terminal control characters is
+// dropped. Every segment is composed here before being joined, so guarding this
+// one function covers all nine and any added later — the individual guards on
+// the branch and workspace labels were not enough, because the profile name
+// (read from ~/.ccpm/config.json) and the model and effort strings (read from
+// the status JSON) reached the terminal untouched.
+//
+// That matters because Claude Code renders this output with ANSI interpreted,
+// on every assistant message, directly above where permission prompts appear:
+// an OSC sequence can retitle the window and a CSI can erase and repaint the
+// lines above. Dropping the whole segment rather than stripping the bytes
+// matches safeLabel — a value containing control characters is not a value, and
+// showing a silently mangled one is worse than showing none.
 func paint(on bool, code, s string) string {
+	if !safeSegment(s) {
+		return ""
+	}
 	if !on {
 		return s
 	}
 	return code + s + cReset
+}
+
+// safeSegment reports whether a composed segment is safe to print into a
+// terminal: valid UTF-8, with no C0, DEL, or C1 control characters.
+//
+// No length cap here — the cap belongs on the individual free-form labels,
+// where safeLabel applies it, not on a composed segment whose own literals
+// ("ctx 42%", "5h 90% ↺16:15") are known-good and where a cap would truncate
+// legitimate output.
+func safeSegment(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return false
+		}
+	}
+	return true
 }
 
 // headroomColor grades a usage window by how much is LEFT: healthy at ≥50%
@@ -223,10 +259,13 @@ func renderStatusLine(in statusLineInput, profile string, now time.Time, color b
 	render := func(key string) string {
 		switch key {
 		case statusline.Profile:
-			if profile == "" {
-				return ""
+			// safeLabel as well as paint's own guard: this one also caps the
+			// length, which paint deliberately does not. A profile name comes
+			// from config.json or $CCPM_ACTIVE_PROFILE, so it is free-form
+			// external text exactly like the branch and workspace labels.
+			if n := safeLabel(profile); n != "" {
+				return paint(color, cBold+cProfile, "⬢ "+n)
 			}
-			return paint(color, cBold+cProfile, "⬢ "+profile)
 		case statusline.Workspace:
 			if loc := workspaceLabel(in); loc != "" {
 				return paint(color, cDir, loc)
@@ -236,11 +275,14 @@ func renderStatusLine(in statusLineInput, profile string, now time.Time, color b
 				return paint(color, cBranch, "⎇ "+br)
 			}
 		case statusline.Model:
-			if name := in.Model.DisplayName; name != "" {
+			// Capped for the same reason as the profile name: an over-long
+			// model string would push everything else off the line, and paint's
+			// guard deliberately does not cap.
+			if name := safeLabel(in.Model.DisplayName); name != "" {
 				return paint(color, cModel, name)
 			}
-			if in.Model.ID != "" {
-				return paint(color, cModel, in.Model.ID)
+			if id := safeLabel(in.Model.ID); id != "" {
+				return paint(color, cModel, id)
 			}
 		case statusline.Context:
 			if in.ContextWindow.UsedPercentage > 0 {
@@ -248,8 +290,11 @@ func renderStatusLine(in statusLineInput, profile string, now time.Time, color b
 				return paint(color, ctxColor(pct), fmt.Sprintf("ctx %d%%", pct))
 			}
 		case statusline.Effort:
-			if in.Effort != nil && in.Effort.Level != "" {
-				return paint(color, cEffort, "effort "+in.Effort.Level)
+			if in.Effort == nil {
+				return ""
+			}
+			if lvl := safeLabel(in.Effort.Level); lvl != "" {
+				return paint(color, cEffort, "effort "+lvl)
 			}
 		case statusline.FiveHour:
 			if in.RateLimits != nil && in.RateLimits.FiveHour != nil {
@@ -351,11 +396,37 @@ func gitBranchAt(dir string) string {
 	if gitPath == "" {
 		return ""
 	}
-	head, err := os.ReadFile(filepath.Join(gitPath, "HEAD"))
+	head, err := readSmall(filepath.Join(gitPath, "HEAD"))
 	if err != nil {
 		return ""
 	}
-	return branchFromHead(string(head))
+	return branchFromHead(head)
+}
+
+// gitFileBytes bounds the two git files this command reads. A real HEAD is
+// under 256 bytes ("ref: refs/heads/" plus a name) and a real `.git` file is a
+// single `gitdir:` line, so 4 KB is generous by an order of magnitude.
+const gitFileBytes = 4 << 10
+
+// readSmall reads at most gitFileBytes from path.
+//
+// os.ReadFile would allocate whatever is there, and this runs on every
+// assistant message against a repository the user may have merely opened —
+// an extracted archive or a synced tree can carry any .git it likes. Measured
+// before the bound: a 200 MB HEAD drove 435 MB of RSS per render, and nothing
+// would surface it, because a status line swallows its errors by design.
+// safeLabel's 96-rune cap only applies after the allocation, so it is no help.
+func readSmall(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, gitFileBytes))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // findGitEntry returns the git directory governing dir, or "".
@@ -371,11 +442,11 @@ func findGitEntry(dir string) string {
 		case err == nil && fi.IsDir():
 			return candidate
 		case err == nil:
-			b, rerr := os.ReadFile(candidate)
+			b, rerr := readSmall(candidate)
 			if rerr != nil {
 				return ""
 			}
-			target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(b)), "gitdir:"))
+			target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(b), "gitdir:"))
 			if target == "" {
 				return ""
 			}
