@@ -880,7 +880,10 @@ ccpm settings outputstyle Explanatory --profile work`}
             <code>outputstyle</code>) require <code>--profile</code>. The
             statusline wrapper writes the native{" "}
             <code>&#123;type: &quot;command&quot;, command: ...&#125;</code>{" "}
-            shape so it stays loadable by native claude.
+            shape so it stays loadable by native claude. It points a profile at
+            a status-line command; to choose which segments ccpm&apos;s own
+            status line shows, use <code>ccpm statusline configure</code>{" "}
+            instead.
           </p>
 
           <H2 id="mcp-auth">MCP auth model</H2>

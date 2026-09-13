@@ -144,6 +144,7 @@ make desktop-dev   # hot-reload dev window
 | `ccpm unset-default`          | Clear the default                                                                        |
 | `ccpm prompt`                 | Print the active profile name for a shell prompt (PS1 / starship / p10k)                 |
 | `ccpm statusline`             | Render the in-TUI status line (active profile + usage/limits); Claude Code calls it      |
+| `ccpm statusline configure`   | Choose which segments the status line shows, and on which row                            |
 | `ccpm sync`                   | Re-apply global installs into one or all profiles (`--dry-run` to preview)               |
 | `ccpm doctor`                 | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes dangling symlinks)     |
 | `ccpm consolidate`            | Audit (and optionally `--fix`) asset drift across host, share, and profile scopes        |
@@ -336,6 +337,27 @@ ccpm run work --no-statusline             # just this launch
 ccpm settings statusline "" --profile work  # remove one ccpm already injected
 ```
 
+#### Choosing the segments
+
+`ccpm statusline configure` picks which of the nine segments show, and on which row. It asks for row 1, then row 2 from what is left; anything unpicked is switched off. The result is printed against sample data so you can see it straight away. You are also offered it the first time you run `ccpm config set statusline true`.
+
+```bash
+ccpm statusline configure                 # global default, interactive
+ccpm statusline configure --profile work  # an override for one profile
+ccpm statusline configure --reset         # back to the built-in layout
+```
+
+A profile's override wins over the global default; `--reset --profile work` drops it again. The segment keys are `profile`, `workspace`, `branch`, `model`, `context`, `effort`, `five_hour`, `seven_day`, `cost`, and scripts can skip the prompts by naming all nine across three flags:
+
+```bash
+ccpm statusline configure --row1 profile,model --row2 five_hour,seven_day \
+                          --off workspace,branch,context,effort,cost
+```
+
+Layouts live in `~/.ccpm/config.json` (`settings.statusline`, or `profiles.<name>.statusline`). The desktop app's **Settings** tab has the same controls with a live preview.
+
+Turning a segment on never invents data — enabling the 5h window on an API-key profile still shows nothing. Turning `branch` off also stops ccpm reading `.git/HEAD` on every assistant message.
+
 ### Settings
 
 ccpm does not maintain its own global settings layer. The cross-profile baseline is `~/.claude/settings.json` (the file native Claude Code reads); ccpm merges it into every profile at launch. Use `--profile` for per-account overrides, and per-repo `.claude/settings.json` for project overrides.
@@ -375,6 +397,7 @@ ccpm does not maintain its own global settings layer. The cross-profile baseline
 | `ccpm config set cascade_auto_adopt false`         | Disable the host-asset cascade               |
 | `ccpm config set check_default_drift true`        | Enable drift notifications on run/use        |
 | `ccpm config set statusline false`                 | Disable default status-line auto-injection   |
+| `ccpm statusline configure`                        | Pick the status line's segments and rows     |
 | `ccpm config get default_dir`                      | Print the default profile's absolute path    |
 
 ### Exit codes

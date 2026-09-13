@@ -37,6 +37,18 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Session history with transcript reading and search, profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
       {
+        date: "2026-09-13",
+        title: "Status line: choose your own segments",
+        categories: ["Added"],
+        bullets: [
+          "`ccpm statusline configure` picks which of the nine segments the status line shows, and on which row. It asks for row 1, then row 2 from what is left, and switches off anything you do not pick — then prints the result against sample data so you can see it before starting a session. You are offered it automatically the first time you run `ccpm config set statusline true`.",
+          "Layouts have two scopes: a **global default** for every profile, and a **per-profile override** that wins over it. `ccpm statusline configure --profile work` sets one; `--reset --profile work` drops it again.",
+          "The desktop app's **Settings** tab has the same controls — a row per segment with Off / Row 1 / Row 2, a live preview of both rows, and a switch between the global default and this profile's override.",
+          "Scripts can skip the prompts: `--row1`/`--row2`/`--off` take comma-separated keys and must name all nine between them. An incomplete list is refused rather than filled in, because a segment named nowhere is treated as newly introduced — that is how a layout saved today picks up a segment added in a later release instead of silently never showing it.",
+          "Switching a segment on never invents data: the 5h and 7d windows still show nothing on an API-key profile, because Claude Code sends no rate limits for one. Switching `branch` off also stops ccpm reading `.git/HEAD` on every assistant message.",
+        ],
+      },
+      {
         date: "2026-09-06",
         title: "Status line: two rows, with repo, branch and effort",
         categories: ["Improved"],
