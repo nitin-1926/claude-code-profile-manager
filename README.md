@@ -319,14 +319,14 @@ command = "ccpm prompt"
 
 ### Status line (which profile is running, plus usage/limits)
 
-Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — two rows pinned to the bottom of the session window. Row 1 is where you are; row 2 is what it is costing:
+Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — two rows pinned to the bottom of the session window. Row 1 is the session; row 2 is the budget:
 
 ```
-⬢ work · claude-code-profile-manager/ccpm · ⎇ feat/history-tab
-Opus 5 · ctx 34% · effort high · 5h 58% ↺16:15 · 7d 88% ↺Mon 08:25 · $1.23
+⬢ work · claude-code-profile-manager/ccpm · ⎇ feat/history-tab · Opus 5 · ctx 34%
+effort high · 5h 58% ↺16:15 · 7d 88% ↺Mon 8 Sep 08:25 · $1.23
 ```
 
-The `5h` / `7d` segments are the percentage **used** of your rolling subscription usage windows, matching Claude's own `/usage` panel (Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles). `effort` appears only for models that report a reasoning-effort level. A reset on today's date shows a bare clock; one on another date names the weekday. Segments drop out when their data is absent and an empty row is not printed, so an API-key profile outside a git repo prints `⬢ work` and `Opus 4.8 · $0.12`.
+The `5h` / `7d` segments are the percentage **used** of your rolling subscription usage windows, matching Claude's own `/usage` panel (Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles). `effort` appears only for models that report a reasoning-effort level. A renewal falling on today's date shows a bare clock; one on any other date gives the day and date. Segments drop out when their data is absent and an empty row is not printed, so an API-key profile outside a git repo prints `⬢ work · Opus 4.8` and `$0.12`.
 
 `ccpm run` wires this in automatically: when a profile has no `statusLine` of its own, it injects `ccpm statusline` as the profile's status line. It **never** overwrites a status line you set in `~/.claude/settings.json`, a profile, or a trusted project. To opt out:
 

@@ -41,8 +41,8 @@ export const CHANGELOG: ChangelogSeries[] = [
         title: "Status line: two rows, with repo, branch and effort",
         categories: ["Improved"],
         bullets: [
-          "The in-TUI status line is now **two rows** instead of one. Row 1 is where you are — profile, repo (with the subdirectory you are in), git branch. Row 2 is what it is costing — model, context usage, reasoning effort, the 5h and 7d usage windows with their resets, session cost. Splitting them keeps the identity row still while the numbers tick, and makes room for three fields the single line had no space for.",
-          "Reset times now name the day when the reset is not today. A bare \"08:25\" on the seven-day window read as this morning when it was two days out.",
+          "The in-TUI status line is now **two rows** instead of one. Row 1 is the session — profile, repo (with the subdirectory you are in), git branch, model, context used. Row 2 is the budget — reasoning effort, the 5h and 7d usage windows with the date each renews, session cost. The split is by what you consult them for: row 1 is what you check when you switch windows and need to know you are in the right place, row 2 is the separate question of how much is left. It also makes room for four fields the single line had no space for.",
+          "Reset times now give the day and date when the renewal is not today. A bare \"08:25\" on the seven-day window read as this morning when it was four days out, and a bare weekday still left you counting forward to work out the date.",
           "The branch is read straight from `.git/HEAD` rather than by shelling out to git — this runs on every assistant message, and a subprocess each time is exactly the cost Claude Code's own docs warn about.",
         ],
       },
