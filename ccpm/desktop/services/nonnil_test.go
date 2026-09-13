@@ -129,4 +129,32 @@ func TestUnknownProfileSafe(t *testing.T) {
 	if res.Hits == nil {
 		t.Error("History.Search must return a non-nil Hits slice")
 	}
+
+	sl := NewStatusLine().Get(ghost)
+	assertNoNullArrays(t, sl, "segments", "global")
+	if sl.HasOverride {
+		t.Error("a profile that does not exist cannot have a status line override")
+	}
+}
+
+func TestStatusLineNoNullArrays(t *testing.T) {
+	for _, name := range []string{firstProfile(t), ""} {
+		c := NewStatusLine().Get(name)
+		assertNoNullArrays(t, c, "segments", "global")
+		if len(c.Segments) == 0 {
+			t.Errorf("StatusLine.Get(%q) returned no segments — the Settings section would render empty", name)
+		}
+		// Every segment must carry a row the frontend understands, or its
+		// radio group renders with nothing selected.
+		for _, s := range c.Segments {
+			switch s.Row {
+			case "off", "row1", "row2":
+			default:
+				t.Errorf("segment %q has row %q, want off/row1/row2", s.Key, s.Row)
+			}
+			if s.Label == "" {
+				t.Errorf("segment %q has no label", s.Key)
+			}
+		}
+	}
 }
