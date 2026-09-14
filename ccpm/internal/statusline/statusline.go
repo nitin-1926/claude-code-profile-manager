@@ -13,8 +13,6 @@
 package statusline
 
 import (
-	"slices"
-
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
@@ -205,15 +203,4 @@ func Global(cfg *config.Config) Layout {
 // tripping through Normalize then Store is stable.
 func (l Layout) Store() config.StatusLineLayout {
 	return config.StatusLineLayout{Row1: l.Row1, Row2: l.Row2, Off: l.Off}
-}
-
-// Row reports which row key sits on, or RowOff when it is hidden or unknown.
-func (l Layout) Row(key string) Row {
-	switch {
-	case slices.Contains(l.Row1, key):
-		return Row1
-	case slices.Contains(l.Row2, key):
-		return Row2
-	}
-	return RowOff
 }

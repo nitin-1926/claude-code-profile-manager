@@ -1,11 +1,30 @@
 package statusline
 
 import (
+	"os"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
+
+// Row reports which row key sits on, or RowOff when it is hidden or unknown.
+//
+// Test-only: the production code walks Layout.Row1/Row2/Off directly, and this
+// became dead API when the desktop DTO moved from a per-segment row tag to
+// ordered buckets. It stays as a helper because several assertions below are
+// naturally phrased as "where did this segment end up".
+func (l Layout) Row(key string) Row {
+	switch {
+	case slices.Contains(l.Row1, key):
+		return Row1
+	case slices.Contains(l.Row2, key):
+		return Row2
+	}
+	return RowOff
+}
 
 // TestDefaultCoversEverySegment is the guard that makes adding a segment to the
 // catalog safe: every key must land somewhere, or the renderer would never be
@@ -277,6 +296,45 @@ func TestKnown(t *testing.T) {
 	for _, k := range []string{"", "weather", "PROFILE", "profile "} {
 		if Known(k) {
 			t.Errorf("Known(%q) must be false", k)
+		}
+	}
+}
+
+// TestPreviewSampleCoversEveryCatalogSegment ties the desktop app's preview map
+// to this catalog.
+//
+// StatusLineSection.tsx hardcodes a sample string per segment. Adding an entry
+// to Segments is documented as all it takes to introduce a segment, but a
+// segment missing from that map previously rendered as its raw key in the
+// preview, and there is no test runner on the frontend to catch it. This reads
+// the file and fails the Go build instead.
+//
+// It checks presence, not content — the strings are illustrative. The drift
+// that matters is a segment nobody remembered to add.
+func TestPreviewSampleCoversEveryCatalogSegment(t *testing.T) {
+	const rel = "../../desktop/frontend/src/components/settings/StatusLineSection.tsx"
+	b, err := os.ReadFile(rel)
+	if err != nil {
+		t.Skipf("desktop frontend not present: %v", err)
+	}
+	src := string(b)
+
+	// Isolate the SAMPLE map so an unrelated mention of a key elsewhere in the
+	// file cannot make this pass.
+	const marker = "const SAMPLE: Record<string, string> = {"
+	i := strings.Index(src, marker)
+	if i < 0 {
+		t.Fatalf("could not find the SAMPLE map in %s — this test has drifted from the file it guards", rel)
+	}
+	j := strings.Index(src[i:], "\n}")
+	if j < 0 {
+		t.Fatalf("could not find the end of the SAMPLE map in %s", rel)
+	}
+	block := src[i : i+j]
+
+	for _, s := range Segments {
+		if !strings.Contains(block, s.Key+":") {
+			t.Errorf("segment %q is missing from the desktop preview's SAMPLE map (%s) — it would render as its label instead of a sample", s.Key, rel)
 		}
 	}
 }

@@ -80,9 +80,12 @@ var statusLineRenderCmd = &cobra.Command{
   Row 2  reasoning effort, the subscription usage windows (5h / 7d used and
          when each renews, Pro/Max accounts only), and session cost.
 
-Segments drop out when their data is absent, and a row with nothing to say is
-not printed at all — so an API-key profile outside a repo collapses to a single
-row. Output is ANSI-coloured unless NO_COLOR is set.
+Which segments appear, and on which row, is configurable per profile or
+globally — see 'ccpm statusline configure'. The rows above are the defaults.
+
+A segment drops out when Claude Code sent no data for it, and a row with
+nothing left on it is not printed at all. Output is ANSI-coloured unless
+NO_COLOR is set.
 
 You don't normally run this yourself — Claude Code invokes it as the
 configured statusLine command. 'ccpm run' wires it in automatically for

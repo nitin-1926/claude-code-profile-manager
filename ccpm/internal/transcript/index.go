@@ -145,10 +145,18 @@ func BuildIndex(profileDir string) (*Index, error) {
 		// Subagent lines carry the PARENT's sessionId, so internal/usage already
 		// attributes their tokens to this session; skipping them here entirely
 		// would leave History reporting 5-14% less than the Usage tab for the
-		// same session. They are still not indexed as sessions of their own and
-		// still not searched — their text is duplicated into the parent as
-		// sidechain turns. Each file is deduped independently, exactly as
-		// usage.ingestFile does, so the two agree by construction.
+		// same session. They are not indexed as sessions of their OWN — that
+		// would bury the real rows — but they ARE searched and readable through
+		// this parent, via SubPaths (see search.go's collectCandidates).
+		//
+		// An earlier version of this comment said their text was duplicated into
+		// the parent as sidechain turns, and that they were not searched. Both
+		// were wrong, and it is the belief this branch exists to correct:
+		// isSidechain is present on 68,167 lines across 77 real parent
+		// transcripts and false on every one, so nothing is copied back.
+		//
+		// Each file is deduped independently, exactly as usage.ingestFile does,
+		// so the two agree by construction.
 		for _, sub := range subs {
 			sm, serr := Scan(sub)
 			if serr != nil {
@@ -215,11 +223,16 @@ func saveIndex(profileDir string, ix *Index) error {
 // skipTranscript rejects the files that must never become their own session.
 //
 // Subagent transcripts are the big one: on real profiles they are 88 of 113
-// files (work), 81 of 110 (labs), 31 of 53 (cin), and their content is copied
-// verbatim into the parent session as sidechain turns. Indexing them would list
-// each subagent as a session and return every search hit twice — once from the
-// subagent file and once from the parent. They stay reachable through the
-// parent's sidechain toggle.
+// files (work), 81 of 110 (labs), 31 of 53 (cin). They are skipped as SESSIONS
+// because listing each one as its own row would bury the real sessions under a
+// pile of agent-*.jsonl entries nobody started.
+//
+// They are NOT skipped as content. This comment used to claim their text is
+// copied verbatim into the parent as sidechain turns, which is false and is the
+// belief that made three quarters of a profile unsearchable: isSidechain is
+// present on 68,167 lines across 77 real parent transcripts and false on every
+// one. They are indexed against the parent via Entry.SubPaths, searched by
+// collectCandidates, and readable through the parent.
 //
 // Symlinks are rejected because a profile directory can be shared or restored
 // from elsewhere, and filepath.WalkDir happily reports a symlinked *file*; Go's
