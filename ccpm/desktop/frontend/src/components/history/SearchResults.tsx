@@ -59,6 +59,10 @@ export function SearchResults({
   useEffect(() => {
     const q = query.trim()
     setToolOnlyCount(0)
+    // Clear on entry, not only on success: otherwise a failed search's banner
+    // stays on screen underneath "Searching…" for the whole of the next query —
+    // the debounce plus the scan, which is seconds on a large profile.
+    setError(null)
     if (!q) {
       setResult(null)
       setSearching(false)

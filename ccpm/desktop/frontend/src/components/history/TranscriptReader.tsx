@@ -103,6 +103,11 @@ export function TranscriptReader({
     [page],
   )
   // Prompts are the only anchor a human actually remembers. Turn 6,214 is not.
+  //
+  // Scoped to the loaded page, not the session — the reader only ever holds one
+  // page. The count and the stepper both say so rather than implying they cover
+  // the whole transcript, because a stepper that silently stops at an invisible
+  // boundary reads as broken.
   const prompts = useMemo(
     () => visible.filter((t) => t.role === 'user' && !t.isMeta && firstText(t).length > 0),
     [visible],
@@ -118,6 +123,16 @@ export function TranscriptReader({
     if (prompts.length === 0) return
     const cur = prompts.findIndex((p) => p.index === target)
     const next = cur < 0 ? (dir > 0 ? 0 : prompts.length - 1) : cur + dir
+    // At a page edge, page rather than clamp. Math.min used to make the button
+    // a silent no-op while more prompts sat one "Load later turns" away.
+    if (next < 0 && hasPrev) {
+      void fetchPage(() => api.history.transcript(profile, session.id, relPath, Math.max(0, offset - PAGE), PAGE))
+      return
+    }
+    if (next >= prompts.length && hasNext) {
+      void fetchPage(() => api.history.transcript(profile, session.id, relPath, offset + PAGE, PAGE))
+      return
+    }
     const clamped = Math.max(0, Math.min(prompts.length - 1, next))
     goTo(prompts[clamped].index)
   }
@@ -172,7 +187,7 @@ export function TranscriptReader({
                 className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <List className="size-3.5" />
-                {prompts.length} prompts
+                {prompts.length} prompts{total > visible.length ? ' on this page' : ''}
               </button>
               <IconStep onClick={() => step(-1)} label="Previous prompt" up />
               <IconStep onClick={() => step(1)} label="Next prompt" />

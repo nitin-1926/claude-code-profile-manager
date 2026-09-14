@@ -268,23 +268,27 @@ function SessionRow({
     }
   })
   return (
+    // Not role="button": ARIA forbids focusable descendants inside one, and the
+    // Resume button lives in here. The row's own click target is the real
+    // <button> wrapping the text below, so both controls are independently
+    // reachable and each announces its own name.
     <div
       className={cn(
         'group flex items-start gap-3 px-4 py-2.5 transition-colors',
         !last && 'border-b border-border',
-        openable ? 'cursor-pointer hover:bg-accent/40' : 'opacity-60',
+        openable ? 'hover:bg-accent/40' : 'opacity-60',
       )}
-      role={openable ? 'button' : undefined}
-      tabIndex={openable ? 0 : undefined}
-      onClick={openable ? onOpen : undefined}
-      onKeyDown={(e) => {
-        if (openable && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault()
-          onOpen()
-        }
-      }}
     >
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        disabled={!openable}
+        onClick={onOpen}
+        aria-label={openable ? `Open session: ${s.title || s.id}` : undefined}
+        className={cn(
+          'min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          openable ? 'cursor-pointer' : 'cursor-default',
+        )}
+      >
         <div className="flex items-baseline gap-2">
           <span className="truncate text-sm font-medium">{s.title || s.id}</span>
           {!openable && (
@@ -312,20 +316,14 @@ function SessionRow({
           {s.tokens > 0 && <span>{humanTokens(s.tokens)} tokens</span>}
           {s.cost > 0 && <span className="text-primary">{money(s.cost)}</span>}
         </div>
-      </div>
+      </button>
       <div className="flex shrink-0 items-center gap-2 pt-0.5">
         <span className="text-[11px] text-muted-foreground">{timeAgo(s.lastTs)}</span>
         {openable && (
           <button
             title="Resume this session in Terminal"
             aria-label="Resume this session in Terminal"
-            onClick={(e) => {
-              e.stopPropagation()
-              resume()
-            }}
-            // The row is itself a button with an Enter/Space handler, so without
-            // this, keyboard-activating Resume also opens the reader behind it.
-            onKeyDown={(e) => e.stopPropagation()}
+            onClick={resume}
             className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
           >
             <Play className="size-3" />
