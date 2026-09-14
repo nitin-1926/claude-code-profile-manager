@@ -40,21 +40,34 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
     }
   }
 
+  // The status line section is rendered by both the error and the loading
+  // branches below, not just the happy path: it reads a different service, so
+  // a settings failure has no bearing on it. Previously a corrupt settings.json
+  // hid an editor that would have loaded fine — and a useLive refetch failure
+  // unmounted it, discarding an unsaved draft.
+  const statusLine = <StatusLineSection profile={profile} />
+
   // Surface the failure instead of an indefinite "Loading…" — useLive
   // reports fetch errors and every consumer must render them.
   if (error)
     return (
-      <div className="px-6 py-5 text-sm text-destructive">Could not load settings: {error}</div>
+      <div className="px-6 py-5">
+        {statusLine}
+        <div className="text-sm text-destructive">Could not load settings: {error}</div>
+      </div>
     )
-  if (!data) return <div className="px-6 py-5 text-sm text-muted-foreground">Loading settings…</div>
+  if (!data)
+    return (
+      <div className="px-6 py-5">
+        {statusLine}
+        <div className="text-sm text-muted-foreground">Loading settings…</div>
+      </div>
+    )
   const rows = data ?? []
 
   return (
     <div className="px-6 py-5">
-      {/* No key needed here: ProfileView remounts the whole tab subtree when
-          the profile changes, which is what stops this section's pending edits
-          surviving into another profile's Save button. */}
-      <StatusLineSection profile={profile} />
+      {statusLine}
 
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
