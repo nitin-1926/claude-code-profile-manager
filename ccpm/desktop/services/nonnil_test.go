@@ -171,12 +171,12 @@ func TestUnknownProfileSafe(t *testing.T) {
 	if rows == nil {
 		t.Error("History.Sessions must return a non-nil slice")
 	}
-	page, err := h.Transcript(ghost, "any", "", 0, 10)
-	if err != nil {
-		t.Fatalf("History.Transcript(ghost): %v", err)
-	}
+	// An unknown profile is an error now, not an empty success — but the point
+	// of this file is that the DTO returned ALONGSIDE an error is still safe to
+	// marshal, since Wails sends both.
+	page, _ := h.Transcript(ghost, "any", "", 0, 10)
 	if page.Turns == nil {
-		t.Error("History.Transcript must return a non-nil Turns slice")
+		t.Error("History.Transcript must return a non-nil Turns slice even when it errors")
 	}
 	res, err := h.Search(ghost, "q", "tok", false)
 	if err != nil {
