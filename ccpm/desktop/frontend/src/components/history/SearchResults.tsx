@@ -71,8 +71,11 @@ export function SearchResults({
     const tok = nextToken()
     const wideTok = `${tok}w`
     live.current = tok
-    setSearching(true)
     const timer = setTimeout(() => {
+      // Inside the debounce, not before it. The heading this drives is
+      // aria-live, so flipping it per keystroke queued one "Searching…"
+      // announcement per character ahead of the count that actually matters.
+      setSearching(true)
       api.history
         .search(profile, q, tok, includeToolResults)
         .then((r) => {
@@ -96,6 +99,10 @@ export function SearchResults({
         })
         .catch((e) => {
           if (live.current !== tok) return
+          // Drop the previous query's hits with the error. Leaving them up
+          // renders a clickable result list beside "Search failed", and those
+          // hits answer a question the box no longer asks.
+          setResult(null)
           setError(String(e))
           setSearching(false)
         })
@@ -187,7 +194,11 @@ export function SearchResults({
               </div>
               {g.hits.map((h, i) => (
                 <button
-                  key={i}
+                  // Identity, not position. Toggling "include tool output"
+                  // rebuilds the group with a different hit set; a positional
+                  // key leaves DOM focus on slot i, which is now a different
+                  // match, so Enter opens a transcript nobody selected.
+                  key={`${h.relPath}:${h.turnUuid ?? ''}:${h.source}:${i}`}
                   onClick={() => onOpen(h)}
                   className={cn(
                     'flex w-full cursor-pointer flex-col gap-1 px-4 py-2 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',

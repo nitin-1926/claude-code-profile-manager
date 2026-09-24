@@ -108,6 +108,7 @@ export function HistoryTab({ profile }: { profile: string }) {
             <button
               key={s.id}
               onClick={() => setScope(s.id)}
+              aria-pressed={scope === s.id}
               className={cn(
                 'cursor-pointer rounded-md px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 scope === s.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
@@ -257,7 +258,21 @@ function SessionRow({
   const toast = useToast()
   const guard = useGuarded('Resume')
 
+  // Resume opens a Terminal window; a double click opened two on the same
+  // session. useGuarded only reports rejections, it does not gate re-entry.
+  const [resuming, setResuming] = useState(false)
+
   const resume = guard(async () => {
+    if (resuming) return
+    setResuming(true)
+    try {
+      await doResume()
+    } finally {
+      setResuming(false)
+    }
+  })
+
+  const doResume = async () => {
     const r = await api.history.resume(profile, s.id)
     if (r.ok) {
       // Name the directory: `claude --resume` scopes by cwd, so seeing where it
@@ -266,7 +281,7 @@ function SessionRow({
     } else {
       toast({ kind: 'error', title: 'Could not resume', desc: r.error || r.output })
     }
-  })
+  }
   return (
     // Not role="button": ARIA forbids focusable descendants inside one, and the
     // Resume button lives in here. The row's own click target is the real
@@ -324,7 +339,8 @@ function SessionRow({
             title="Resume this session in Terminal"
             aria-label="Resume this session in Terminal"
             onClick={resume}
-            className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            disabled={resuming}
+            className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 group-hover:opacity-100"
           >
             <Play className="size-3" />
           </button>

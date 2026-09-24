@@ -36,6 +36,11 @@ export function TranscriptReader({
   const [showSidechain, setShowSidechain] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [target, setTarget] = useState(-1)
+  // Where to land once a page fetched by the prompt stepper arrives. Transcript
+  // returns TargetIndex -1, so without this a step across a page boundary
+  // loaded 200 turns, highlighted nothing, and left the scroll container where
+  // it was — the button read as broken and needed a second click.
+  const [land, setLand] = useState<null | 'first' | 'last'>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const gen = useRef(0)
@@ -58,15 +63,23 @@ export function TranscriptReader({
     [],
   )
 
+  // Hoisted so the error state's Retry re-runs exactly the call that failed
+  // rather than an approximation of it.
+  const openInitial = useCallback(
+    () =>
+      fetchPage(() =>
+        turnUuid
+          ? api.history.transcriptAround(profile, session.id, relPath, turnUuid, PAGE)
+          : api.history.transcript(profile, session.id, relPath, 0, PAGE),
+      ),
+    [profile, session.id, relPath, turnUuid, fetchPage],
+  )
+
   useEffect(() => {
     setPage(null)
     setError(null)
-    void fetchPage(() =>
-      turnUuid
-        ? api.history.transcriptAround(profile, session.id, relPath, turnUuid, PAGE)
-        : api.history.transcript(profile, session.id, relPath, 0, PAGE),
-    )
-  }, [profile, session.id, relPath, turnUuid, fetchPage])
+    void openInitial()
+  }, [openInitial])
 
   // A search hit may point into a hidden subagent turn. Landing on nothing is
   // worse than showing more than asked, so the jump force-enables the toggle.
@@ -84,7 +97,13 @@ export function TranscriptReader({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onBack()
+      if (e.key !== 'Escape') return
+      // Modal listens for Escape on window too, and ProfileView renders its
+      // dialogs as siblings of the tab content — so without this, dismissing a
+      // Rename/Delete dialog ALSO closed the reader, losing the page, the
+      // scroll position and every expanded tool chip.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      onBack()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -126,10 +145,12 @@ export function TranscriptReader({
     // At a page edge, page rather than clamp. Math.min used to make the button
     // a silent no-op while more prompts sat one "Load later turns" away.
     if (next < 0 && hasPrev) {
+      setLand('last')
       void fetchPage(() => api.history.transcript(profile, session.id, relPath, Math.max(0, offset - PAGE), PAGE))
       return
     }
     if (next >= prompts.length && hasNext) {
+      setLand('first')
       void fetchPage(() => api.history.transcript(profile, session.id, relPath, offset + PAGE, PAGE))
       return
     }
@@ -141,6 +162,38 @@ export function TranscriptReader({
   const total = page?.total ?? 0
   const hasPrev = offset > 0
   const hasNext = offset + (page?.turns.length ?? 0) < total
+
+  // Resolve a pending landing once the stepper's page has arrived.
+  //
+  // A page can hold no prompt at all: a session that is mostly tool calls has
+  // runs of 200 turns with nothing a human typed — measured on a real 2,806-turn
+  // session, the whole of turns 200-399. Landing on such a page and giving up
+  // left the reader mid-page with nothing highlighted, which is the same broken
+  // "the button did nothing" the landing intent exists to fix. So a prompt-less
+  // page keeps paging in the same direction until a prompt turns up or the
+  // transcript ends. Bounded by the page count, and the stepper is disabled
+  // throughout because `busy` stays true across each hop.
+  useEffect(() => {
+    if (!land || busy || !page) return
+    if (prompts.length > 0) {
+      goTo(land === 'first' ? prompts[0].index : prompts[prompts.length - 1].index)
+      setLand(null)
+      return
+    }
+    if (land === 'first' && hasNext) {
+      void fetchPage(() => api.history.transcript(profile, session.id, relPath, offset + PAGE, PAGE))
+      return
+    }
+    if (land === 'last' && hasPrev) {
+      void fetchPage(() => api.history.transcript(profile, session.id, relPath, Math.max(0, offset - PAGE), PAGE))
+      return
+    }
+    // No prompt anywhere further in that direction. Stop here rather than
+    // leaving the intent armed to fire against some later page.
+    setLand(null)
+    // goTo only reads scrollRef, which never changes identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [land, busy, page, prompts, hasNext, hasPrev, offset, fetchPage, profile, session.id, relPath])
 
   return (
     <div className="flex h-full flex-col">
@@ -189,8 +242,8 @@ export function TranscriptReader({
                 <List className="size-3.5" />
                 {prompts.length} prompts{total > visible.length ? ' on this page' : ''}
               </button>
-              <IconStep onClick={() => step(-1)} label="Previous prompt" up />
-              <IconStep onClick={() => step(1)} label="Next prompt" />
+              <IconStep onClick={() => step(-1)} label="Previous prompt" disabled={busy} up />
+              <IconStep onClick={() => step(1)} label="Next prompt" disabled={busy} />
             </>
           )}
           {page && page.unknownBlocks > 0 && (
@@ -227,7 +280,17 @@ export function TranscriptReader({
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        {error && <div className="text-sm text-destructive">Could not open this transcript: {error}</div>}
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-destructive">
+            <span>Could not open this transcript: {error}</span>
+            <button
+              onClick={() => void openInitial()}
+              className="cursor-pointer rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {!page && !error && <div className="text-sm text-muted-foreground">Opening transcript…</div>}
         {page && !error && page.total === 0 && (
           <div className="rounded-xl border border-border bg-card p-8 text-center">
@@ -318,14 +381,32 @@ function Toggle({
   )
 }
 
-function IconStep({ onClick, label, up }: { onClick: () => void; label: string; up?: boolean }) {
+// Disabled while a page is in flight. A step that crosses a page boundary starts
+// a fetch; a step the other way before it lands moves `target` without bumping
+// the fetch generation, so the older response still wins and silently undoes the
+// newer navigation. LoadMore is gated the same way for the same reason.
+function IconStep({
+  onClick,
+  label,
+  disabled,
+  up,
+}: {
+  onClick: () => void
+  label: string
+  disabled?: boolean
+  up?: boolean
+}) {
   const Icon = up ? ChevronUp : ChevronDown
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       title={label}
       aria-label={label}
-      className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={cn(
+        'inline-flex size-6 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        disabled ? 'cursor-default opacity-50' : 'cursor-pointer hover:bg-accent hover:text-foreground',
+      )}
     >
       <Icon className="size-3.5" />
     </button>
