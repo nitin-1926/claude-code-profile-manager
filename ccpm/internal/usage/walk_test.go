@@ -109,3 +109,27 @@ func firstCwdIn(dir string) string {
 	}
 	return ""
 }
+
+// TestEncodeCwdMatchesJavaScriptOnAstralCharacters pins the one place the Go
+// and JavaScript encoders can disagree.
+//
+// Claude Code's encoder is JS and replaces per UTF-16 code unit. A non-BMP
+// character is a surrogate pair there and produces TWO dashes; a Go `for range`
+// sees one rune and produced one. The expected values below were taken from
+// node: String.prototype.replace(/[^a-zA-Z0-9]/g, "-").
+//
+// It matters because every caller uses the result as a directory lookup, so a
+// mismatch is not an error — it is silently finding nothing, which is exactly
+// how the collapse-and-trim bug hid.
+func TestEncodeCwdMatchesJavaScriptOnAstralCharacters(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"/Users/x/\U0001F680proj", "-Users-x---proj"}, // rocket: one surrogate pair
+		{"/Users/x/proj", "-Users-x-proj"},             // BMP-only control case
+		{"/a/éb", "-a--b"},                             // é is BMP: still one dash
+		{"\U0001F600\U0001F600", "----"},               // two pairs, four dashes
+	} {
+		if got := EncodeCwd(tc.in); got != tc.want {
+			t.Errorf("EncodeCwd(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

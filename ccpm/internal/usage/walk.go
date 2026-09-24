@@ -19,6 +19,13 @@ import (
 // that used the result as a filesystem lookup silently found nothing — the
 // onlyEncodedSubdir filter below, and with it the cwd-scoped default of
 // `ccpm sessions list`, which returned "no sessions" unless given --all.
+// One further subtlety: Claude Code's encoder is JavaScript, so it replaces
+// per UTF-16 CODE UNIT, not per rune. A non-BMP character — an emoji in a
+// directory name — is a surrogate pair there and yields TWO dashes, where a Go
+// `for range` sees one rune and yields one. Verified against node:
+// "/Users/x/<rocket>proj" encodes to "-Users-x---proj", three dashes, not two.
+// Getting this wrong is the same failure the collapse-and-trim bug above had —
+// a lookup that silently finds nothing.
 func EncodeCwd(cwd string) string {
 	var b strings.Builder
 	b.Grow(len(cwd))
@@ -28,6 +35,9 @@ func EncodeCwd(cwd string) string {
 			continue
 		}
 		b.WriteByte('-')
+		if r > 0xFFFF {
+			b.WriteByte('-')
+		}
 	}
 	return b.String()
 }
