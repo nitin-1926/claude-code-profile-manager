@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -60,6 +61,11 @@ type Entry struct {
 type Index struct {
 	Version int               `json:"version"`
 	Entries map[string]*Entry `json:"entries"`
+
+	// pruned records that LoadIndex dropped a null entry, so BuildIndex knows
+	// the on-disk copy differs from this one even when no transcript changed.
+	// Unexported, so encoding/json ignores it without needing a tag.
+	pruned bool
 }
 
 func newIndex() *Index { return &Index{Version: indexVersion, Entries: map[string]*Entry{}} }
@@ -89,6 +95,10 @@ func LoadIndex(profileDir string) *Index {
 	for id, e := range ix.Entries {
 		if e == nil {
 			delete(ix.Entries, id)
+			// Recorded so BuildIndex writes the cleaned map back. Pruning only
+			// in memory meant the nulls survived on disk and were re-pruned on
+			// every single load, forever.
+			ix.pruned = true
 		}
 	}
 	return &ix
@@ -100,9 +110,30 @@ func LoadIndex(profileDir string) *Index {
 // is reused. Entries whose transcript has since been deleted are RETAINED — the
 // whole point of a sidecar is that history does not evaporate when Claude Code
 // prunes a file.
+// indexLocks serialises BuildIndex per profile directory. Keyed rather than a
+// single mutex so a slow scan of one profile does not block another's — the
+// desktop shows one profile at a time, but nothing enforces that.
+var indexLocks sync.Map // profileDir -> *sync.Mutex
+
+func lockProfileIndex(profileDir string) func() {
+	v, _ := indexLocks.LoadOrStore(profileDir, &sync.Mutex{})
+	m := v.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
+}
+
 func BuildIndex(profileDir string) (*Index, error) {
+	// Serialised per profile. BuildIndex is a read-modify-write of history.json
+	// and Wails dispatches every bound method on its own goroutine, so two
+	// overlapping Sessions calls — a tab remount racing a ccpm:changed refetch —
+	// could each load the same map, scan, and save, with the slower one writing
+	// back a map missing whatever the faster one had just added. Self-healing on
+	// the next build, but it costs a stale list render.
+	unlock := lockProfileIndex(profileDir)
+	defer unlock()
+
 	ix := LoadIndex(profileDir)
-	changed := false
+	changed := ix.pruned
 
 	err := usage.WalkTranscripts(profileDir, "", func(abs, rel string) error {
 		if skipTranscript(abs, rel) {
@@ -191,7 +222,7 @@ func BuildIndex(profileDir string) (*Index, error) {
 			FirstTS:   meta.FirstTS,
 			LastTS:    meta.LastTS,
 			Turns:     meta.Turns,
-			RelPath:   rel,
+			RelPath:   filepath.ToSlash(rel),
 			ModTime:   mtime,
 			Size:      size,
 		}

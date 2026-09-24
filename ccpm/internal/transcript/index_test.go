@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -674,5 +675,55 @@ func TestBuildIndexMissingProjectsDirIsNotAnError(t *testing.T) {
 	}
 	if ix.Entries == nil {
 		t.Error("Entries must be a non-nil map")
+	}
+}
+
+// TestNullEntriesArePrunedOnDisk is the regression for a sidecar that never
+// self-healed.
+//
+// LoadIndex drops null entries because every consumer dereferences what it
+// finds, but it dropped them only in memory: `changed` flipped solely on a
+// rescan, so with no transcript change saveIndex was skipped and the nulls sat
+// on disk being re-pruned on every single load, forever.
+func TestNullEntriesArePrunedOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "alive", userLineIn(t, "u1", "/repo", "hello"))
+
+	// Build once so the sidecar exists and every transcript is recorded fresh.
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatalf("first build: %v", err)
+	}
+
+	// Hand-edit a null in, the shape a shared or restored profile can carry.
+	raw, err := os.ReadFile(IndexPath(dir))
+	if err != nil {
+		t.Fatalf("reading sidecar: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parsing sidecar: %v", err)
+	}
+	entries, _ := doc["entries"].(map[string]any)
+	if entries == nil {
+		t.Fatal("sidecar has no entries object")
+	}
+	entries["ghost"] = nil
+	edited, _ := json.Marshal(doc)
+	if err := os.WriteFile(IndexPath(dir), edited, 0o600); err != nil {
+		t.Fatalf("writing sidecar: %v", err)
+	}
+
+	// Nothing on disk changed, so this build rescans nothing. The prune alone
+	// must be enough to make it write.
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatalf("second build: %v", err)
+	}
+
+	after, err := os.ReadFile(IndexPath(dir))
+	if err != nil {
+		t.Fatalf("re-reading sidecar: %v", err)
+	}
+	if bytes.Contains(after, []byte(`"ghost"`)) {
+		t.Error("the null entry is still on disk — the prune was never persisted")
 	}
 }
