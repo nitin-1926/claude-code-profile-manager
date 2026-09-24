@@ -109,9 +109,12 @@ type SearchResult struct {
 	// produced its per-session quota, so matches beyond that point are never
 	// counted. Present it as "N+" rather than "N" when Truncated is set.
 	Matches int `json:"matches"`
-	// Truncated is set when a cap stopped the scan; DroppedSessions counts
-	// transcripts never opened because of it. The UI must say so rather than
-	// implying the result set is complete.
+	// Truncated is set when a cap stopped the scan. DroppedSessions counts
+	// transcripts that were never opened — because a cap was already reached,
+	// or because the search was cancelled. The two are therefore NOT
+	// coextensive: a cancellation drops transcripts without truncating, and a
+	// per-file cap truncates without dropping any. The UI must say so rather
+	// than implying the result set is complete.
 	Truncated       bool `json:"truncated"`
 	DroppedSessions int  `json:"droppedSessions"`
 	// Unreadable counts transcripts that could not be read. Silently returning
@@ -200,7 +203,11 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 		if left <= 0 {
 			// This session filled its quota in an earlier file, so its remaining
 			// matches go uncounted — the same floor the in-file cap creates.
+			// This transcript is never opened, which is exactly what
+			// DroppedSessions counts; omitting it here reported "truncated, 0
+			// dropped" for a session whose eight subagent files went unread.
 			res.Truncated = true
+			res.DroppedSessions++
 			continue
 		}
 
@@ -354,12 +361,19 @@ func equalFoldASCII(a, lower []byte) bool {
 	return true
 }
 
-// scanFile streams one transcript and returns its hits, plus every match it saw
-// (including those past the per-session cap, so the UI can report honestly).
+// scanFile streams one transcript and returns its hits plus the number of
+// matches it COUNTED, which is not the number the file contains: the scan stops
+// once the budget is filled, so matches beyond that point are never seen. That
+// is what makes SearchResult.Matches a floor. The alternative — reading on
+// purely to keep counting — is what made a common query cost 2.2s on a 327 MB
+// profile, since every prefilter survivor still had to be decoded.
 func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []byte, opts SearchOpts, budget int) (_ []Hit, _ int, capped bool, _ error) {
 	var hits []Hit
 	matches := 0
 	lines := 0
+	// Set when the quota is filled; the next line entered proves the file had
+	// more to give and turns it into capped. See the stop condition below.
+	full := false
 
 	// budget is already the smaller of this session's remaining per-session
 	// quota and the global result cap — the caller owns that arithmetic because
@@ -368,6 +382,10 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 	err := eachLine(c.abs, func(raw []byte, skipped bool) bool {
 		if skipped {
 			return true
+		}
+		if full {
+			capped = true
+			return false
 		}
 		lines++
 		// Cancellation is checked periodically inside a file too — the largest
@@ -395,18 +413,27 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 		if n > 0 {
 			hit.Profile = c.scope.Profile
 			hit.SessionID = c.id
-			hit.RelPath = c.rel
+			// Forward-slashed, matching Entry.SubPaths. The reader's allowlist
+			// compares the two directly, and filepath.Rel hands back
+			// OS-separated paths — so on Windows every subagent hit would be
+			// unopenable. Identical on darwin, where this ships today.
+			hit.RelPath = filepath.ToSlash(c.rel)
 			hit.ModTime = c.modTime
 			hit.Subagent = c.subagent
 			hits = append(hits, hit)
 		}
-		// Stop the file once it has produced its quota. Continuing only to keep
-		// counting is what made a common query cost 2.2s on a 327 MB profile:
-		// every prefilter survivor still had to be decoded. Matches is
-		// documented as a floor for exactly this reason.
+		// Stop the file once it has produced its quota — but do not call it
+		// capped yet.
+		//
+		// Setting capped here fired on the LAST matching turn of a file, with
+		// no way to know whether anything followed, so a session holding
+		// exactly MaxPerSession matches reported "10+ matches, results
+		// truncated" on an exhaustive result. Instead the quota being full is
+		// remembered and the scan returns true once more; capped is set only if
+		// the callback is entered again, which proves there was more file left
+		// to read. Cost is one extra line, short-circuited at the top.
 		if len(hits) >= quota {
-			capped = true
-			return false
+			full = true
 		}
 		return true
 	})

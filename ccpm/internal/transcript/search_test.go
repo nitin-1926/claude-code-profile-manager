@@ -899,3 +899,79 @@ func TestLoadIndexDropsNullEntries(t *testing.T) {
 		t.Error("the valid entry was dropped")
 	}
 }
+
+// TestExactBudgetIsNotReportedAsTruncated is the regression for a result set
+// that was complete but advertised as partial.
+//
+// scanFile used to set capped the moment len(hits) reached the quota, on the
+// last matching turn of the file, with nothing to distinguish "the file is
+// exhausted" from "there is more". A session holding exactly MaxPerSession
+// matches therefore rendered as "3+ matches, results truncated" when 3 was the
+// whole truth.
+func TestExactBudgetIsNotReportedAsTruncated(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "hitme once"),
+		userLine(t, "u2", "hitme twice"),
+		userLine(t, "u3", "hitme thrice"),
+	)
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 3})
+	if len(res.Hits) != 3 {
+		t.Fatalf("got %d hits, want 3", len(res.Hits))
+	}
+	if res.Truncated {
+		t.Error("a file whose last matching turn filled the quota was reported as truncated")
+	}
+	if res.Matches != 3 {
+		t.Errorf("Matches = %d, want 3", res.Matches)
+	}
+}
+
+// ...and the other half: when there IS more after the quota is filled, the
+// result must still say so. Without this the fix above could be "never report
+// truncated", which is the same lie in the other direction.
+func TestMoreAfterTheBudgetIsStillTruncated(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "hitme once"),
+		userLine(t, "u2", "hitme twice"),
+		userLine(t, "u3", "hitme thrice"),
+		userLine(t, "u4", "hitme again"),
+	)
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 3})
+	if len(res.Hits) != 3 {
+		t.Fatalf("got %d hits, want 3", len(res.Hits))
+	}
+	if !res.Truncated {
+		t.Error("a fourth match beyond the quota was not reported as truncating the result")
+	}
+}
+
+// TestDroppedSessionsCountsQuotaSkippedFiles matches the field's own
+// documentation: DroppedSessions counts transcripts never opened because a cap
+// was already reached. The quota-skip path reported "truncated, 0 dropped"
+// while leaving whole subagent transcripts unread.
+func TestDroppedSessionsCountsQuotaSkippedFiles(t *testing.T) {
+	dir := t.TempDir()
+	// The parent alone fills a quota of 2.
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "hitme once"),
+		userLine(t, "u2", "hitme twice"),
+		userLine(t, "u3", "hitme thrice"),
+	)
+	// Three subagent transcripts that will never be opened.
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	for _, name := range []string{"agent-a.jsonl", "agent-b.jsonl", "agent-c.jsonl"} {
+		writeJSONL(t, subs, name, userLine(t, "s-"+name, "hitme from a subagent"))
+	}
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 2})
+	if !res.Truncated {
+		t.Fatal("quota was exceeded but Truncated is false")
+	}
+	if res.DroppedSessions != 3 {
+		t.Errorf("DroppedSessions = %d, want 3 — three subagent transcripts went unopened", res.DroppedSessions)
+	}
+}

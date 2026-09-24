@@ -489,8 +489,13 @@ func ReadPage(path string, offset, limit int) (Page, error) {
 // "include tool output" silently useless on the large outputs it exists for, and
 // a tool input reduced to its one identifying field makes the code Claude wrote
 // (an Edit's new_string, a Write's content) unfindable — while the docs promise
-// both are searchable. Reading the raw blocks here costs nothing extra: this
-// only runs on lines that already survived the byte prefilter.
+// both are searchable.
+//
+// Reading the raw blocks is usually free: for most queries this only runs on
+// lines that already survived the byte prefilter. It is NOT free when
+// prefilterNeedle declines to build one — a query containing a quote, a
+// backslash, a control character or any non-ASCII rune — because then every
+// turn line is decoded and passed through here.
 func (l rawLine) searchTexts(includeToolResults bool) []searchable {
 	if l.Message == nil || len(l.Message.Content) == 0 {
 		return nil
