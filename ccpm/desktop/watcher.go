@@ -63,6 +63,14 @@ func (a *App) watchLoop() {
 			if !ok {
 				return
 			}
+			// The history sidecar is written BY a History fetch, inside the
+			// watched tree. Without this exclusion an append to any transcript
+			// produced a write here, a ccpm:changed event, a refetch, and a
+			// second full scan — a loop that terminated only because the second
+			// build found nothing changed.
+			if filepath.Base(ev.Name) == "history.json" {
+				continue
+			}
 			// pick up newly created directories so future changes inside them fire too
 			if ev.Op&fsnotify.Create != 0 {
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
