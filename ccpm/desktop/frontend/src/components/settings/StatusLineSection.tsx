@@ -60,15 +60,25 @@ export function StatusLineSection({ profile }: { profile: string }) {
   // profile switch; the ref covers overlapping loads within one profile.
   const gen = useRef(0)
 
+  // `only` names the single scope whose draft may be replaced. save() passes it
+  // so writing one scope cannot discard an unsaved draft in the other — the
+  // promise this section's docblock makes, which an unconditional setDrafts
+  // broke on every successful save.
   const load = useCallback(
-    async (preferred?: Scope) => {
+    async (preferred?: Scope, only?: Scope) => {
       const mine = ++gen.current
+      // Editing is locked for the duration. Without this, edits made while
+      // Refresh is in flight are silently replaced by setDrafts when it lands,
+      // and a scope switch is undone by setScope restoring the scope captured
+      // when Refresh started.
+      setBusy(true)
       try {
         const c = await api.statusline.get(profile)
         if (mine !== gen.current) return
         setCfg(c)
         setLoadError(null)
-        setDrafts({ global: clone(c.global), profile: clone(c.layout) })
+        const fresh: Record<Scope, StatusLineBuckets> = { global: clone(c.global), profile: clone(c.layout) }
+        setDrafts((d) => (only ? { ...d, [only]: fresh[only] } : fresh))
         // Open on whichever scope is actually in force, so the controls match
         // what this profile's sessions are showing rather than a default guess.
         setScope(preferred ?? (c.hasOverride ? 'profile' : 'global'))
@@ -79,6 +89,8 @@ export function StatusLineSection({ profile }: { profile: string }) {
         // leaves the content alone.
         if (cfg === null) setLoadError(String(e))
         else toast({ kind: 'error', title: 'Could not refresh the status line settings', desc: String(e) })
+      } finally {
+        if (mine === gen.current) setBusy(false)
       }
     },
     [profile, cfg, toast],
@@ -109,6 +121,11 @@ export function StatusLineSection({ profile }: { profile: string }) {
 
   /** Move one segment to a different row, appending it at that row's end. */
   function place(key: string, to: StatusLineRow) {
+    // Re-selecting the row a segment is already on must do nothing. Without
+    // this the filter-then-append below moves it to the end of its own row, so
+    // clicking a checked radio — or pressing Home while already on Off —
+    // silently reorders the printed status line and marks the form dirty.
+    if (draft[to].includes(key)) return
     const next: StatusLineBuckets = {
       row1: draft.row1.filter((k) => k !== key),
       row2: draft.row2.filter((k) => k !== key),
@@ -142,7 +159,7 @@ export function StatusLineSection({ profile }: { profile: string }) {
       // layout rather than guessing, so a bug here surfaces as a visible error.
       const r = await api.statusline.set(scope === 'profile' ? profile : '', draft.row1, draft.row2, draft.off)
       report(toast, `Saved ${target}`, `Could not save ${target}`, r)
-      if (r.ok) await load(scope)
+      if (r.ok) await load(scope, scope)
     } catch (e) {
       // The bridge call itself can reject (the app closing mid-call, a binding
       // fault). Without this the click fails silently and leaves an unhandled
@@ -192,6 +209,9 @@ export function StatusLineSection({ profile }: { profile: string }) {
 
   const saved = scope === 'profile' ? cfg.layout : cfg.global
   const dirty = !sameBuckets(saved, draft)
+  // Refresh re-reads disk into both drafts, so it is gated on unsaved work in
+  // EITHER scope, not just the one on screen.
+  const anyDirty = !sameBuckets(cfg.global, drafts.global) || !sameBuckets(cfg.layout, drafts.profile)
   // A profile with no override resolves to the global, so its draft matches and
   // `dirty` is false — yet the copy invites you to pin it. Saving an unchanged
   // layout is exactly how you turn "follows the global" into an override.
@@ -229,14 +249,23 @@ export function StatusLineSection({ profile }: { profile: string }) {
                 )}
               >
                 {s === 'global' ? 'Global default' : 'This profile'}
-                {s === 'profile' && cfg.hasOverride && <span aria-label=" (has an override)"> •</span>}
+                {s === 'profile' && cfg.hasOverride && (
+                  <>
+                    <span className="sr-only"> (has an override)</span>
+                    <span aria-hidden="true"> •</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
           <button
             onClick={() => void load(scope)}
-            disabled={busy}
-            title="Re-read the status line settings from disk"
+            disabled={busy || anyDirty}
+            title={
+              anyDirty
+                ? 'Save or reset your changes first — refreshing would discard them'
+                : 'Re-read the status line settings from disk'
+            }
             className="cursor-pointer rounded-md border border-border p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50"
           >
             <RotateCcw className="size-3" />
