@@ -395,8 +395,10 @@ func TestSearchPerSessionCapCarriesPartialSpendForward(t *testing.T) {
 	// Subagent: plenty more.
 	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
 	many := make([]string, 0, 5)
-	for range 5 {
-		many = append(many, userLine(t, "s", "hitme from the subagent"))
+	for i := range 5 {
+		// Distinct uuids, as every real transcript line has. A shared uuid would
+		// let a regression that collapses turns by uuid hide behind the quota.
+		many = append(many, userLine(t, "s"+strconv.Itoa(i), "hitme from the subagent"))
 	}
 	writeJSONL(t, subs, "agent-a.jsonl", many...)
 

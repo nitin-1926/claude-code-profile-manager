@@ -709,11 +709,16 @@ func TestEverySegmentRejectsTerminalEscapes(t *testing.T) {
 	hostile := map[string]string{
 		"OSC title set":    "\x1b]0;OWNED\x07",
 		"CSI erase + home": "\x1b[2K\x1b[1G",
-		"single-byte CSI":  "\x9b2K",
-		"newline":          "\nFAKE ROW",
-		"carriage return":  "\roverwrite",
-		"DEL":              "\x7f",
-		"NUL":              "\x00",
+		// Two distinct guards. The raw 0x9b byte is not valid UTF-8, so it is
+		// caught by the encoding check; "\u009b" IS valid UTF-8 (c2 9b) and
+		// decodes to the C1 CSI rune, which is what escaped JSON actually
+		// delivers and what the 0x80-0x9f range check exists for.
+		"C1 CSI (invalid UTF-8)": "\x9b2K",
+		"C1 CSI (valid UTF-8)":   "\u009b2K",
+		"newline":                "\nFAKE ROW",
+		"carriage return":        "\roverwrite",
+		"DEL":                    "\x7f",
+		"NUL":                    "\x00",
 	}
 
 	for name, evil := range hostile {

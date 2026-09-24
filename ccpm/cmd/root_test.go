@@ -25,10 +25,15 @@ func TestMain(m *testing.M) {
 // the real ~/.ccpm.
 func runCCPMForTest(t *testing.T, args string) (string, int) {
 	t.Helper()
+	// os.UserHomeDir reads HOME on unix and USERPROFILE on Windows. Setting only
+	// HOME leaves the Windows child reading the real ~/.ccpm, which makes the
+	// assertions depend on the machine running them.
+	home := t.TempDir()
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(),
 		"CCPM_TEST_EXECUTE="+args,
-		"HOME="+t.TempDir(),
+		"HOME="+home,
+		"USERPROFILE="+home,
 		"NO_COLOR=1",
 		"CCPM_NO_TTY=1",
 	)
