@@ -51,8 +51,27 @@ func runCCPM(args ...string) CmdResult {
 		if r.Output == "" {
 			r.Output = r.Error
 		}
+		if outdatedCLI(r.Output) {
+			r.Error = "the ccpm CLI at " + bin + " is too old for this — update it and try again (" +
+				strings.TrimSpace(r.Output) + ")"
+		}
 	}
 	return r
+}
+
+// outdatedCLI reports whether ccpm's output is cobra refusing a flag or
+// subcommand it does not know.
+//
+// The desktop app ships separately from the CLI and drives it through its
+// flags. A desktop build that is newer than the CLI on PATH therefore fails
+// with cobra's own message — "unknown flag: --profile" when saving a status
+// line layout against a CLI that predates `statusline configure` — which tells
+// the user nothing about what to do. Measured on a real machine: the CLI on
+// PATH was 0.5.4 and every status line save failed exactly this way.
+func outdatedCLI(output string) bool {
+	return strings.Contains(output, "unknown flag:") ||
+		strings.Contains(output, "unknown shorthand flag:") ||
+		strings.Contains(output, "unknown command \"")
 }
 
 // Clone duplicates src into a new profile dst (assets + settings + auth).
@@ -221,6 +240,14 @@ const errControlChar = "refusing to run a command containing a control character
 // inside them — but Go's %q renders it as \n and AppleScript's parser turns
 // that back into a real newline, so `do script` would type a broken command
 // into Terminal. Refusing is clearer than emitting something confusing.
+//
+// Scoped to the three characters that actually cause the problem, and named
+// for them rather than for "control characters" generally. Go's %q renders
+// \x1b, \a, \b, \f, \v and \x7f in forms AppleScript refuses to compile, which
+// CombinedOutput surfaces as an error — so those fail closed already. A tab is
+// legal in a macOS directory name and passes harmlessly inside the single
+// quotes. Widening the check would reject working paths to restate a guarantee
+// the shell quoting already provides.
 //
 // Split out from terminal so the guard is testable on its own. terminal itself
 // opens a real Terminal window on the developer's machine for any input that

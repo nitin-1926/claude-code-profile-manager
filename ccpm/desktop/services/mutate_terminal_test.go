@@ -159,3 +159,22 @@ func TestResumeUnknownProfileAndSession(t *testing.T) {
 		t.Error("Resume succeeded for a session with no transcript")
 	}
 }
+
+// TestOutdatedCLIRecognisesCobraRefusals covers the message a user sees when
+// the desktop app is newer than the CLI on PATH. Cobra's wording is matched
+// exactly, so ordinary failure output that merely mentions a flag is not
+// misreported as a version problem.
+func TestOutdatedCLIRecognisesCobraRefusals(t *testing.T) {
+	for out, want := range map[string]bool{
+		"unknown flag: --profile":                                  true,
+		"Error: unknown shorthand flag: 'x' in -x":                 true,
+		`Error: unknown command "configure" for "ccpm statusline"`: true,
+		"profile \"work\" not found":                               false,
+		"the --profile flag must name an existing profile":         false,
+		"": false,
+	} {
+		if got := outdatedCLI(out); got != want {
+			t.Errorf("outdatedCLI(%q) = %v, want %v", out, got, want)
+		}
+	}
+}
