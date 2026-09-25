@@ -60,12 +60,20 @@ export function StatusLineSection({ profile }: { profile: string }) {
   // profile switch; the ref covers overlapping loads within one profile.
   const gen = useRef(0)
 
-  // `only` names the single scope whose draft may be replaced. save() passes it
-  // so writing one scope cannot discard an unsaved draft in the other — the
-  // promise this section's docblock makes, which an unconditional setDrafts
-  // broke on every successful save.
+  // `written` names the scope a save or reset just wrote. That scope always
+  // takes the fresh value from disk. Every OTHER scope takes it too if its draft
+  // was clean — equal to what was on disk before — and keeps its draft only when
+  // it holds unsaved edits.
+  //
+  // Both halves are needed, and the first attempt had only one. Replacing every
+  // draft discarded unsaved work in the scope not being saved. Replacing only
+  // the written scope broke the default case instead: a profile with no
+  // override resolves to the global, so saving the global changes the profile's
+  // layout too, and its untouched draft was left on the old value — showing
+  // "unsaved changes" nobody made, locking Refresh, and letting a Save there pin
+  // the outdated layout as an override.
   const load = useCallback(
-    async (preferred?: Scope, only?: Scope) => {
+    async (preferred?: Scope, written?: Scope) => {
       const mine = ++gen.current
       // Editing is locked for the duration. Without this, edits made while
       // Refresh is in flight are silently replaced by setDrafts when it lands,
@@ -78,7 +86,15 @@ export function StatusLineSection({ profile }: { profile: string }) {
         setCfg(c)
         setLoadError(null)
         const fresh: Record<Scope, StatusLineBuckets> = { global: clone(c.global), profile: clone(c.layout) }
-        setDrafts((d) => (only ? { ...d, [only]: fresh[only] } : fresh))
+        setDrafts((d) => {
+          if (!written || !cfg) return fresh
+          const before: Record<Scope, StatusLineBuckets> = { global: cfg.global, profile: cfg.layout }
+          const next = { ...d }
+          for (const s of ['global', 'profile'] as const) {
+            if (s === written || sameBuckets(d[s], before[s])) next[s] = fresh[s]
+          }
+          return next
+        })
         // Open on whichever scope is actually in force, so the controls match
         // what this profile's sessions are showing rather than a default guess.
         setScope(preferred ?? (c.hasOverride ? 'profile' : 'global'))
@@ -177,7 +193,7 @@ export function StatusLineSection({ profile }: { profile: string }) {
     try {
       const r = await api.statusline.reset(scope === 'profile' ? profile : '')
       report(toast, `Set ${target}`, `Could not set ${target}`, r)
-      if (r.ok) await load('global')
+      if (r.ok) await load('global', scope)
     } catch (e) {
       toast({ kind: 'error', title: `Could not set ${target}`, desc: String(e) })
     } finally {
