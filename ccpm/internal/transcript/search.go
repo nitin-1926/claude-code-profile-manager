@@ -181,13 +181,15 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 		select {
 		case <-ctx.Done():
 			res.Cancelled = true
-			res.DroppedSessions = len(cands) - i
+			res.DroppedSessions += len(cands) - i
 			return res
 		default:
 		}
 		if len(res.Hits) >= opts.MaxResults {
 			res.Truncated = true
-			res.DroppedSessions = len(cands) - i
+			// += because files skipped earlier for a spent session quota are
+			// already counted here; assigning threw those away.
+			res.DroppedSessions += len(cands) - i
 			break
 		}
 
@@ -220,7 +222,7 @@ func Search(ctx context.Context, scopes []Scope, query string, opts SearchOpts) 
 		emitted[quotaKey] += len(hits)
 		if scanCancelled(ctx) {
 			res.Cancelled = true
-			res.DroppedSessions = len(cands) - i - 1
+			res.DroppedSessions += len(cands) - i - 1
 			res.Hits = append(res.Hits, hits...)
 			return res
 		}
@@ -362,17 +364,18 @@ func equalFoldASCII(a, lower []byte) bool {
 }
 
 // scanFile streams one transcript and returns its hits plus the number of
-// matches it COUNTED, which is not the number the file contains: the scan stops
-// once the budget is filled, so matches beyond that point are never seen. That
-// is what makes SearchResult.Matches a floor. The alternative — reading on
-// purely to keep counting — is what made a common query cost 2.2s on a 327 MB
-// profile, since every prefilter survivor still had to be decoded.
+// matches it COUNTED, which is not the number the file contains: counting stops
+// once the budget is filled, which is what makes SearchResult.Matches a floor.
+//
+// capped reports whether the file holds at least one more matching turn than
+// it returned — i.e. whether the budget actually cut the result short.
 func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []byte, opts SearchOpts, budget int) (_ []Hit, _ int, capped bool, _ error) {
 	var hits []Hit
 	matches := 0
 	lines := 0
-	// Set when the quota is filled; the next line entered proves the file had
-	// more to give and turns it into capped. See the stop condition below.
+	// Set once the budget is filled. From then on the scan is only a probe: it
+	// is looking for one more matching turn, which is the only thing that can
+	// make capped true.
 	full := false
 
 	// budget is already the smaller of this session's remaining per-session
@@ -382,10 +385,6 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 	err := eachLine(c.abs, func(raw []byte, skipped bool) bool {
 		if skipped {
 			return true
-		}
-		if full {
-			capped = true
-			return false
 		}
 		lines++
 		// Cancellation is checked periodically inside a file too — the largest
@@ -409,29 +408,39 @@ func scanFile(ctx context.Context, c candidate, lowerQuery string, prefilter []b
 			return true
 		}
 		hit, n := firstHitInTurn(l, lowerQuery, opts)
-		matches += n
-		if n > 0 {
-			hit.Profile = c.scope.Profile
-			hit.SessionID = c.id
-			// Forward-slashed, matching Entry.SubPaths. The reader's allowlist
-			// compares the two directly, and filepath.Rel hands back
-			// OS-separated paths — so on Windows every subagent hit would be
-			// unopenable. Identical on darwin, where this ships today.
-			hit.RelPath = filepath.ToSlash(c.rel)
-			hit.ModTime = c.modTime
-			hit.Subagent = c.subagent
-			hits = append(hits, hit)
+		if n == 0 {
+			return true
 		}
-		// Stop the file once it has produced its quota — but do not call it
-		// capped yet.
-		//
-		// Setting capped here fired on the LAST matching turn of a file, with
-		// no way to know whether anything followed, so a session holding
-		// exactly MaxPerSession matches reported "10+ matches, results
-		// truncated" on an exhaustive result. Instead the quota being full is
-		// remembered and the scan returns true once more; capped is set only if
-		// the callback is entered again, which proves there was more file left
-		// to read. Cost is one extra line, short-circuited at the top.
+		if full {
+			// A matching turn beyond the budget: the result really is partial.
+			//
+			// Two earlier versions of this got it wrong. The first set capped
+			// the moment the budget filled, so a session with exactly
+			// MaxPerSession matches read "N+ matches, truncated". The second set
+			// it on the next line of ANY kind, which in a real transcript — a
+			// prompt, then the assistant's reply — is the same mistake one line
+			// later. Only another MATCH proves there was more.
+			//
+			// The cost stays bounded by what the early stop was protecting:
+			// lines that fail the byte prefilter are still skipped undecoded,
+			// and the probe ends at the first real match, which for a query that
+			// appears in conversation text is almost always the next survivor.
+			// ponytail: the worst case is a query found later only in excluded
+			// tool output, which decodes every survivor to EOF — the same work a
+			// file under budget already does.
+			capped = true
+			return false
+		}
+		matches += n
+		hit.Profile = c.scope.Profile
+		hit.SessionID = c.id
+		// Forward-slashed, matching Entry.SubPaths. The reader's allowlist
+		// compares the two directly, and filepath.Rel hands back OS-separated
+		// paths — so on Windows every subagent hit would be unopenable.
+		hit.RelPath = filepath.ToSlash(c.rel)
+		hit.ModTime = c.modTime
+		hit.Subagent = c.subagent
+		hits = append(hits, hit)
 		if len(hits) >= quota {
 			full = true
 		}

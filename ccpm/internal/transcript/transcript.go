@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -515,9 +516,10 @@ func (l rawLine) searchTexts(includeToolResults bool) []searchable {
 			out = append(out, searchable{text: rb.Text, source: SourceText})
 		case "tool_use":
 			// The whole input object, so every field is searchable — not just
-			// the one toolInputPreview picks for the chip label.
+			// the one toolInputPreview picks for the chip label. Decoded, not
+			// raw: see inputText.
 			out = append(out, searchable{
-				text:     rb.Name + " " + flatten(rb.Input),
+				text:     rb.Name + " " + inputText(rb.Input),
 				source:   SourceToolUse,
 				toolName: rb.Name,
 			})
@@ -584,6 +586,48 @@ func ToolBody(path, turnUUID string, blockIndex, maxBytes int) (body string, ful
 
 // flatten renders a tool payload to plain text, handling the string shape, the
 // typed-block-array shape, and a raw JSON object input.
+// inputText renders a tool input for MATCHING: every string value in the
+// object, decoded, one per line, keys in sorted order so a snippet is stable.
+//
+// A tool input is a JSON object, and flatten returns an object verbatim — with
+// its escapes still in. Searching that text meant the code Claude wrote could
+// not be found by what it actually says: `"use strict"` is stored as
+// \"use strict\" and C:\Users as C:\\Users, so neither query ever matched inside
+// a Write or Edit. Keys and numbers are left out: they are the tool's schema,
+// not the content, and a query for "120" should not land on every read offset.
+func inputText(raw json.RawMessage) string {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return string(raw)
+	}
+	var sb strings.Builder
+	var walk func(any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case string:
+			if sb.Len() > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.WriteString(t)
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			keys := make([]string, 0, len(t))
+			for k := range t {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				walk(t[k])
+			}
+		}
+	}
+	walk(v)
+	return sb.String()
+}
+
 func flatten(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""

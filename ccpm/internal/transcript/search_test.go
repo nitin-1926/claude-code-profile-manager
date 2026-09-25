@@ -900,20 +900,26 @@ func TestLoadIndexDropsNullEntries(t *testing.T) {
 	}
 }
 
-// TestExactBudgetIsNotReportedAsTruncated is the regression for a result set
-// that was complete but advertised as partial.
-//
-// scanFile used to set capped the moment len(hits) reached the quota, on the
-// last matching turn of the file, with nothing to distinguish "the file is
-// exhausted" from "there is more". A session holding exactly MaxPerSession
-// matches therefore rendered as "3+ matches, results truncated" when 3 was the
-// whole truth.
+// The two tests below use the shape a real transcript has: every prompt is
+// followed by the assistant's reply. The first version of the exact-budget fix
+// passed its test only because the fixture ended on the matching line — in a
+// real session the reply comes next, and that fix still reported the result as
+// truncated. A fixture that never has a line after the last match cannot tell
+// "stopped at the last match" from "stopped at the last line".
+func reply(t *testing.T, uuid, text string) string {
+	return asstLine(t, uuid, "claude-opus-5", []any{map[string]any{"type": "text", "text": text}})
+}
+
+// TestExactBudgetIsNotReportedAsTruncated: a session holding exactly
+// MaxPerSession matches, each answered, with ordinary conversation after the
+// last one, is a complete result.
 func TestExactBudgetIsNotReportedAsTruncated(t *testing.T) {
 	dir := t.TempDir()
 	writeSessionTranscript(t, dir, "/repo", "parent",
-		userLine(t, "u1", "hitme once"),
-		userLine(t, "u2", "hitme twice"),
-		userLine(t, "u3", "hitme thrice"),
+		userLine(t, "u1", "hitme once"), reply(t, "a1", "sure"),
+		userLine(t, "u2", "hitme twice"), reply(t, "a2", "done"),
+		userLine(t, "u3", "hitme thrice"), reply(t, "a3", "ok"),
+		userLine(t, "u4", "thanks, that is all"), reply(t, "a4", "anytime"),
 	)
 
 	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 3})
@@ -921,31 +927,59 @@ func TestExactBudgetIsNotReportedAsTruncated(t *testing.T) {
 		t.Fatalf("got %d hits, want 3", len(res.Hits))
 	}
 	if res.Truncated {
-		t.Error("a file whose last matching turn filled the quota was reported as truncated")
+		t.Error("an exhaustive result was reported as truncated — the lines after the last match are not matches")
 	}
 	if res.Matches != 3 {
 		t.Errorf("Matches = %d, want 3", res.Matches)
 	}
 }
 
-// ...and the other half: when there IS more after the quota is filled, the
-// result must still say so. Without this the fix above could be "never report
-// truncated", which is the same lie in the other direction.
-func TestMoreAfterTheBudgetIsStillTruncated(t *testing.T) {
+// ...and when a further match does exist — deep in the file, after plenty of
+// non-matching conversation — the result must still say it is partial.
+// Without this, "never report truncated" would pass the test above.
+func TestAMatchBeyondTheBudgetIsStillTruncated(t *testing.T) {
 	dir := t.TempDir()
-	writeSessionTranscript(t, dir, "/repo", "parent",
-		userLine(t, "u1", "hitme once"),
-		userLine(t, "u2", "hitme twice"),
-		userLine(t, "u3", "hitme thrice"),
-		userLine(t, "u4", "hitme again"),
-	)
+	lines := []string{
+		userLine(t, "u1", "hitme once"), reply(t, "a1", "sure"),
+		userLine(t, "u2", "hitme twice"), reply(t, "a2", "done"),
+		userLine(t, "u3", "hitme thrice"), reply(t, "a3", "ok"),
+	}
+	for i := range 40 {
+		id := strconv.Itoa(i)
+		lines = append(lines, userLine(t, "f"+id, "unrelated question"), reply(t, "r"+id, "unrelated answer"))
+	}
+	lines = append(lines, userLine(t, "u9", "one more hitme at the end"), reply(t, "a9", "fine"))
+	writeSessionTranscript(t, dir, "/repo", "parent", lines...)
 
 	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 3})
 	if len(res.Hits) != 3 {
 		t.Fatalf("got %d hits, want 3", len(res.Hits))
 	}
 	if !res.Truncated {
-		t.Error("a fourth match beyond the quota was not reported as truncating the result")
+		t.Error("a fourth matching turn exists beyond the budget, but the result was not marked truncated")
+	}
+}
+
+// A match that exists only where the current scope does not look — tool output,
+// with tool output excluded — is not a further match, and must not mark the
+// result truncated.
+func TestAMatchOutsideTheScopeDoesNotTruncate(t *testing.T) {
+	dir := t.TempDir()
+	toolResult := jl(t, map[string]any{
+		"type": "user", "uuid": "tr1", "sessionId": "s1", "cwd": "/repo",
+		"timestamp": "2026-06-27T10:02:00Z",
+		"message": map[string]any{"role": "user", "content": []any{map[string]any{
+			"type": "tool_result", "tool_use_id": "t1", "content": "hitme inside tool output",
+		}}},
+	})
+	writeSessionTranscript(t, dir, "/repo", "parent",
+		userLine(t, "u1", "hitme once"), reply(t, "a1", "sure"),
+		userLine(t, "u2", "hitme twice"), reply(t, "a2", "done"),
+		toolResult,
+	)
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 2})
+	if res.Truncated {
+		t.Error("a match in excluded tool output marked the result truncated")
 	}
 }
 
@@ -973,5 +1007,74 @@ func TestDroppedSessionsCountsQuotaSkippedFiles(t *testing.T) {
 	}
 	if res.DroppedSessions != 3 {
 		t.Errorf("DroppedSessions = %d, want 3 — three subagent transcripts went unopened", res.DroppedSessions)
+	}
+}
+
+// TestDroppedSessionsAccumulatesAcrossCaps: a transcript skipped for a spent
+// session quota and transcripts cut by the global result cap are both "never
+// opened", and the count must include both. The global-cap path assigned
+// instead of adding, which threw the quota-skipped files away.
+func TestDroppedSessionsAccumulatesAcrossCaps(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	age := func(path string, minutes int) {
+		t.Helper()
+		ts := now.Add(-time.Duration(minutes) * time.Minute)
+		if err := os.Chtimes(path, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Newest first: A's own transcript fills A's quota of 2...
+	age(writeSessionTranscript(t, dir, "/repo", "A",
+		userLine(t, "a1", "hitme"), reply(t, "ar1", "x"),
+		userLine(t, "a2", "hitme"), reply(t, "ar2", "x"),
+	), 1)
+	// ...so A's subagent is skipped unopened (dropped: 1)...
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "A", "subagents")
+	age(writeJSONL(t, subs, "agent-a.jsonl", userLine(t, "s1", "hitme")), 2)
+	// ...B takes the last slot of the global cap of 3...
+	age(writeSessionTranscript(t, dir, "/repo", "B", userLine(t, "b1", "hitme"), reply(t, "br1", "x")), 3)
+	// ...and C is never reached (dropped: 2).
+	age(writeSessionTranscript(t, dir, "/repo", "C", userLine(t, "c1", "hitme"), reply(t, "cr1", "x")), 4)
+
+	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 2, MaxResults: 3})
+	if len(res.Hits) != 3 {
+		t.Fatalf("got %d hits, want 3", len(res.Hits))
+	}
+	if res.DroppedSessions != 2 {
+		t.Errorf("DroppedSessions = %d, want 2 — A's subagent (quota) plus C (global cap)", res.DroppedSessions)
+	}
+}
+
+// TestToolInputsAreSearchedAsTheyRead is the regression for code Claude wrote
+// being unfindable by what it says. Tool inputs were searched as raw JSON, so a
+// quote or a backslash in a Write's content was stored escaped and the query
+// never matched. Real shape: an assistant turn carrying a tool_use block.
+func TestToolInputsAreSearchedAsTheyRead(t *testing.T) {
+	dir := t.TempDir()
+	write := asstLine(t, "a1", "claude-opus-5", []any{map[string]any{
+		"type": "tool_use", "id": "t1", "name": "Write",
+		"input": map[string]any{
+			"file_path": `C:\Users\dev\app.js`,
+			"content":   "\"use strict\";\nconst x = 1;\n",
+		},
+	}})
+	writeSessionTranscript(t, dir, "/repo", "sess",
+		userLine(t, "u1", "write the file"), write,
+	)
+
+	for _, q := range []string{`"use strict"`, `C:\Users`, `const x = 1`} {
+		res := Search(context.Background(), scopeOf(dir), q, SearchOpts{})
+		if len(res.Hits) != 1 {
+			t.Errorf("query %q: got %d hits, want 1 — tool input is being searched in its escaped form", q, len(res.Hits))
+			continue
+		}
+		if res.Hits[0].Source != SourceToolUse {
+			t.Errorf("query %q: hit source %q, want %q", q, res.Hits[0].Source, SourceToolUse)
+		}
+	}
+	// The schema is not content: a key name must not produce a hit.
+	if res := Search(context.Background(), scopeOf(dir), "file_path", SearchOpts{}); len(res.Hits) != 0 {
+		t.Errorf("a JSON key matched as if it were content (%d hits)", len(res.Hits))
 	}
 }

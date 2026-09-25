@@ -238,7 +238,8 @@ export function SearchResults({
       {result?.truncated && result.hits.length > 0 && (
         <p className="mt-3 text-center text-[11px] text-muted-foreground">
           Showing the newest matches
-          {result.droppedSessions > 0 && ` — ${result.droppedSessions} older sessions not scanned`}.
+          {result.droppedSessions > 0 &&
+            ` — ${result.droppedSessions} more transcript${result.droppedSessions === 1 ? '' : 's'} not scanned`}.
           Narrow the query to see more.
         </p>
       )}
