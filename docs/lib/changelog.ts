@@ -47,6 +47,11 @@ export const CHANGELOG: ChangelogSeries[] = [
           "Search reports how many transcripts it skipped because a session had already filled its budget. It previously said \"truncated\" while reporting zero skipped, with whole subagent transcripts left unread.",
           "`ccpm sessions list` now finds sessions in directories containing emoji or other non-BMP characters. Claude Code encodes those paths per UTF-16 unit, so its directory name carries two dashes where ccpm wrote one, and the lookup silently matched nothing.",
           "Opening the History tab twice at once can no longer drop a just-added session from the list, and the tab no longer triggers its own refresh by writing its index inside the watched directory.",
+          "Search now finds text inside code Claude wrote even when it contains quotes or backslashes: `\"use strict\"` or `C:\\Users` inside a Write or Edit used to match nothing, because tool inputs were searched in their escaped JSON form.",
+          "The reader's Next and Previous prompt buttons now step to the right prompt from anywhere, including from a search hit on a tool call, where they used to jump the wrong way. They also work across long stretches of tool calls with no prompts, and at the last prompt they stay put instead of leaving you on the final page.",
+          "Subagent transcripts opened from a search hit showed an empty page; their turns now show, and a new toggle shows or hides subagent turns anywhere.",
+          "Going Back from the reader to your search results keeps them and your scroll position, instead of re-running the whole search.",
+          "Saving the global status line layout no longer leaves the profile editor showing changes you did not make.",
         ],
       },
       {
