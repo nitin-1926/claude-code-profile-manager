@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/transcript"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
@@ -223,37 +224,12 @@ func readSessionHeader(path string) (sessionRecord, error) {
 	return rec, nil
 }
 
-// extractUserPrompt pulls a human-readable preview from a session line. The
-// shape varies across Claude Code versions, so we probe a few known spots.
+// extractUserPrompt pulls a human-readable preview from a session line. It
+// delegates to internal/transcript so the History reader and this command share
+// one content-block decoder and can never drift — the same reasoning as
+// encodeCwdForClaude below.
 func extractUserPrompt(entry map[string]interface{}) string {
-	if role, _ := entry["role"].(string); role != "user" && entry["role"] != nil {
-		return ""
-	}
-	if s, ok := entry["content"].(string); ok {
-		return strings.TrimSpace(s)
-	}
-	// Claude Code v2 stores messages under entry["message"]["content"] as a
-	// list of typed blocks. Grab the first "text" block.
-	if msg, ok := entry["message"].(map[string]interface{}); ok {
-		if role, _ := msg["role"].(string); role != "user" && msg["role"] != nil {
-			return ""
-		}
-		switch content := msg["content"].(type) {
-		case string:
-			return strings.TrimSpace(content)
-		case []interface{}:
-			for _, blk := range content {
-				if bm, ok := blk.(map[string]interface{}); ok {
-					if t, _ := bm["type"].(string); t == "text" {
-						if text, ok := bm["text"].(string); ok {
-							return strings.TrimSpace(text)
-						}
-					}
-				}
-			}
-		}
-	}
-	return ""
+	return transcript.FirstUserPrompt(entry)
 }
 
 // encodeCwdForClaude mirrors native Claude Code's cwd encoding used in

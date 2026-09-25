@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { useToast } from '@/components/ui/Toast'
+import { useGuarded } from '@/lib/useGuarded'
 
 export function Modal({
   open,
@@ -72,25 +72,6 @@ export function Modal({
       </div>
     </div>
   )
-}
-
-// useGuarded wraps a handler that may be async: a rejected Wails bridge call
-// (backend down, Go panic) would otherwise become an unhandled rejection and
-// the button would silently do nothing.
-function useGuarded(action: string) {
-  const toast = useToast()
-  return (fn: () => void) => () => {
-    try {
-      const r = fn() as unknown
-      if (r instanceof Promise) {
-        r.catch((e: unknown) =>
-          toast({ kind: 'error', title: `${action} failed`, desc: String(e) }),
-        )
-      }
-    } catch (e) {
-      toast({ kind: 'error', title: `${action} failed`, desc: String(e) })
-    }
-  }
 }
 
 /** Prompt for a single text value (e.g. a new profile name). */
