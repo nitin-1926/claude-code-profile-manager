@@ -70,6 +70,19 @@ type Index struct {
 
 func newIndex() *Index { return &Index{Version: indexVersion, Entries: map[string]*Entry{}} }
 
+// IsIndexFile reports whether path is the history sidecar or one of the
+// siblings atomicwrite creates while replacing it (<path>.ccpm-staged-<rand>,
+// <path>.ccpm-rollback).
+//
+// The desktop watcher uses it to ignore the sidecar's own writes. Matching the
+// exact name was not enough: atomicwrite stages to a sibling and renames it
+// into place, so the CREATE and RENAME events arrive under the staged name and
+// every index save still fired a refresh.
+func IsIndexFile(path string) bool {
+	base := filepath.Base(path)
+	return base == "history.json" || strings.HasPrefix(base, "history.json.ccpm-")
+}
+
 // IndexPath is the sidecar's location. It sits beside the usage store because
 // it is derived from the same transcripts, but it is written and read
 // independently.
@@ -104,12 +117,6 @@ func LoadIndex(profileDir string) *Index {
 	return &ix
 }
 
-// BuildIndex refreshes the sidecar for one profile and returns it.
-//
-// Only transcripts whose size or mtime changed are re-scanned; everything else
-// is reused. Entries whose transcript has since been deleted are RETAINED — the
-// whole point of a sidecar is that history does not evaporate when Claude Code
-// prunes a file.
 // indexLocks serialises BuildIndex per profile directory. Keyed rather than a
 // single mutex so a slow scan of one profile does not block another's — the
 // desktop shows one profile at a time, but nothing enforces that.
@@ -122,6 +129,12 @@ func lockProfileIndex(profileDir string) func() {
 	return m.Unlock
 }
 
+// BuildIndex refreshes the sidecar for one profile and returns it.
+//
+// Only transcripts whose size or mtime changed are re-scanned; everything else
+// is reused. Entries whose transcript has since been deleted are RETAINED — the
+// whole point of a sidecar is that history does not evaporate when Claude Code
+// prunes a file.
 func BuildIndex(profileDir string) (*Index, error) {
 	// Serialised per profile. BuildIndex is a read-modify-write of history.json
 	// and Wails dispatches every bound method on its own goroutine, so two
@@ -163,8 +176,11 @@ func BuildIndex(profileDir string) (*Index, error) {
 		// slices.Equal treats nil and empty as equal, so a session that simply
 		// has no subagents still short-circuits here rather than rebuilding on
 		// every pass.
+		// RelPath too: a transcript moved with `mv` or `cp -p` keeps its size
+		// and mtime, and an entry fresh on those alone kept pointing at the old
+		// path, leaving the row permanently unopenable.
 		if prev, ok := ix.Entries[id]; ok && prev.ModTime == mtime && prev.Size == size &&
-			slices.Equal(prev.SubPaths, subRels) {
+			slices.Equal(prev.SubPaths, subRels) && prev.RelPath == filepath.ToSlash(rel) {
 			return nil // unchanged since last build
 		}
 		meta, err := Scan(abs)

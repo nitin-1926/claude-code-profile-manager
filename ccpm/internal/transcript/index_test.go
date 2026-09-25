@@ -8,7 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
@@ -725,5 +727,129 @@ func TestNullEntriesArePrunedOnDisk(t *testing.T) {
 	}
 	if bytes.Contains(after, []byte(`"ghost"`)) {
 		t.Error("the null entry is still on disk — the prune was never persisted")
+	}
+}
+
+// TestIndexSavesAreRecognisedByTheirWatchEvents drives a real fsnotify watcher
+// over a real BuildIndex save and asserts that every event it produces is one
+// IsIndexFile recognises.
+//
+// This is the regression for a fix that did nothing: the desktop watcher
+// skipped events named exactly "history.json", but atomicwrite stages the
+// write to a sibling and renames it into place, so the events arrive under
+// "history.json.ccpm-staged-<rand>" and every save still fired a refresh. A
+// test that only checked the filter against a hand-written name would have
+// passed against that broken fix, which is why this one watches the real write.
+func TestIndexSavesAreRecognisedByTheirWatchEvents(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionTranscript(t, dir, "/repo", "sess", userLineIn(t, "u1", "/repo", "hello"))
+	usageDir := usage.Dir(dir)
+	if err := os.MkdirAll(usageDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Skipf("fsnotify unavailable here: %v", err)
+	}
+	defer w.Close()
+	if err := w.Add(usageDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatalf("BuildIndex: %v", err)
+	}
+
+	var seen []string
+	deadline := time.After(750 * time.Millisecond)
+collect:
+	for {
+		select {
+		case ev := <-w.Events:
+			seen = append(seen, filepath.Base(ev.Name))
+		case err := <-w.Errors:
+			t.Fatalf("watcher error: %v", err)
+		case <-deadline:
+			break collect
+		}
+	}
+
+	if len(seen) == 0 {
+		t.Fatal("the index save produced no watch events at all — this test is not observing the write")
+	}
+	for _, name := range seen {
+		if !IsIndexFile(name) {
+			t.Errorf("index save emitted an event for %q, which the watcher would treat as a real change", name)
+		}
+	}
+	// Prove the events include the staged sibling, i.e. that the case the old
+	// exact-name check missed actually occurs on this platform.
+	var staged bool
+	for _, name := range seen {
+		staged = staged || strings.HasPrefix(name, "history.json.ccpm-")
+	}
+	if !staged {
+		t.Logf("note: no staged-sibling event observed here (events: %v)", seen)
+	}
+}
+
+func TestIsIndexFileDoesNotSwallowRealChanges(t *testing.T) {
+	for name, want := range map[string]bool{
+		"/p/usage/history.json":                   true,
+		"/p/usage/history.json.ccpm-staged-4f2a":  true,
+		"/p/usage/history.json.ccpm-rollback":     true,
+		"/p/usage/sessions.json":                  false, // the usage store is a real change
+		"/p/usage/history.jsonl":                  false,
+		"/Users/x/.ccpm/config.json":              false,
+		"/p/usage/sessions.json.ccpm-staged-4f2a": false,
+	} {
+		if got := IsIndexFile(name); got != want {
+			t.Errorf("IsIndexFile(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// TestIndexFollowsAMovedTranscript: a transcript moved with its size and mtime
+// intact (mv, cp -p) must not leave its entry pointing at the old path. The
+// freshness check compared size, mtime and subagent paths only, so the entry
+// looked unchanged forever and the row could never be opened again.
+func TestIndexFollowsAMovedTranscript(t *testing.T) {
+	dir := t.TempDir()
+	old := writeSessionTranscript(t, dir, "/repo-a", "sess", userLineIn(t, "u1", "/repo-a", "hello"))
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	fi, err := os.Stat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDir := filepath.Join(dir, "projects", usage.EncodeCwd("/repo-b"))
+	if err := os.MkdirAll(newDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(newDir, filepath.Base(old))
+	if err := os.WriteFile(moved, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(moved, fi.ModTime(), fi.ModTime()); err != nil { // cp -p
+		t.Fatal(err)
+	}
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+
+	ix, err := BuildIndex(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.Rel(filepath.Join(dir, "projects"), moved)
+	if got := ix.Entries["sess"].RelPath; got != filepath.ToSlash(want) {
+		t.Errorf("RelPath = %q, want %q — the entry still points at where the file used to be", got, filepath.ToSlash(want))
 	}
 }

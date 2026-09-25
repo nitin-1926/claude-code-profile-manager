@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/transcript"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -66,9 +68,9 @@ func (a *App) watchLoop() {
 			// The history sidecar is written BY a History fetch, inside the
 			// watched tree. Without this exclusion an append to any transcript
 			// produced a write here, a ccpm:changed event, a refetch, and a
-			// second full scan — a loop that terminated only because the second
-			// build found nothing changed.
-			if filepath.Base(ev.Name) == "history.json" {
+			// second full scan. IsIndexFile also covers atomicwrite's staged
+			// sibling, which is the name the write actually arrives under.
+			if transcript.IsIndexFile(ev.Name) {
 				continue
 			}
 			// pick up newly created directories so future changes inside them fire too
