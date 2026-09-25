@@ -37,6 +37,19 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Session history with transcript reading and search, profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
       {
+        date: "2026-09-24",
+        title: "History: honest failures and accurate counts",
+        categories: ["Fixed"],
+        bullets: [
+          "A transcript the reader cannot open now says why, with a Retry, instead of rendering as an empty conversation. A pruned file, a permission error and a genuinely empty session all looked identical before.",
+          "Opening a search hit in a transcript written since the tab last listed — a subagent file a running session just spawned — used to show a blank page. The session index is now rebuilt on demand rather than the hit being refused.",
+          "Search no longer claims a result was truncated when it was complete. A session holding exactly its per-session match budget reported \"3+ matches, results truncated\" for a result that had found everything.",
+          "Search reports how many transcripts it skipped because a session had already filled its budget. It previously said \"truncated\" while reporting zero skipped, with whole subagent transcripts left unread.",
+          "`ccpm sessions list` now finds sessions in directories containing emoji or other non-BMP characters. Claude Code encodes those paths per UTF-16 unit, so its directory name carries two dashes where ccpm wrote one, and the lookup silently matched nothing.",
+          "Opening the History tab twice at once can no longer drop a just-added session from the list, and the tab no longer triggers its own refresh by writing its index inside the watched directory.",
+        ],
+      },
+      {
         date: "2026-09-13",
         title: "Status line: choose your own segments",
         categories: ["Added"],
