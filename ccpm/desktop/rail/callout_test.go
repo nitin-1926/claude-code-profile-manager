@@ -128,7 +128,7 @@ func TestBuildCalloutRendersEveryWindow(t *testing.T) {
 		t.Errorf("reset = %q", c.Windows[0].Reset)
 	}
 	// 80% used is 20% left: tightening. 30% used is 70% left: healthy.
-	if c.Windows[0].RGB != ColorTightening || c.Windows[1].RGB != ColorHealthy {
+	if c.Windows[0].RGB != NotchWatch || c.Windows[1].RGB != NotchAmple {
 		t.Errorf("window colours = %#06x/%#06x", c.Windows[0].RGB, c.Windows[1].RGB)
 	}
 }

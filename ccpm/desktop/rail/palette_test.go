@@ -130,3 +130,15 @@ func luma(c RGB) float64 {
 	r, g, b := float64((c>>16)&0xFF), float64((c>>8)&0xFF), float64(c&0xFF)
 	return 0.2126*r + 0.7152*g + 0.0722*b
 }
+
+// TestNotchColorSharesTheStatuslineThresholds pins the one rule that matters
+// about the notch palette: it may look like codenotch, but it must band at
+// exactly the same points as the terminal status line.
+func TestNotchColorSharesTheStatuslineThresholds(t *testing.T) {
+	for remaining := 0; remaining <= 100; remaining++ {
+		want := map[RGB]RGB{ColorHealthy: NotchAmple, ColorTightening: NotchWatch, ColorNearLimit: NotchCritical}[HeadroomColor(remaining)]
+		if got := NotchColor(remaining); got != want {
+			t.Errorf("NotchColor(%d) = %06x, want %06x — the notch and the status line would disagree", remaining, got, want)
+		}
+	}
+}

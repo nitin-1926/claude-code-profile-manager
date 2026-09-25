@@ -58,11 +58,11 @@ func TestBuildModelMapsBothWindows(t *testing.T) {
 		t.Errorf("percent = %q, want the five-hour figure", s.Percent)
 	}
 	// 80% used is 20% left: tightening, per the statusline thresholds.
-	if s.OuterRGB != ColorTightening {
+	if s.OuterRGB != NotchWatch {
 		t.Errorf("outer colour = %#06x, want tightening for 20%% headroom", s.OuterRGB)
 	}
 	// 30% used is 70% left: healthy.
-	if s.InnerRGB != ColorHealthy {
+	if s.InnerRGB != NotchAmple {
 		t.Errorf("inner colour = %#06x, want healthy for 70%% headroom", s.InnerRGB)
 	}
 }

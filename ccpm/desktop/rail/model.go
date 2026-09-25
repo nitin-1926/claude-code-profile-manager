@@ -83,8 +83,8 @@ func buildSlot(l services.ProfileLimits, now time.Time) Slot {
 		Available: l.Available,
 		// Unavailable still needs colours: the renderer tints the track with
 		// them, and a zero value would be black on black.
-		OuterRGB: ColorHealthy,
-		InnerRGB: ColorHealthy,
+		OuterRGB: NotchAmple,
+		InnerRGB: NotchAmple,
 	}
 	if !l.Available {
 		return s
@@ -94,7 +94,7 @@ func buildSlot(l services.ProfileLimits, now time.Time) Slot {
 		frac := FillFraction(w.UsedPercentage)
 		// HeadroomColor grades on what is LEFT, so invert here rather than
 		// teaching it about used-percentages and having two conventions.
-		color := HeadroomColor(int(100 - w.UsedPercentage))
+		color := NotchColor(int(100 - w.UsedPercentage))
 		switch w.Key {
 		case usage.KeyFiveHour:
 			s.Outer, s.OuterRGB = frac, color

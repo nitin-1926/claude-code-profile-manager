@@ -57,11 +57,11 @@ var palettes = map[string]struct {
 		card:            oklch{0.2760, 0.0050, 65}, // --card
 	},
 	ThemeMidnight: {
-		foreground:      oklch{0.8109, 0, 0},      // --foreground
-		mutedForeground: oklch{0.6268, 0, 0},      // --muted-foreground
-		muted:           oklch{0.2520, 0, 0},      // --muted
-		border:          oklch{0.2520, 0, 0},      // --border
-		card:            oklch{0.1822, 0, 0},      // --card
+		foreground:      oklch{0.8109, 0, 0}, // --foreground
+		mutedForeground: oklch{0.6268, 0, 0}, // --muted-foreground
+		muted:           oklch{0.2520, 0, 0}, // --muted
+		border:          oklch{0.2520, 0, 0}, // --border
+		card:            oklch{0.1822, 0, 0}, // --card
 	},
 	ThemeLight: {
 		foreground:      oklch{0.2400, 0.0250, 264.6645}, // --foreground
@@ -112,6 +112,33 @@ func HeadroomColor(remaining int) RGB {
 		return ColorTightening
 	default:
 		return ColorNearLimit
+	}
+}
+
+// The notch's own palette: codenotch's hues (MIT, vinzdg/codenotch), which are
+// tuned to read on its always-black body. The notch is black whatever the app
+// theme, so these are the dark-appearance values and never vary with it.
+const (
+	NotchAmple    RGB = 0x00FF88
+	NotchWatch    RGB = 0xF2FF00
+	NotchCritical RGB = 0xFF3F00
+)
+
+// NotchColor grades a window for the notch.
+//
+// The THRESHOLDS are HeadroomColor's, deliberately not codenotch's (which band
+// at 50% and 70% used). The notch and the terminal status line describe the
+// same windows, and a profile that reads amber in one and red in the other
+// would be two different answers to the same question. Only the hue is
+// codenotch's.
+func NotchColor(remaining int) RGB {
+	switch HeadroomColor(remaining) {
+	case ColorHealthy:
+		return NotchAmple
+	case ColorTightening:
+		return NotchWatch
+	default:
+		return NotchCritical
 	}
 }
 

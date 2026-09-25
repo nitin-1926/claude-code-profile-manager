@@ -71,7 +71,7 @@ func BuildCallout(l services.ProfileLimits, now time.Time) Callout {
 			Reset:    FormatReset(w.ResetsAt, now),
 			Percent:  fmt.Sprintf("%d%% used", int(w.UsedPercentage+0.5)),
 			Fraction: FillFraction(w.UsedPercentage),
-			RGB:      HeadroomColor(int(100 - w.UsedPercentage)),
+			RGB:      NotchColor(int(100 - w.UsedPercentage)),
 		})
 	}
 	return c
