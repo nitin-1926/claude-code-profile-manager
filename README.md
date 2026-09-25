@@ -110,7 +110,13 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
 
 Grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
 
-Open the `.dmg` and drag **CCPM** into **Applications**. The app is distributed unsigned (no Apple Developer account), so on first launch macOS Gatekeeper asks you to approve it once — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**). It opens normally after that.
+Open the `.dmg` and drag **CCPM** into **Applications**. The app is not notarized yet (that needs an Apple Developer account), and on **macOS 15 Sequoia and later** Gatekeeper no longer lets right-click → Open past that: it refuses to launch the app and may even call it **"damaged"**. It isn't — the download is checksummed and ad-hoc signed, macOS just can't vouch for who built it. Clear the download flag once and it opens normally:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/CCPM.app
+```
+
+On macOS 14 and earlier, right-clicking the app and choosing **Open** works instead.
 
 **Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
 
