@@ -33,20 +33,31 @@ export function TranscriptReader({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [showThinking, setShowThinking] = useState(false)
-  const [showSidechain, setShowSidechain] = useState(false)
+  // Every turn of a SUBAGENT transcript is a sidechain turn, so opening one
+  // with the toggle off showed "turns 1-200 of N" above an empty page, with no
+  // prompts for the stepper either. It starts on for those.
+  const [showSidechain, setShowSidechain] = useState(relPath !== '')
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [target, setTarget] = useState(-1)
-  // Where to land once a page fetched by the prompt stepper arrives. Transcript
-  // returns TargetIndex -1, so without this a step across a page boundary
-  // loaded 200 turns, highlighted nothing, and left the scroll container where
-  // it was — the button read as broken and needed a second click.
-  const [land, setLand] = useState<null | 'first' | 'last'>(null)
+  // An in-flight prompt seek that crossed a page boundary. `from` is where it
+  // started, so a seek that finds nothing can put the reader back rather than
+  // leaving it wherever the search ran out. `restoring` marks that return trip.
+  const [seek, setSeek] = useState<null | {
+    dir: 1 | -1
+    from: { offset: number; target: number }
+    restoring?: boolean
+  }>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const gen = useRef(0)
+  // The most recent fetch, so Retry re-runs the call that actually failed —
+  // a later page, a seek hop — instead of reopening from the start and losing
+  // the reader's place.
+  const lastFetch = useRef<(() => Promise<HistoryPage>) | null>(null)
   const fetchPage = useCallback(
     async (fn: () => Promise<HistoryPage>) => {
       const mine = ++gen.current
+      lastFetch.current = fn
       setBusy(true)
       try {
         const p = await fn()
@@ -55,7 +66,12 @@ export function TranscriptReader({
         setTarget(p.targetIndex)
         setError(null)
       } catch (e) {
-        if (gen.current === mine) setError(String(e))
+        if (gen.current !== mine) return
+        setError(String(e))
+        // A failure ends any seek. Left armed, the seek effect sees busy go
+        // false and re-fetches the same page: a tight loop of bridge calls
+        // behind the error banner for as long as the failure persists.
+        setSeek(null)
       } finally {
         if (gen.current === mine) setBusy(false)
       }
@@ -63,8 +79,7 @@ export function TranscriptReader({
     [],
   )
 
-  // Hoisted so the error state's Retry re-runs exactly the call that failed
-  // rather than an approximation of it.
+  // The initial open, hoisted so Retry has a fallback before any fetch exists.
   const openInitial = useCallback(
     () =>
       fetchPage(() =>
@@ -138,24 +153,30 @@ export function TranscriptReader({
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }
 
+  const pageAt = (off: number) => () => api.history.transcript(profile, session.id, relPath, off, PAGE)
+
+  // The next prompt strictly after the current position (or before it, going
+  // back), by TURN INDEX rather than by position in the prompt list. That is
+  // what makes stepping from a search hit work: a hit on a tool turn is not in
+  // the list at all, and looking it up there sent Next to the page's first
+  // prompt — above the hit — and Previous to its last.
   function step(dir: 1 | -1) {
-    if (prompts.length === 0) return
-    const cur = prompts.findIndex((p) => p.index === target)
-    const next = cur < 0 ? (dir > 0 ? 0 : prompts.length - 1) : cur + dir
-    // At a page edge, page rather than clamp. Math.min used to make the button
-    // a silent no-op while more prompts sat one "Load later turns" away.
-    if (next < 0 && hasPrev) {
-      setLand('last')
-      void fetchPage(() => api.history.transcript(profile, session.id, relPath, Math.max(0, offset - PAGE), PAGE))
+    const here = target
+    const found =
+      dir > 0
+        ? prompts.find((p) => p.index > here)
+        : here < 0
+          ? prompts[prompts.length - 1]
+          : [...prompts].reverse().find((p) => p.index < here)
+    if (found) {
+      goTo(found.index)
       return
     }
-    if (next >= prompts.length && hasNext) {
-      setLand('first')
-      void fetchPage(() => api.history.transcript(profile, session.id, relPath, offset + PAGE, PAGE))
-      return
+    // Nothing further on this page: page that way and keep looking.
+    if (dir > 0 ? hasNext : hasPrev) {
+      setSeek({ dir, from: { offset, target } })
+      void fetchPage(pageAt(dir > 0 ? offset + PAGE : Math.max(0, offset - PAGE)))
     }
-    const clamped = Math.max(0, Math.min(prompts.length - 1, next))
-    goTo(prompts[clamped].index)
   }
 
   const offset = page?.offset ?? 0
@@ -163,37 +184,37 @@ export function TranscriptReader({
   const hasPrev = offset > 0
   const hasNext = offset + (page?.turns.length ?? 0) < total
 
-  // Resolve a pending landing once the stepper's page has arrived.
+  // Carry an in-flight seek forward once each page arrives.
   //
   // A page can hold no prompt at all: a session that is mostly tool calls has
-  // runs of 200 turns with nothing a human typed — measured on a real 2,806-turn
-  // session, the whole of turns 200-399. Landing on such a page and giving up
-  // left the reader mid-page with nothing highlighted, which is the same broken
-  // "the button did nothing" the landing intent exists to fix. So a prompt-less
-  // page keeps paging in the same direction until a prompt turns up or the
-  // transcript ends. Bounded by the page count, and the stepper is disabled
-  // throughout because `busy` stays true across each hop.
+  // runs of 200 turns with nothing a human typed — measured on a real
+  // 2,806-turn session, all of turns 200-599 and 800-999. So a prompt-less page
+  // keeps paging in the same direction. When the transcript runs out first,
+  // there IS no further prompt, and the reader goes back to where the seek
+  // started instead of being stranded on the last page with nothing marked.
+  // Bounded by the page count; the stepper is disabled throughout because busy
+  // stays true across each hop.
   useEffect(() => {
-    if (!land || busy || !page) return
+    if (!seek || busy || !page) return
+    if (seek.restoring) {
+      if (seek.from.target >= 0) goTo(seek.from.target)
+      setSeek(null)
+      return
+    }
     if (prompts.length > 0) {
-      goTo(land === 'first' ? prompts[0].index : prompts[prompts.length - 1].index)
-      setLand(null)
+      goTo(seek.dir > 0 ? prompts[0].index : prompts[prompts.length - 1].index)
+      setSeek(null)
       return
     }
-    if (land === 'first' && hasNext) {
-      void fetchPage(() => api.history.transcript(profile, session.id, relPath, offset + PAGE, PAGE))
+    if (seek.dir > 0 ? hasNext : hasPrev) {
+      void fetchPage(pageAt(seek.dir > 0 ? offset + PAGE : Math.max(0, offset - PAGE)))
       return
     }
-    if (land === 'last' && hasPrev) {
-      void fetchPage(() => api.history.transcript(profile, session.id, relPath, Math.max(0, offset - PAGE), PAGE))
-      return
-    }
-    // No prompt anywhere further in that direction. Stop here rather than
-    // leaving the intent armed to fire against some later page.
-    setLand(null)
-    // goTo only reads scrollRef, which never changes identity.
+    setSeek({ ...seek, restoring: true })
+    void fetchPage(pageAt(seek.from.offset))
+    // goTo and pageAt only read refs and props already listed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [land, busy, page, prompts, hasNext, hasPrev, offset, fetchPage, profile, session.id, relPath])
+  }, [seek, busy, page, prompts, hasNext, hasPrev, offset, fetchPage])
 
   return (
     <div className="flex h-full flex-col">
@@ -226,22 +247,37 @@ export function TranscriptReader({
             onClick={() => setShowThinking((v) => !v)}
             label={`thinking${thinkingCount ? ` (${thinkingCount})` : ''}`}
           />
+          {/* The sidechain toggle had state but no control: it could only be
+              switched on by a search jump, so sidechain turns were otherwise
+              unreachable. */}
+          <Toggle
+            active={showSidechain}
+            disabled={sidechainCount === 0}
+            onClick={() => setShowSidechain((v) => !v)}
+            label={`subagent turns${sidechainCount ? ` (${sidechainCount})` : ''}`}
+          />
           {relPath !== '' && (
             <span className="rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs">
               subagent transcript
             </span>
           )}
-          {prompts.length > 0 && (
+          {/* Shown whenever there is anywhere to step to, not only when this
+              page has prompts: a page of pure tool calls still has prompts
+              before and after it, and hiding the stepper there stranded the
+              reader with no way to reach them. */}
+          {(prompts.length > 0 || hasPrev || hasNext) && (
             <>
               <span className="mx-1 h-4 w-px bg-border" />
-              <button
-                onClick={() => setOutlineOpen((v) => !v)}
-                aria-expanded={outlineOpen}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <List className="size-3.5" />
-                {prompts.length} prompts{total > visible.length ? ' on this page' : ''}
-              </button>
+              {prompts.length > 0 && (
+                <button
+                  onClick={() => setOutlineOpen((v) => !v)}
+                  aria-expanded={outlineOpen}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <List className="size-3.5" />
+                  {prompts.length} prompts{total > visible.length ? ' on this page' : ''}
+                </button>
+              )}
               <IconStep onClick={() => step(-1)} label="Previous prompt" disabled={busy} up />
               <IconStep onClick={() => step(1)} label="Next prompt" disabled={busy} />
             </>
@@ -284,7 +320,7 @@ export function TranscriptReader({
           <div className="flex items-center gap-2 text-sm text-destructive">
             <span>Could not open this transcript: {error}</span>
             <button
-              onClick={() => void openInitial()}
+              onClick={() => void (lastFetch.current ? fetchPage(lastFetch.current) : openInitial())}
               className="cursor-pointer rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Retry

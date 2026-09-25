@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import type { HistorySession, SearchHit } from '@/types'
 import { humanTokens, money, tildePath, timeAgo } from '@/lib/format'
@@ -35,6 +35,23 @@ export function HistoryTab({ profile }: { profile: string }) {
   const [scope, setScope] = useState<ScopeId>('list')
   const [includeToolResults, setIncludeToolResults] = useState(false)
   const [reading, setReading] = useState<Reading | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  // The scroll offset of whatever scrolls the list, saved when the reader
+  // opens and put back when it closes. The list is hidden rather than
+  // unmounted, but display:none still collapses its scroll container.
+  const savedScroll = useRef<number | null>(null)
+
+  const openReader = (r: Reading) => {
+    savedScroll.current = scrollParent(listRef.current)?.scrollTop ?? null
+    setReading(r)
+  }
+
+  useLayoutEffect(() => {
+    if (reading || savedScroll.current === null) return
+    const el = scrollParent(listRef.current)
+    if (el) el.scrollTop = savedScroll.current
+    savedScroll.current = null
+  }, [reading])
 
   // Plain effect, deliberately NOT useLive: useLive re-fetches on the watcher's
   // ccpm:changed event, and building the history index writes into the watched
@@ -66,23 +83,40 @@ export function HistoryTab({ profile }: { profile: string }) {
     load()
   }, [load])
 
-  if (reading) {
-    return (
-      <TranscriptReader
-        profile={profile}
-        session={reading.session}
-        turnUuid={reading.origin.kind === 'search' ? reading.origin.hit.turnUuid : undefined}
-        relPath={reading.relPath}
-        onBack={() => setReading(null)}
-      />
-    )
-  }
+  // The reader is drawn OVER the list rather than instead of it. Returning
+  // early unmounted SearchResults, whose cleanup cancels the scan and drops the
+  // hits, so every Back re-ran a full-profile search from scratch and rebuilt
+  // the list scrolled to the top — once per hit inspected. Kept mounted but
+  // hidden, the results and their scroll position are exactly where they were.
+  const reader = reading && (
+    <TranscriptReader
+      profile={profile}
+      session={reading.session}
+      turnUuid={reading.origin.kind === 'search' ? reading.origin.hit.turnUuid : undefined}
+      relPath={reading.relPath}
+      onBack={() => setReading(null)}
+    />
+  )
 
   if (error) {
-    return <div className="px-6 py-5 text-sm text-destructive">Could not load history: {error}</div>
+    return (
+      <>
+        {reader}
+        <div hidden={!!reading} className="px-6 py-5 text-sm text-destructive">
+          Could not load history: {error}
+        </div>
+      </>
+    )
   }
   if (!sessions) {
-    return <div className="px-6 py-5 text-sm text-muted-foreground">Loading history…</div>
+    return (
+      <>
+        {reader}
+        <div hidden={!!reading} className="px-6 py-5 text-sm text-muted-foreground">
+          Loading history…
+        </div>
+      </>
+    )
   }
 
   const filtered =
@@ -91,7 +125,9 @@ export function HistoryTab({ profile }: { profile: string }) {
       : sessions
 
   return (
-    <div className="px-6 py-5">
+    <>
+      {reader}
+      <div ref={listRef} hidden={!!reading} className="px-6 py-5">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -132,7 +168,7 @@ export function HistoryTab({ profile }: { profile: string }) {
             // A hit in a subagent transcript opens THAT file — Claude Code does
             // not copy a subagent's conversation into its parent, so opening the
             // parent would land on nothing.
-            setReading({
+            openReader({
               session,
               origin: { kind: 'search', hit },
               relPath: hit.subagent ? hit.relPath : '',
@@ -145,10 +181,11 @@ export function HistoryTab({ profile }: { profile: string }) {
           total={sessions.length}
           filtering={query.trim().length > 0}
           profile={profile}
-          onOpen={(s) => setReading({ session: s, origin: { kind: 'list' }, relPath: '' })}
+          onOpen={(s) => openReader({ session: s, origin: { kind: 'list' }, relPath: '' })}
         />
       )}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -353,4 +390,13 @@ function SessionRow({
 /** "claude-opus-5" reads better than the full dated id in a dense row. */
 function shortModel(model: string): string {
   return model.replace(/^claude-/, '').replace(/-\d{8}$/, '')
+}
+
+/** The nearest ancestor that actually scrolls, or null. */
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) return p
+  }
+  return null
 }
