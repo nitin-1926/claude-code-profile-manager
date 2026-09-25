@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -238,16 +239,23 @@ func resolveTranscriptPath(profile, sessionID, relPath string) (string, error) {
 	if relPath != "" {
 		want = relPath
 	}
+	// Containment first: `want` came from the on-disk index, which a shared or
+	// restored profile can carry tampered, so nothing is stat-ed before
+	// ResolvePath has rejected rooted and escaping forms.
 	full, err := transcript.ResolvePath(dir, want)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("transcript is no longer on disk: %w", err)
+		}
 		return "", err
 	}
-	// Re-check the symlink here, not only when the index was built. The index
-	// records a regular file; if that path is later replaced by a link to, say,
-	// ~/.ssh/id_rsa, an index-time-only guard would happily open and render it.
-	// That is the same "profile shared or restored from elsewhere" threat model
-	// the containment check exists for, just with time added.
-	fi, err := os.Lstat(full)
+	// Then inspect the path AS STORED. ResolvePath returns the EvalSymlinks
+	// result, so a check made on its output can never see a link — which is
+	// how this guard used to be written, and why it never fired. The index
+	// records a regular file; if that path is later replaced by a link — to
+	// ~/.ssh/id_rsa, or to another session's transcript inside projects/ that
+	// containment alone would allow — refuse it.
+	fi, err := os.Lstat(filepath.Join(dir, "projects", filepath.FromSlash(want)))
 	if err != nil {
 		return "", fmt.Errorf("transcript is no longer on disk: %w", err)
 	}

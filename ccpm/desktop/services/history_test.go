@@ -251,3 +251,105 @@ func TestRebuildDoesNotAdmitAnArbitraryPath(t *testing.T) {
 		t.Error("a traversal path was admitted after the index rebuild")
 	}
 }
+
+// historyFixture builds a synthetic profile holding two real, indexed
+// sessions — "sess" (with one subagent transcript) and "other" — and returns
+// the profile name plus each transcript's projects-relative path.
+//
+// Two sessions matter. A guard test that uses an empty profile, or puts the
+// hostile path in the session id, fails at "session not found" long before the
+// relPath allowlist is consulted — which is how the previous allowlist test
+// passed with the allowlist deleted.
+func historyFixture(t *testing.T) (profile, sessRel, subRel, otherRel string) {
+	t.Helper()
+	profile = syntheticProfile(t)
+	dir := profileDir(profile)
+	proj := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"))
+	write := func(path, sess, uuid, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		line := `{"type":"user","uuid":"` + uuid + `","sessionId":"` + sess + `","cwd":"/repo",` +
+			`"timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"` + text + `"}}` + "\n"
+		if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(proj, "sess.jsonl"), "sess", "u1", "hello from sess")
+	write(filepath.Join(proj, "sess", "subagents", "agent-a.jsonl"), "sess", "s1", "from the subagent")
+	write(filepath.Join(proj, "other.jsonl"), "other", "o1", "a DIFFERENT session's private text")
+	if _, err := NewHistory().Sessions(profile); err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	enc := usage.EncodeCwd("/repo")
+	return profile, enc + "/sess.jsonl", enc + "/sess/subagents/agent-a.jsonl", enc + "/other.jsonl"
+}
+
+// TestRelPathAllowlistRefusesAnotherSessionsTranscript reaches the allowlist
+// for real: "sess" exists, and "other"'s transcript exists inside projects/ and
+// passes containment. The ONLY thing between the caller and another session's
+// content is the check that relPath is one of sess's own paths.
+func TestRelPathAllowlistRefusesAnotherSessionsTranscript(t *testing.T) {
+	profile, _, subRel, otherRel := historyFixture(t)
+	h := NewHistory()
+
+	// Positive control: sess's own subagent opens, so a refusal below is the
+	// allowlist and not a broken fixture.
+	if page, err := h.Transcript(profile, "sess", subRel, 0, 10); err != nil || len(page.Turns) == 0 {
+		t.Fatalf("sess's own subagent should open (err=%v, turns=%d)", err, len(page.Turns))
+	}
+
+	page, err := h.Transcript(profile, "sess", otherRel, 0, 10)
+	if err == nil {
+		t.Error("sess was allowed to open another session's transcript")
+	}
+	for _, turn := range page.Turns {
+		for _, b := range turn.Blocks {
+			if strings.Contains(b.Text, "DIFFERENT session") {
+				t.Fatal("another session's content was returned")
+			}
+		}
+	}
+	if _, err := h.ToolBody(profile, "sess", otherRel, "o1", 0); err == nil {
+		t.Error("ToolBody opened another session's transcript")
+	}
+}
+
+// TestTranscriptSwappedForASymlinkIsRefused: the index recorded a regular
+// file; replacing it afterwards with a link must not be followed. The old
+// check looked at ResolvePath's output — already resolved — so it never fired.
+// The link targets a file INSIDE projects/, which containment alone permits.
+func TestTranscriptSwappedForASymlinkIsRefused(t *testing.T) {
+	profile, sessRel, _, otherRel := historyFixture(t)
+	projects := filepath.Join(profileDir(profile), "projects")
+	sessPath := filepath.Join(projects, filepath.FromSlash(sessRel))
+	if err := os.Remove(sessPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(projects, filepath.FromSlash(otherRel)), sessPath); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+
+	page, err := NewHistory().Transcript(profile, "sess", "", 0, 10)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("a transcript swapped for a symlink was opened (err=%v, turns=%d)", err, len(page.Turns))
+	}
+}
+
+// TestDeletedTranscriptSaysSo: a row can be listed as openable and then have
+// its file pruned before the click. The reader must be told why, not handed an
+// empty page.
+func TestDeletedTranscriptSaysSo(t *testing.T) {
+	profile, sessRel, _, _ := historyFixture(t)
+	if err := os.Remove(filepath.Join(profileDir(profile), "projects", filepath.FromSlash(sessRel))); err != nil {
+		t.Fatal(err)
+	}
+	page, err := NewHistory().Transcript(profile, "sess", "", 0, 10)
+	if err == nil || !strings.Contains(err.Error(), "no longer on disk") {
+		t.Errorf("deleted transcript: err=%v, want one saying it is no longer on disk", err)
+	}
+	if page.Turns == nil {
+		t.Error("Turns must stay non-nil on the error path")
+	}
+}
