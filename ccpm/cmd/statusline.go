@@ -365,7 +365,14 @@ func workspaceLabel(in statusLineInput) string {
 	// "repo/subdir", not a path anyone will open. Joining with the OS separator
 	// rendered the same session as repo\sub on Windows and repo/sub elsewhere,
 	// for a string whose whole job is to read the same to everyone.
-	return name + "/" + safeLabel(filepath.ToSlash(rel))
+	// safeLabel refuses a subpath that is too long or carries a control
+	// character. The repo name alone is still true; "repo/" with nothing after
+	// it is not.
+	sub := safeLabel(filepath.ToSlash(rel))
+	if sub == "" {
+		return name
+	}
+	return name + "/" + sub
 }
 
 // statusLineBranch resolves the current git branch.

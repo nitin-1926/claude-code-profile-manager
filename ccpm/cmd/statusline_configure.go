@@ -249,7 +249,8 @@ func pickRow(title string, choices, defaults []string) ([]string, error) {
 		return nil, err
 	}
 	// MultiSelect returns values in the order they were offered, which is
-	// catalog order — the order both UIs write.
+	// catalog order. The caller restores any order the user had already set
+	// (keepOrder), so a picker run does not re-sort a hand-arranged row.
 	return chosen, nil
 }
 

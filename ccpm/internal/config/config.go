@@ -53,9 +53,9 @@ type ProfileConfig struct {
 // opened the picker. A known segment in none of the three buckets is new, and
 // internal/statusline places it at its catalog default.
 //
-// Order within a row is significant and preserved as stored, so editing
-// config.json by hand reorders segments. Both the picker and the desktop app
-// write catalog order.
+// Order within a row is significant and preserved as stored. Both UIs keep it:
+// the desktop app has move up/down controls, and the picker preserves an order
+// already set rather than re-sorting to catalog order.
 type StatusLineLayout struct {
 	Row1 []string `json:"row1"`
 	Row2 []string `json:"row2"`

@@ -67,51 +67,59 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 	value := args[1]
 
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
 	// Set by the statusline case below when this is the first time the status
 	// line has been enabled and no segment layout exists yet.
 	offerSegments := false
 
-	switch key {
-	case "check_default_drift":
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("expected true/false, got %q", value)
+	// Load, change and save under the config lock, which AGENTS.md makes
+	// mandatory for every config.json mutation: without it a concurrent
+	// `ccpm add` between this Load and Save is silently erased. The picker
+	// offered afterwards stays OUTSIDE the lock — it waits on a human, and
+	// applyStatusLineLayout takes the lock again for its own write.
+	var cfg *config.Config
+	err := withConfigLock(func() error {
+		var err error
+		if cfg, err = config.Load(); err != nil {
+			return err
 		}
-		cfg.Settings.CheckDefaultDrift = b
-	case "cascade_auto_adopt":
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("expected true/false, got %q", value)
+		switch key {
+		case "check_default_drift":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("expected true/false, got %q", value)
+			}
+			cfg.Settings.CheckDefaultDrift = b
+		case "cascade_auto_adopt":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("expected true/false, got %q", value)
+			}
+			cfg.Settings.CascadeAutoAdopt = &b
+		case "statusline":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("expected true/false, got %q", value)
+			}
+			cfg.Settings.DefaultStatusLine = &b
+			// Turning the status line on for the first time is the one moment the
+			// user is definitely thinking about it, so offer the segment picker
+			// then rather than hoping they discover `ccpm statusline configure`.
+			// Deferred until after the save below so the enable lands even if they
+			// abandon the picker.
+			offerSegments = b && cfg.Settings.StatusLine == nil
+		case "usage_tracking":
+			b, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("expected true/false, got %q", value)
+			}
+			cfg.Settings.UsageTracking = &b
+		default:
+			return fmt.Errorf("unknown config key %q", key)
 		}
-		cfg.Settings.CascadeAutoAdopt = &b
-	case "statusline":
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("expected true/false, got %q", value)
-		}
-		cfg.Settings.DefaultStatusLine = &b
-		// Turning the status line on for the first time is the one moment the
-		// user is definitely thinking about it, so offer the segment picker
-		// then rather than hoping they discover `ccpm statusline configure`.
-		// Deferred until after the save below so the enable lands even if they
-		// abandon the picker.
-		offerSegments = b && cfg.Settings.StatusLine == nil
-	case "usage_tracking":
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("expected true/false, got %q", value)
-		}
-		cfg.Settings.UsageTracking = &b
-	default:
-		return fmt.Errorf("unknown config key %q", key)
-	}
 
-	if err := config.Save(cfg); err != nil {
+		return config.Save(cfg)
+	})
+	if err != nil {
 		return err
 	}
 	color.New(color.FgGreen, color.Bold).Printf("✓ Set %s = %s\n", key, value)
