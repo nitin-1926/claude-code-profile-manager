@@ -41,7 +41,7 @@ export const CHANGELOG: ChangelogSeries[] = [
         title: "Installers that work, and a desktop app that opens",
         categories: ["Added", "Fixed"],
         bullets: [
-          "The desktop app now installs with one line: `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`. It picks your chip, verifies the checksum and installs to Applications, and the app opens straight away: a browser-downloaded copy is refused by macOS as \"damaged\" because the app is not notarized, but `curl` does not mark what it downloads.",
+          "The desktop app now installs with one line: `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`. It picks your chip, verifies the checksum and installs to Applications. Open CCPM from there as usual and it starts with no warning: a browser-downloaded copy is refused by macOS as \"damaged\" because the app is not notarized, but `curl` does not mark what it downloads.",
           "The CLI's curl installer failed with a download error whenever the newest GitHub release was a desktop build, which it has been since the desktop app first shipped. It now picks the newest CLI release by tag, and desktop releases no longer claim GitHub's \"Latest\" badge.",
           "`ccpm version --check-latest` reported \"Up to date\" against the desktop app's version for the same reason, so it never told anyone a CLI update existed. It now compares against the newest CLI release.",
         ],
