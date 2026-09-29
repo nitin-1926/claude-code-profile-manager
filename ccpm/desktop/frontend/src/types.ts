@@ -182,12 +182,21 @@ export interface ProfileLimits {
   windows: LimitWindow[]
 }
 
-export type RailMode = 'always' | 'hover' | 'hidden'
+/** How the notch reveals itself. Whether it shows at all is `railOn`. */
+export type RailMode = 'always' | 'hover'
 export type RailEdge = 'right' | 'left' | 'top' | 'bottom'
+/** Which usage window is the big ring; the values are the window keys. */
+export type RailMain = 'five_hour' | 'seven_day'
 
 export interface DesktopPrefs {
+  /** Master switch. `railMode` keeps the reveal while off, so on restores it. */
+  railOn: boolean
   railMode: RailMode
   railEdge: RailEdge
+  /** Draw the percentage under each ring. */
+  railPercent: boolean
+  railMain: RailMain
   /** Explicit choices only — a profile absent from this map is enabled. */
   railProfiles: Record<string, boolean>
+  theme: string
 }
