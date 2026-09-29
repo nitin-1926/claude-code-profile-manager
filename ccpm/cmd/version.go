@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fatih/color"
@@ -127,7 +126,7 @@ func newestCLITag(body []byte) (string, error) {
 		return "", err
 	}
 	for _, r := range releases {
-		if strings.HasPrefix(r.TagName, "v") && !r.Draft && !r.Prerelease {
+		if semver.IsValid(r.TagName) && semver.Prerelease(r.TagName) == "" && !r.Draft && !r.Prerelease {
 			return r.TagName, nil
 		}
 	}

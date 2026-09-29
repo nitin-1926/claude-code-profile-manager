@@ -31,3 +31,16 @@ func TestNewestCLITagWithNoCLIRelease(t *testing.T) {
 		t.Fatalf("newestCLITag = %q, nil; want an error", got)
 	}
 }
+
+// A tag that merely starts with "v" is not a CLI release, and a prerelease tag
+// published without GitHub's prerelease flag is still a prerelease.
+func TestNewestCLITagWantsAStableSemverTag(t *testing.T) {
+	body := []byte(`[
+		{"tag_name":"vscode-extension-1","draft":false,"prerelease":false},
+		{"tag_name":"v0.7.0-rc.1","draft":false,"prerelease":false},
+		{"tag_name":"v0.6.3","draft":false,"prerelease":false}
+	]`)
+	if got, _ := newestCLITag(body); got != "v0.6.3" {
+		t.Fatalf("newestCLITag = %q; want v0.6.3", got)
+	}
+}
