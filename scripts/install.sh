@@ -33,11 +33,14 @@ detect_platform() {
     echo "${OS}_${ARCH}"
 }
 
-# Get latest release version
+# Get latest release version.
+# Not /releases/latest: that is whichever release was published last, and the
+# desktop app's desktop-v* releases share the list. The listing is newest first,
+# so the first v* tag is the newest CLI release.
 get_latest_version() {
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" |
-        grep '"tag_name"' |
-        sed -E 's/.*"v([^"]+)".*/\1/'
+    curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
+        grep -o '"tag_name": *"v[^"]*"' | head -1 |
+        sed -E 's/.*"v([^"]+)"/\1/'
 }
 
 # Pick a SHA-256 verifier available on the host. Errors out if none found —
