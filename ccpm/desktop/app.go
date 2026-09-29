@@ -50,6 +50,22 @@ func (a *App) startRail() {
 	}
 	a.rail.Start()
 	a.ApplyRailPrefs()
+
+	// Once a minute too: reset countdowns and staleness move with the clock
+	// even when no file changes, and a window that has reset should stop
+	// showing its old usage without waiting for the next status line write.
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-t.C:
+				a.ApplyRailPrefs()
+			}
+		}
+	}()
 }
 
 // ApplyRailPrefs re-reads the preferences and reshapes the rail. Exported so
