@@ -70,6 +70,24 @@ type Index struct {
 
 func newIndex() *Index { return &Index{Version: indexVersion, Entries: map[string]*Entry{}} }
 
+// stillAt reports whether an index entry recorded at prevRel still belongs
+// there while the walk is visiting rel. It does if the paths match, or if the
+// recorded file is still on disk: a copy left beside the original (a `cp -p`
+// backup) shares its session id, and treating every mismatch as stale flipped
+// the entry between the two files on each walk, rescanning both and rewriting
+// the index on every build. Only once the recorded file is gone has the
+// transcript moved.
+func stillAt(profileDir, prevRel, rel string) bool {
+	if prevRel == filepath.ToSlash(rel) {
+		return true
+	}
+	if prevRel == "" {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(profileDir, "projects", filepath.FromSlash(prevRel)))
+	return err == nil
+}
+
 // IsIndexFile reports whether path is the history sidecar or one of the
 // siblings atomicwrite creates while replacing it (<path>.ccpm-staged-<rand>,
 // <path>.ccpm-rollback).
@@ -178,9 +196,10 @@ func BuildIndex(profileDir string) (*Index, error) {
 		// every pass.
 		// RelPath too: a transcript moved with `mv` or `cp -p` keeps its size
 		// and mtime, and an entry fresh on those alone kept pointing at the old
-		// path, leaving the row permanently unopenable.
+		// path, leaving the row permanently unopenable. See stillAt for why a
+		// mismatch alone is not enough.
 		if prev, ok := ix.Entries[id]; ok && prev.ModTime == mtime && prev.Size == size &&
-			slices.Equal(prev.SubPaths, subRels) && prev.RelPath == filepath.ToSlash(rel) {
+			slices.Equal(prev.SubPaths, subRels) && stillAt(profileDir, prev.RelPath, rel) {
 			return nil // unchanged since last build
 		}
 		meta, err := Scan(abs)

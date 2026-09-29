@@ -853,3 +853,45 @@ func TestIndexFollowsAMovedTranscript(t *testing.T) {
 		t.Errorf("RelPath = %q, want %q — the entry still points at where the file used to be", got, filepath.ToSlash(want))
 	}
 }
+
+// A copy left beside the original (a `cp -p` backup) shares the session id, so
+// the walk meets the same id at two paths. The entry must keep the path it
+// has while that file exists, instead of flipping to whichever copy the walk
+// visits last and rescanning both on every build.
+func TestIndexKeepsItsPathWhenACopySitsBesideTheOriginal(t *testing.T) {
+	dir := t.TempDir()
+	orig := writeSessionTranscript(t, dir, "/repo-a", "sess", userLineIn(t, "u1", "/repo-a", "hello"))
+	if _, err := BuildIndex(dir); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyDir := filepath.Join(dir, "projects", usage.EncodeCwd("/repo-b"))
+	if err := os.MkdirAll(copyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dup := filepath.Join(copyDir, filepath.Base(orig))
+	if err := os.WriteFile(dup, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(dup, fi.ModTime(), fi.ModTime()); err != nil { // cp -p
+		t.Fatal(err)
+	}
+
+	want, _ := filepath.Rel(filepath.Join(dir, "projects"), orig)
+	for pass := 1; pass <= 2; pass++ {
+		ix, err := BuildIndex(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ix.Entries["sess"].RelPath; got != filepath.ToSlash(want) {
+			t.Fatalf("pass %d: RelPath = %q, want %q: the entry moved to a copy while the original is still there", pass, got, filepath.ToSlash(want))
+		}
+	}
+}
