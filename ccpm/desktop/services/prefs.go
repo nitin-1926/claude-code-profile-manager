@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -199,6 +200,10 @@ func SavePrefs(p DesktopPrefs) error {
 // disagrees with the settings that produced it.
 type PrefsService struct {
 	OnChange func()
+	// mu serialises every read-modify-write of desktop.json. Two writers that
+	// each load the file and save their own edit would otherwise drop the
+	// other's: the theme toggle and the notch settings both write it.
+	mu sync.Mutex
 }
 
 func NewPrefs() *PrefsService { return &PrefsService{} }
@@ -214,32 +219,56 @@ func (s *PrefsService) notify() {
 // Get returns the current preferences, defaults included.
 func (s *PrefsService) Get() (DesktopPrefs, error) { return LoadPrefs(), nil }
 
-// Set replaces the preferences and returns what was actually stored, so the
-// frontend renders the normalized values rather than its own optimistic guess.
-func (s *PrefsService) Set(p DesktopPrefs) (DesktopPrefs, error) {
-	if err := SavePrefs(p); err != nil {
-		return LoadPrefs(), err
+// update applies edit to the stored preferences under mu and returns what was
+// actually stored, so the frontend renders the normalized values rather than
+// its own optimistic guess. The change hook runs after the lock is released.
+func (s *PrefsService) update(edit func(*DesktopPrefs)) (DesktopPrefs, error) {
+	s.mu.Lock()
+	p := LoadPrefs()
+	edit(&p)
+	err := SavePrefs(p)
+	stored := LoadPrefs()
+	s.mu.Unlock()
+	if err != nil {
+		return stored, err
 	}
 	s.notify()
-	return LoadPrefs(), nil
+	return stored, nil
+}
+
+// Set replaces the preferences.
+func (s *PrefsService) Set(p DesktopPrefs) (DesktopPrefs, error) {
+	return s.update(func(cur *DesktopPrefs) { *cur = p })
+}
+
+// SetNotch stores only the notch's own settings from p, leaving the theme and
+// the per-profile choices as they are in the file. The notch settings section
+// sends its whole copy; merging here, under the lock, means a theme change
+// that landed after that copy was read is not put back.
+func (s *PrefsService) SetNotch(p DesktopPrefs) (DesktopPrefs, error) {
+	return s.update(func(cur *DesktopPrefs) {
+		cur.RailOn = p.RailOn
+		cur.RailMode = p.RailMode
+		cur.RailEdge = p.RailEdge
+		cur.RailPercent = p.RailPercent
+		cur.RailMain = p.RailMain
+	})
 }
 
 // SetTheme records the palette the frontend is showing. The rail is a native
 // panel and cannot read the frontend's localStorage, so this is how the two
 // stay in the same theme.
 func (s *PrefsService) SetTheme(theme string) (DesktopPrefs, error) {
-	p := LoadPrefs()
-	p.Theme = theme
-	return s.Set(p)
+	return s.update(func(p *DesktopPrefs) { p.Theme = theme })
 }
 
 // SetRailProfile toggles one profile without the frontend having to
 // read-modify-write the whole map, which would race with a concurrent edit.
 func (s *PrefsService) SetRailProfile(profile string, enabled bool) (DesktopPrefs, error) {
-	p := LoadPrefs()
-	if p.RailProfiles == nil {
-		p.RailProfiles = map[string]bool{}
-	}
-	p.RailProfiles[profile] = enabled
-	return s.Set(p)
+	return s.update(func(p *DesktopPrefs) {
+		if p.RailProfiles == nil {
+			p.RailProfiles = map[string]bool{}
+		}
+		p.RailProfiles[profile] = enabled
+	})
 }

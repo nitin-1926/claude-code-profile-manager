@@ -3,8 +3,10 @@
 package services
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -155,7 +157,7 @@ func TestThemeNormalizesToAKnownValue(t *testing.T) {
 	if got := DefaultPrefs().Theme; got != ThemeGraphite {
 		t.Errorf("default theme = %q, want %q", got, ThemeGraphite)
 	}
-	for _, valid := range []string{ThemeGraphite, ThemeMidnight, ThemeLight} {
+	for _, valid := range []string{ThemeGraphite, ThemeMidnight, "light"} {
 		if got := (DesktopPrefs{Theme: valid}).normalize().Theme; got != valid {
 			t.Errorf("normalize dropped the valid theme %q, got %q", valid, got)
 		}
@@ -196,7 +198,7 @@ func TestPrefsFromBeforeTheNotchSettingsKeepDefaults(t *testing.T) {
 	if got.RailMain != RailMainFiveHour {
 		t.Errorf("an old file without railMain loaded main ring %q, want %q", got.RailMain, RailMainFiveHour)
 	}
-	if got.RailMode != RailModeAlways || got.RailEdge != RailEdgeTop || got.Theme != ThemeLight || got.RailEnabled("cin") {
+	if got.RailMode != RailModeAlways || got.RailEdge != RailEdgeTop || got.Theme != "light" || got.RailEnabled("cin") {
 		t.Errorf("an old file's own values were lost: %+v", got)
 	}
 }
@@ -257,5 +259,49 @@ func TestRailMainNormalizesToAKnownWindow(t *testing.T) {
 		if got := (DesktopPrefs{RailMain: bad}).normalize().RailMain; got != RailMainFiveHour {
 			t.Errorf("normalize(%q) = %q, want the five-hour fallback", bad, got)
 		}
+	}
+}
+
+// Concurrent writers each load, edit and save desktop.json. Unserialised, two
+// that load the same file drop each other's edit.
+func TestConcurrentPrefWritesKeepEveryEdit(t *testing.T) {
+	withTempHome(t)
+	s := NewPrefs()
+	const n = 40
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := s.SetRailProfile(fmt.Sprintf("p%02d", i), false); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if got := len(LoadPrefs().RailProfiles); got != n {
+		t.Fatalf("%d of %d concurrent profile edits survived", got, n)
+	}
+}
+
+// The notch section sends its whole copy of the preferences. A theme changed
+// after that copy was read must not be put back by the notch write.
+func TestSetNotchLeavesTheThemeAlone(t *testing.T) {
+	withTempHome(t)
+	s := NewPrefs()
+	stale := LoadPrefs() // the section's copy, read before the theme change
+	if _, err := s.SetTheme("light"); err != nil {
+		t.Fatal(err)
+	}
+	stale.RailEdge = RailEdgeTop
+	got, err := s.SetNotch(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Theme != "light" {
+		t.Errorf("theme = %q after a notch write, want %q: the stale copy put the old theme back", got.Theme, "light")
+	}
+	if got.RailEdge != RailEdgeTop {
+		t.Errorf("railEdge = %q, want %q", got.RailEdge, RailEdgeTop)
 	}
 }

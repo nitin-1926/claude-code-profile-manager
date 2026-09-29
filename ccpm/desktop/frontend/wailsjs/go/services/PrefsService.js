@@ -10,6 +10,10 @@ export function Set(arg1) {
   return window['go']['services']['PrefsService']['Set'](arg1);
 }
 
+export function SetNotch(arg1) {
+  return window['go']['services']['PrefsService']['SetNotch'](arg1);
+}
+
 export function SetRailProfile(arg1, arg2) {
   return window['go']['services']['PrefsService']['SetRailProfile'](arg1, arg2);
 }

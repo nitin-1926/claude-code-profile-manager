@@ -53,15 +53,15 @@ export function NotchSection() {
     api.prefs.get().then(setPrefs).catch(() => undefined)
   }
 
-  // Read-modify-write against the FILE, not this component's copy: the theme
-  // toggle writes the same file, and merging onto a copy loaded when the tab
-  // opened would put the old theme back. Set returns what was stored, so the
-  // section renders normalized values rather than its own guess.
+  // setNotch stores only the notch's own fields, merged in Go under a lock, so
+  // the theme toggle (which writes the same file) is never put back by a copy
+  // read before it changed. It returns what was stored, so the section renders
+  // normalized values rather than its own guess.
   function write(patch: Partial<DesktopPrefs>) {
     setPrefs((p) => (p ? { ...p, ...patch } : p))
     queue.current = queue.current
       .then(() => api.prefs.get())
-      .then((cur) => api.prefs.set({ ...cur, ...patch }))
+      .then((cur) => api.prefs.setNotch({ ...cur, ...patch }))
       .then(setPrefs)
       .catch(failed)
   }
