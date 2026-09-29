@@ -13,6 +13,7 @@ import "C"
 import (
 	"encoding/json"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -24,8 +25,11 @@ import (
 // a rail that panics on an early call is worse than one that appears a moment
 // late.
 type Controller struct {
-	mu       sync.Mutex
-	started  bool
+	mu      sync.Mutex
+	started bool
+	// retrying is set while a re-layout is scheduled for a frame AppKit has
+	// not published yet; see applyLocked.
+	retrying bool
 	edge     Edge
 	profiles int
 	// hidePercent drops the percentage labels and the room reserved for them.
@@ -210,7 +214,15 @@ func (c *Controller) applyLocked() {
 		return
 	}
 	spec := c.specLocked()
-	panel := PanelRect(ScreenFrame(), spec)
+	screen := ScreenFrame()
+	if screen.W <= 0 || screen.H <= 0 {
+		// AppKit has not published a frame: the main thread was still busy
+		// launching past the C layer's bounded wait. Place against the
+		// fallback now and look again shortly; nothing else re-lays the notch
+		// out until an unrelated preference or usage change.
+		c.retryLocked()
+	}
+	panel := PanelRect(screen, spec)
 	col := NotchRect(panel, spec, false)
 	exp := NotchRect(panel, spec, true)
 	wake := WakeRect(panel, spec)
@@ -223,6 +235,22 @@ func (c *Controller) applyLocked() {
 		C.double(exp.X), C.double(exp.Y), C.double(exp.W), C.double(exp.H),
 		C.double(wake.X), C.double(wake.Y), C.double(wake.W), C.double(wake.H),
 		C.double(cs.Corner), C.double(cs.Curl), C.double(es.Corner), C.double(es.Curl))
+}
+
+// retryLocked schedules one re-layout, unless one is already pending. Caller
+// holds mu. applyLocked is a no-op once stopped, so a retry that fires after
+// Stop does nothing and schedules nothing further.
+func (c *Controller) retryLocked() {
+	if c.retrying {
+		return
+	}
+	c.retrying = true
+	time.AfterFunc(250*time.Millisecond, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.retrying = false
+		c.applyLocked()
+	})
 }
 
 // edgeCode is the C-side edge enum. Kept in step with kEdge* in

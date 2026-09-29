@@ -94,3 +94,22 @@ func TestHardwareNotchIsSafeWithoutAppKitRunning(t *testing.T) {
 		t.Errorf("hardware notch %+v disagrees with its own ok=%v", r, ok)
 	}
 }
+
+// With no published screen frame (the main thread busy launching, or no run
+// loop at all, as here), a started controller must schedule another layout
+// rather than leave the notch placed against the fallback screen for good.
+func TestLayoutRetriesUntilAppKitPublishesAFrame(t *testing.T) {
+	if ScreenFrame().W > 0 {
+		t.Skip("a screen frame is already published; nothing to retry")
+	}
+	c := New()
+	c.mu.Lock()
+	c.started = true // as after Start, without creating a real panel
+	c.applyLocked()
+	retrying := c.retrying
+	c.started = false // the pending retry then finds it stopped and ends
+	c.mu.Unlock()
+	if !retrying {
+		t.Fatal("layout against an unpublished screen frame scheduled no retry")
+	}
+}
