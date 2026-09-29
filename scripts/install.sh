@@ -36,12 +36,14 @@ detect_platform() {
 # Get latest release version.
 # Not /releases/latest: that is whichever release was published last, and the
 # desktop app's desktop-v* releases share the list. The listing is newest first,
-# so the first vX.Y.Z tag is the newest CLI release. A hyphen marks a
-# prerelease (v0.7.0-rc.1), which is skipped.
+# so the first vX.Y.Z tag not flagged as a prerelease is the newest CLI
+# release. Splitting on commas puts each key on its own line; tag_name comes
+# before prerelease within a release, and nested objects carry neither.
 get_latest_version() {
     curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
-        grep -o '"tag_name": *"v[0-9][0-9.]*"' | head -1 |
-        sed -E 's/.*"v([^"]+)"/\1/'
+        tr ',' '\n' |
+        awk -F'"' '/"tag_name":/ { tag = $4 }
+            /"prerelease": *false/ { if (tag ~ /^v[0-9][0-9.]*$/) { print substr(tag, 2); exit } }'
 }
 
 # Pick a SHA-256 verifier available on the host. Errors out if none found —

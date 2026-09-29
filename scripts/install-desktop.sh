@@ -32,10 +32,12 @@ main() {
 
     # Not /releases/latest: CLI (v*) and desktop (desktop-v*) releases share
     # one list, and "latest" is whichever was published last. The list comes
-    # back newest first, so the first desktop-vX.Y.Z tag is the newest desktop
-# build; a hyphen marks a prerelease, which is skipped.
+    # back newest first, so the first desktop-vX.Y.Z tag not flagged as a
+    # prerelease is the newest desktop build (see install.sh for the parsing).
     TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
-        grep -o '"tag_name": *"desktop-v[0-9][0-9.]*"' | head -1 | sed -E 's/.*"(desktop-v[^"]*)"/\1/')
+        tr ',' '\n' |
+        awk -F'"' '/"tag_name":/ { tag = $4 }
+            /"prerelease": *false/ { if (tag ~ /^desktop-v[0-9][0-9.]*$/) { print tag; exit } }')
     if [ -z "$TAG" ]; then
         echo "Error: could not find a desktop release. See https://github.com/${REPO}/releases?q=desktop-v" >&2
         exit 1
