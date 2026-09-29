@@ -37,12 +37,23 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
       {
+        date: "2026-09-29",
+        title: "CCPM Desktop: the usage notch",
+        categories: ["Added", "Improved"],
+        bullets: [
+          "The usage rail is now a notch that grows out of the screen edge. Folded, it is a slim pill; reach for it and it opens to show a ring per profile. On the top edge of a Mac with a camera notch, it joins the camera notch.",
+          "Its settings moved out of the title bar into a new Usage notch section in the Settings tab. One switch turns the notch on or off. While it is on, choose whether it opens on hover or stays open, which edge it sits on (Top, Left, Right or Bottom), and which profiles get a ring. Turning it off and back on keeps your choices.",
+          "Pick the 5-hour or the weekly window as the main ring; the other becomes the thin inner ring. You can also hide the percentage under each ring, which gives the rings more room: useful on the top edge with several profiles, where the labels get very small.",
+          "If no profile has a reading yet, the section tells you why. The notch shows the limits that ccpm's own status line records while you use Claude Code, so a profile with a custom statusLine shows a dash.",
+        ],
+      },
+      {
         date: "2026-09-02",
         title: "CCPM Desktop: the usage rail",
         categories: ["Added"],
         bullets: [
           "A floating usage rail for macOS: one ring per profile, pinned to a screen edge, showing your Claude limits at a glance. The outer arc is the 5-hour window, the inner one the 7-day window, coloured by how much headroom is left — on the same thresholds `ccpm statusline` uses, so the rail and your terminal never disagree.",
-          "Hover a ring for the detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a bar, and the percentage used. Configure it from the gauge button in the title bar — always visible, on hover, or hidden; which edge; and a switch per profile.",
+          "Hover a ring for the detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a bar, and the percentage used. Its settings live in the Settings tab (see the usage notch entry above).",
           "The numbers come from the rate-limit windows Claude Code already sends to `ccpm statusline`, cached per profile. No API call and no credentials are read. The trade-off is that a profile's reading only refreshes when you use Claude Code on it, so the rail always tells you how old the number is and marks it stale rather than passing it off as live.",
           "Profiles that cannot report limits say so: an unused profile shows an empty ring and \"No reading yet\" instead of a misleading 0%, and non-subscription profiles explain that their plan never reports limits.",
         ],

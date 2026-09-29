@@ -76,23 +76,28 @@ export default async function DocsPage() {
             />
           </figure>
 
-          <H3 id="desktop-rail">Usage rail</H3>
+          <H3 id="desktop-rail">Usage notch</H3>
           <p>
-            An optional floating panel pinned to a screen edge, with one ring per
-            profile: the outer arc is your <strong>5-hour</strong> window, the
-            inner one your <strong>7-day</strong> window, coloured by how much
-            headroom is left — the same thresholds{" "}
-            <code>ccpm statusline</code> uses, so the rail and your terminal
-            never disagree. Hover a ring for the detail: which account and plan
-            it belongs to, how old the reading is, and per window a reset time, a
+            An optional notch that grows out of a screen edge, with one ring per
+            profile: the big ring is your <strong>5-hour</strong> window (or your{" "}
+            <strong>weekly</strong> one, if you pick it as the main ring), the
+            thin inner ring the other, coloured by how much headroom is left, on
+            the same thresholds <code>ccpm statusline</code> uses, so the notch
+            and your terminal never disagree. On the top edge of a Mac with a
+            camera notch it joins the camera notch. Hover a ring for the
+            detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a
             bar, and the percentage used.
           </p>
           <p>
-            Configure it from the gauge button in the title bar — always visible,
-            show on hover, or hidden; which edge it lives on; and a switch per
-            profile. In hover mode it sits as a thin sliver at the screen edge
-            and slides out when you reach for it (Reduce Motion turns the slide
-            into a jump).
+            Configure it in the <strong>Usage notch</strong> section of the{" "}
+            <strong>Settings</strong> tab: a switch to show or hide it, and while
+            it is on, whether it opens on hover or stays open, which edge it sits
+            on (Top, Left, Right or Bottom), which window is the main ring,
+            whether to show the percentage under each ring (hiding it gives the
+            rings more room, handy on the top edge with several profiles), and a
+            switch per profile. Turning it off and back on keeps your choices. In
+            hover mode it folds to a slim pill at the screen edge and opens when
+            you reach for it (Reduce Motion turns the animation into a jump).
           </p>
           <p>
             <strong>Where the numbers come from.</strong> Claude Code already
