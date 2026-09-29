@@ -13,6 +13,7 @@ import "C"
 import (
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -52,6 +53,24 @@ const (
 	VisibilityHidden
 )
 
+// live is the started controller, for callbacks from the C layer.
+var live atomic.Pointer[Controller]
+
+// ccpmNotchScreensChanged is called by the screen observer, on the main
+// thread, after it refreshes the cached frame. The re-layout runs off that
+// thread: applyLocked takes mu, and AppKit's thread must never wait on it.
+//
+//export ccpmNotchScreensChanged
+func ccpmNotchScreensChanged() {
+	if c := live.Load(); c != nil {
+		go func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.applyLocked()
+		}()
+	}
+}
+
 // New returns an unstarted controller.
 func New() *Controller {
 	return &Controller{edge: EdgeRight, profiles: 1}
@@ -66,6 +85,7 @@ func (c *Controller) Start() {
 	}
 	C.CCPMNotchStart()
 	c.started = true
+	live.Store(c)
 	C.CCPMNotchSetVisibility(C.int(c.visibility))
 	c.applyLocked()
 	c.pushModelLocked()
@@ -80,6 +100,7 @@ func (c *Controller) Stop() {
 	}
 	C.CCPMNotchStop()
 	c.started = false
+	live.CompareAndSwap(c, nil)
 	c.visible = false
 }
 
@@ -180,13 +201,6 @@ func (c *Controller) SetVisible(v bool) {
 		return
 	}
 	C.CCPMNotchHide()
-}
-
-// Visible reports the panel's actual on-screen state, asked of AppKit rather
-// than of our own bookkeeping, so a panel the system dismissed is not reported
-// as showing.
-func (c *Controller) Visible() bool {
-	return C.CCPMNotchIsVisible() != 0
 }
 
 // Frame returns where the panel would be placed for the current layout.

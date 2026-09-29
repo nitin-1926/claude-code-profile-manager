@@ -2,7 +2,10 @@
 
 package rail
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // Wails runs OnStartup on a background goroutine while [NSApp run] owns the
 // main thread, so the ordering between "the app is up" and "the rail was asked
@@ -19,7 +22,6 @@ func TestControllerCallsAreSafeBeforeStartAndAfterStop(t *testing.T) {
 	c.SetLayout(EdgeLeft, 3, true)
 	c.SetVisible(true)
 	c.SetVisible(false)
-	_ = c.Visible()
 	_ = c.Frame()
 	if got := c.Edge(); got != EdgeLeft {
 		t.Errorf("SetLayout before Start did not stick: edge = %q", got)
@@ -111,5 +113,42 @@ func TestLayoutRetriesUntilAppKitPublishesAFrame(t *testing.T) {
 	c.mu.Unlock()
 	if !retrying {
 		t.Fatal("layout against an unpublished screen frame scheduled no retry")
+	}
+}
+
+// A display change must re-lay the notch out, not just refresh the cached
+// frame: otherwise the panel stays where the old screen put it.
+func TestScreenChangeReLaysOutTheLiveController(t *testing.T) {
+	if ScreenFrame().W > 0 {
+		t.Skip("a screen frame is published; the re-layout leaves no trace to observe")
+	}
+	c := New()
+	c.mu.Lock()
+	c.started = true // as after Start, without creating a real panel
+	c.mu.Unlock()
+	live.Store(c)
+	defer func() {
+		live.Store(nil)
+		c.mu.Lock()
+		c.started = false
+		c.mu.Unlock()
+	}()
+
+	ccpmNotchScreensChanged()
+
+	// With no published frame, a layout schedules a retry, which is the
+	// observable sign that one ran.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		c.mu.Lock()
+		ran := c.retrying
+		c.mu.Unlock()
+		if ran {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a screen change did not re-lay out the live controller")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

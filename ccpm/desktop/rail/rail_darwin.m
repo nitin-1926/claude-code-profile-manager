@@ -4,6 +4,7 @@
 #import <os/lock.h>
 #import "rail.h"
 #import "rail_internal.h"
+#include "_cgo_export.h"
 
 // Every Objective-C symbol in this file is prefixed CCPMNotch. Wails already
 // defines WailsWindow, AppDelegate and WindowDelegate in the same process, and
@@ -132,6 +133,9 @@ static void ccpmNotchRefreshScreen(void) {
 - (void)screensChanged:(NSNotification *)note {
   (void)note;
   ccpmNotchRefreshScreen();
+  // A new frame is only half the job: the panel was placed against the old
+  // one, and nothing else re-lays it out until an unrelated change.
+  ccpmNotchScreensChanged();
 }
 @end
 
@@ -249,11 +253,6 @@ void CCPMNotchHide(void) {
     // would silently go on swallowing clicks at the screen edge.
     [gPanel orderOut:nil];
   });
-}
-
-int CCPMNotchIsVisible(void) {
-  // Read-only and cheap; safe to answer from any thread without a hop.
-  return (gPanel != nil && [gPanel isVisible]) ? 1 : 0;
 }
 
 // Warms the cache synchronously the first time, then answers from it.

@@ -61,9 +61,6 @@ void CCPMNotchSetExpanded(int expanded);
 void CCPMNotchShow(void);
 void CCPMNotchHide(void);
 
-// Reports whether the panel is currently on screen.
-int CCPMNotchIsVisible(void);
-
 // Writes the main screen's FULL frame into the out-params — deliberately not
 // visibleFrame. Anchoring to the visible frame moves the notch whenever the
 // Dock is shown, hidden or repositioned, and a notch that drifts does not read
