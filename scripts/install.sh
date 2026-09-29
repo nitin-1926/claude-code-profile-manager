@@ -36,10 +36,11 @@ detect_platform() {
 # Get latest release version.
 # Not /releases/latest: that is whichever release was published last, and the
 # desktop app's desktop-v* releases share the list. The listing is newest first,
-# so the first v* tag is the newest CLI release.
+# so the first vX.Y.Z tag is the newest CLI release. A hyphen marks a
+# prerelease (v0.7.0-rc.1), which is skipped.
 get_latest_version() {
     curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
-        grep -o '"tag_name": *"v[^"]*"' | head -1 |
+        grep -o '"tag_name": *"v[0-9][0-9.]*"' | head -1 |
         sed -E 's/.*"v([^"]+)"/\1/'
 }
 

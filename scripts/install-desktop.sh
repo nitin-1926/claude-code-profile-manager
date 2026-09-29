@@ -32,9 +32,10 @@ main() {
 
     # Not /releases/latest: CLI (v*) and desktop (desktop-v*) releases share
     # one list, and "latest" is whichever was published last. The list comes
-    # back newest first, so the first desktop-v tag is the newest desktop build.
+    # back newest first, so the first desktop-vX.Y.Z tag is the newest desktop
+# build; a hyphen marks a prerelease, which is skipped.
     TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
-        grep -o '"tag_name": *"desktop-v[^"]*"' | head -1 | sed -E 's/.*"(desktop-v[^"]*)"/\1/')
+        grep -o '"tag_name": *"desktop-v[0-9][0-9.]*"' | head -1 | sed -E 's/.*"(desktop-v[^"]*)"/\1/')
     if [ -z "$TAG" ]; then
         echo "Error: could not find a desktop release. See https://github.com/${REPO}/releases?q=desktop-v" >&2
         exit 1
@@ -74,8 +75,13 @@ main() {
     if [ ! -w "$INSTALL_DIR" ]; then
         SUDO="sudo"
     fi
+    # Copy in beside the old app, then swap: a failed copy (disk full, a
+    # cancelled sudo prompt) must not leave the user with no app at all.
+    STAGED="${INSTALL_DIR}/.${APP}.installing"
+    $SUDO rm -rf "$STAGED"
+    $SUDO /usr/bin/ditto "${TMP_DIR}/${APP}" "$STAGED"
     $SUDO rm -rf "${INSTALL_DIR:?}/${APP}"
-    $SUDO /usr/bin/ditto "${TMP_DIR}/${APP}" "${INSTALL_DIR}/${APP}"
+    $SUDO mv "$STAGED" "${INSTALL_DIR}/${APP}"
 
     echo ""
     echo "Done. Open CCPM from ${INSTALL_DIR} or Spotlight; later updates install from inside the app."
