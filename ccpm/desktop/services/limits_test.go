@@ -109,6 +109,7 @@ func TestLimitsForMissingReadingIsUnavailable(t *testing.T) {
 }
 
 func TestLimitsGetUnknownProfileIsSafe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // never read the developer's real ~/.ccpm
 	var s LimitsService
 	got, err := s.Get("definitely-not-a-profile")
 	if err != nil {
