@@ -1,5 +1,5 @@
 // Shared between rail_darwin.m (panel lifecycle) and render_darwin.m (drawing
-// and hover). Not part of the Go-facing surface — rail.h is that.
+// and the cursor watcher). Not part of the Go-facing surface — rail.h is that.
 #ifndef CCPM_RAIL_INTERNAL_H
 #define CCPM_RAIL_INTERNAL_H
 
@@ -11,20 +11,20 @@
 void ccpmRailOnMain(dispatch_block_t block);
 
 // The live panel, or nil before Start and after Stop.
-NSPanel *CCPMRailPanelRef(void);
-
-// Installs the hover tracking area on the panel's content view.
-void CCPMRailUpdateTracking(void);
+NSPanel *CCPMNotchPanelRef(void);
 
 // Unpacks a 0xRRGGBB value from the model into an sRGB colour.
 NSColor *ccpmRailColor(unsigned int rgb, CGFloat alpha);
 
-// The hover callout. Driven from render_darwin.m, which already holds the
-// parsed model — passing dictionaries rather than re-encoding JSON for a second
-// trip across the same process.
-void ccpmCalloutShow(NSDictionary *callout, NSDictionary *theme,
-                     double anchorX, double anchorY, NSString *grows);
-void ccpmCalloutHide(void);
-void ccpmCalloutStop(void);
+// Starts and stops the cursor watcher. Implemented in render_darwin.m and
+// called from the panel's lifecycle, because a monitor outliving its panel is a
+// retain cycle with a crash at the end of it.
+void ccpmNotchStartWatching(void);
+void ccpmNotchStopWatching(void);
+
+// Recomputes which regions take the mouse and updates the panel's
+// ignoresMouseEvents accordingly. Called on every cursor event and whenever the
+// geometry or the expansion state changes.
+void ccpmNotchUpdateInteractive(void);
 
 #endif

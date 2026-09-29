@@ -29,9 +29,22 @@ type Controller struct {
 	edge     Edge
 	profiles int
 	visible  bool
-	hover    bool
-	model    Model
+	// visibility is the tri-state from prefs: hidden, hover-reveal, always
+	// expanded. It replaces the old hover bool, which could not express
+	// "always" without a second flag the C layer had to combine itself.
+	visibility Visibility
+	model      Model
 }
+
+// Visibility mirrors the RailMode preference. The zero value is hover-reveal,
+// which is what a fresh install gets.
+type Visibility int
+
+const (
+	VisibilityHover Visibility = iota
+	VisibilityAlways
+	VisibilityHidden
+)
 
 // New returns an unstarted controller.
 func New() *Controller {
@@ -45,9 +58,9 @@ func (c *Controller) Start() {
 	if c.started {
 		return
 	}
-	C.CCPMRailStart()
+	C.CCPMNotchStart()
 	c.started = true
-	C.CCPMRailSetHoverMode(cbool(c.hover))
+	C.CCPMNotchSetVisibility(C.int(c.visibility))
 	c.applyLocked()
 	c.pushModelLocked()
 }
@@ -59,7 +72,7 @@ func (c *Controller) Stop() {
 	if !c.started {
 		return
 	}
-	C.CCPMRailStop()
+	C.CCPMNotchStop()
 	c.started = false
 	c.visible = false
 }
@@ -71,21 +84,20 @@ func (c *Controller) SetLayout(edge Edge, profiles int) {
 	c.edge = edge
 	c.profiles = profiles
 	c.applyLocked()
-	// The anchors are derived from the panel's placement, so a re-place makes
-	// the ones the renderer is holding wrong.
+	// Slot and card rects are panel-local but derived from the placement, so a
+	// re-place makes the ones the renderer is holding wrong.
 	c.pushModelLocked()
 }
 
-// SetHoverMode chooses between collapsing to a peek when the pointer leaves and
-// staying fully revealed.
-func (c *Controller) SetHoverMode(hover bool) {
+// SetVisibility chooses between hidden, reveal-on-hover and always expanded.
+func (c *Controller) SetVisibility(v Visibility) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.hover = hover
+	c.visibility = v
 	if !c.started {
 		return
 	}
-	C.CCPMRailSetHoverMode(cbool(hover))
+	C.CCPMNotchSetVisibility(C.int(v))
 }
 
 // SetModel replaces what the rail draws. Held so a later Start can redraw
@@ -97,38 +109,45 @@ func (c *Controller) SetModel(m Model) {
 	c.pushModelLocked()
 }
 
-// calloutAnchor is where a ring's callout points, in screen coordinates.
-type calloutAnchor struct {
-	X     float64 `json:"x"`
-	Y     float64 `json:"y"`
-	Grows string  `json:"grows"`
+// specLocked is the geometry input for the current layout. Caller holds mu.
+//
+// The hardware notch is only consulted on the top edge, the one place the
+// notch can join to it.
+func (c *Controller) specLocked() Spec {
+	s := Spec{Edge: c.edge, Profiles: c.profiles}
+	if c.edge == EdgeTop {
+		if hw, ok := HardwareNotch(); ok {
+			s.Hardware = hw
+		}
+	}
+	return s
 }
 
 // pushModelLocked hands the model to the renderer. Caller holds mu.
+//
+// Slot and card rectangles travel WITH the model, panel-local, rather than
+// being re-derived in Objective-C. The parked rail divided the stack in two
+// places — SlotRect here and an open-coded copy in render_darwin.m — and kept
+// them in step with a comment. Sending the rects means the drawing, the
+// hit-testing and the tests are all reading the same numbers.
 func (c *Controller) pushModelLocked() {
 	if !c.started {
 		return
 	}
-	// EndPadding travels with the model so the C layer divides the stack with
-	// the same number geometry.go does, instead of keeping its own copy to
-	// drift out of step.
-	// Anchors are computed here rather than in BuildModel because they depend
-	// on the panel's placement, which only the controller knows. Computing them
-	// with CalloutAnchor keeps the "grow away from the screen edge" rule in the
-	// one tested place instead of re-deriving it in Objective-C.
-	panel := PanelRect(VisibleFrame(), c.edge, c.profiles)
-	n := len(c.model.Slots)
-	anchors := make([]calloutAnchor, 0, n)
-	for i := range n {
-		x, y, grows := CalloutAnchor(panel, c.edge, i, n)
-		anchors = append(anchors, calloutAnchor{X: x, Y: y, Grows: string(grows)})
+	spec := c.specLocked()
+	panel := PanelRect(ScreenFrame(), spec)
+	cells := Cells(panel, spec)
+	// A model can briefly carry a different count than the layout while a
+	// refresh is in flight; never hand the renderer fewer cells than slots.
+	if len(cells) > len(c.model.Slots) {
+		cells = cells[:len(c.model.Slots)]
 	}
 
 	payload := struct {
 		Model
-		EndPadding float64         `json:"endPadding"`
-		Anchors    []calloutAnchor `json:"anchors"`
-	}{Model: c.model, EndPadding: EndPadding, Anchors: anchors}
+		Edge  string `json:"edge"`
+		Cells []Cell `json:"cells"`
+	}{Model: c.model, Edge: string(c.edge), Cells: cells}
 
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -136,7 +155,7 @@ func (c *Controller) pushModelLocked() {
 	}
 	cs := C.CString(string(b))
 	defer C.free(unsafe.Pointer(cs))
-	C.CCPMRailSetModel(cs)
+	C.CCPMNotchSetModel(cs)
 }
 
 // SetVisible shows or hides the panel.
@@ -149,25 +168,24 @@ func (c *Controller) SetVisible(v bool) {
 	}
 	if v {
 		c.applyLocked()
-		C.CCPMRailShow()
+		C.CCPMNotchShow()
 		return
 	}
-	C.CCPMRailHide()
+	C.CCPMNotchHide()
 }
 
 // Visible reports the panel's actual on-screen state, asked of AppKit rather
 // than of our own bookkeeping, so a panel the system dismissed is not reported
 // as showing.
 func (c *Controller) Visible() bool {
-	return C.CCPMRailIsVisible() != 0
+	return C.CCPMNotchIsVisible() != 0
 }
 
 // Frame returns where the panel would be placed for the current layout.
-// Exposed so the callout can anchor to the same geometry the panel uses.
 func (c *Controller) Frame() Rect {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return PanelRect(VisibleFrame(), c.edge, c.profiles)
+	return PanelRect(ScreenFrame(), c.specLocked())
 }
 
 // Edge returns the current edge.
@@ -177,35 +195,69 @@ func (c *Controller) Edge() Edge {
 	return c.edge
 }
 
-// applyLocked pushes the computed frames down to the panel. Caller holds mu.
+// applyLocked pushes the panel frame and the three interaction rects down to
+// the C layer. Caller holds mu.
+//
+// Note there is exactly ONE panel frame. The collapsed and expanded rects are
+// panel-LOCAL: the panel itself never moves or resizes between them, which is
+// the property the whole rework exists to establish.
 func (c *Controller) applyLocked() {
 	if !c.started {
 		return
 	}
-	v := VisibleFrame()
-	full := PanelRect(v, c.edge, c.profiles)
-	peek := PeekRect(v, c.edge, c.profiles)
-	C.CCPMRailSetFrames(
-		C.double(peek.X), C.double(peek.Y), C.double(peek.W), C.double(peek.H),
-		C.double(full.X), C.double(full.Y), C.double(full.W), C.double(full.H))
+	spec := c.specLocked()
+	panel := PanelRect(ScreenFrame(), spec)
+	col := NotchRect(panel, spec, false)
+	exp := NotchRect(panel, spec, true)
+	wake := WakeRect(panel, spec)
+	cs, es := spec.Shape(false), spec.Shape(true)
+
+	C.CCPMNotchSetGeometry(
+		C.int(edgeCode(spec.Edge)),
+		C.double(panel.X), C.double(panel.Y), C.double(panel.W), C.double(panel.H),
+		C.double(col.X), C.double(col.Y), C.double(col.W), C.double(col.H),
+		C.double(exp.X), C.double(exp.Y), C.double(exp.W), C.double(exp.H),
+		C.double(wake.X), C.double(wake.Y), C.double(wake.W), C.double(wake.H),
+		C.double(cs.Corner), C.double(cs.Curl), C.double(es.Corner), C.double(es.Curl))
 }
 
-func cbool(b bool) C.int {
-	if b {
+// edgeCode is the C-side edge enum. Kept in step with kEdge* in
+// render_darwin.m, which uses it to orient the one canonical shape path.
+func edgeCode(e Edge) int {
+	switch e {
+	case EdgeLeft:
 		return 1
+	case EdgeTop:
+		return 2
+	case EdgeBottom:
+		return 3
+	default:
+		return 0
 	}
-	return 0
 }
 
-// VisibleFrame returns the main screen's usable area — the full screen minus
-// the menu bar and the Dock, so the rail never tucks underneath either.
+// ScreenFrame returns the main screen's FULL frame, menu bar and Dock included.
+//
+// Deliberately not visibleFrame. The rail anchored to the visible frame, which
+// meant showing or hiding the Dock slid it along the edge; a notch that moves
+// when an unrelated thing appears does not read as part of the bezel.
 //
 // Reads a cache the main thread refreshes at start and on every screen-
 // configuration change. A zero rect means AppKit has not published one yet
 // (called before Start, or mid-reconfiguration); PanelRect degrades to a
 // placeable default rather than producing a zero-area window.
-func VisibleFrame() Rect {
+func ScreenFrame() Rect {
 	var x, y, w, h C.double
-	C.CCPMRailVisibleFrame(&x, &y, &w, &h)
+	C.CCPMNotchScreenFrame(&x, &y, &w, &h)
 	return Rect{X: float64(x), Y: float64(y), W: float64(w), H: float64(h)}
+}
+
+// HardwareNotch returns the main display's physical notch size, and whether it
+// has one. Only meaningful on the top edge; the notch joins to it there, and
+// the joined state drops the wake band entirely (see WakeRect).
+func HardwareNotch() (Rect, bool) {
+	var w, h C.double
+	C.CCPMNotchHardwareSize(&w, &h)
+	r := Rect{W: float64(w), H: float64(h)}
+	return r, r.W > 0 && r.H > 0
 }

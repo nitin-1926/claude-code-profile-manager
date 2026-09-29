@@ -5,15 +5,15 @@
 #import "rail.h"
 #import "rail_internal.h"
 
-// Every Objective-C symbol in this file is prefixed CCPMRail. Wails already
+// Every Objective-C symbol in this file is prefixed CCPMNotch. Wails already
 // defines WailsWindow, AppDelegate and WindowDelegate in the same process, and
 // duplicate Objective-C class names are a link-time collision, not a warning.
 
-@interface CCPMRailPanel : NSPanel
+@interface CCPMNotchPanel : NSPanel
 @end
 
-@implementation CCPMRailPanel
-// A rail that took key focus would steal the caret out of whatever the user is
+@implementation CCPMNotchPanel
+// A notch that took key focus would steal the caret out of whatever the user is
 // typing in. NonactivatingPanel gets us clicks without activation; these two
 // close the door on the panel ever becoming key or main by another route.
 - (BOOL)canBecomeKeyWindow {
@@ -24,22 +24,48 @@
 }
 @end
 
+// The panel's content view: a plain, fully transparent container that spans the
+// whole panel and never claims a hit for itself.
+//
+// This is load-bearing. The panel is deliberately much larger than the visible
+// notch — it reserves room for the fully expanded shape AND a hover card at
+// either end, so that expanding never has to resize the window. That means most
+// of the panel is empty space sitting over the user's other windows. A content
+// view whose hitTest returns self turns all of it into a wall that swallows
+// every click meant for whatever is underneath.
+//
+// Returning the subview's answer, or nil, is what makes the transparent region
+// genuinely transparent to the mouse. The coarse gate is the panel's
+// ignoresMouseEvents, recomputed per event in render_darwin.m; this is the fine
+// one, for the case where the pointer is inside a live rect but over a part of
+// the container that no subview covers.
+@interface CCPMNotchContainer : NSView
+@end
+
+@implementation CCPMNotchContainer
+- (NSView *)hitTest:(NSPoint)point {
+  NSView *hit = [super hitTest:point];
+  return (hit == self) ? nil : hit;
+}
+@end
+
 // Watches for displays being attached, detached, or rearranged so the cached
-// visible frame never goes stale. Registered additively on NSNotificationCenter
+// screen frame never goes stale. Registered additively on NSNotificationCenter
 // — deliberately NOT via [NSApp setDelegate:], which would unhook Wails' own
 // delegate and break quit handling and single-instance behaviour.
-@interface CCPMRailScreenObserver : NSObject
+@interface CCPMNotchScreenObserver : NSObject
 - (void)screensChanged:(NSNotification *)note;
 @end
 
-static CCPMRailPanel *gPanel = nil;
-static CCPMRailScreenObserver *gObserver = nil;
+static CCPMNotchPanel *gPanel = nil;
+static CCPMNotchScreenObserver *gObserver = nil;
 
-// The cached visible frame. AppKit is main-thread-only, so instead of making Go
-// block on a main-queue round trip every layout, the main thread publishes the
-// frame here and Go reads it under a lock.
-static NSRect gVisible = {{0, 0}, {0, 0}};
-static os_unfair_lock gVisibleLock = OS_UNFAIR_LOCK_INIT;
+// The cached screen frame and hardware notch size. AppKit is main-thread-only,
+// so instead of making Go block on a main-queue round trip every layout, the
+// main thread publishes them here and Go reads them under a lock.
+static NSRect gScreen = {{0, 0}, {0, 0}};
+static NSSize gHardware = {0, 0};
+static os_unfair_lock gScreenLock = OS_UNFAIR_LOCK_INIT;
 
 // Runs block on the main thread. Declared in rail_internal.h; render_darwin.m
 // uses it too, so it is deliberately not static.
@@ -56,7 +82,13 @@ void ccpmRailOnMain(dispatch_block_t block) {
 }
 
 // Must run on the main thread.
-static void ccpmRailRefreshVisible(void) {
+//
+// Caches screen.frame, NOT visibleFrame. The rail anchored to the visible
+// frame, so showing or hiding the Dock slid it along the edge — and a notch
+// that moves when an unrelated thing appears stops reading as part of the
+// bezel. Go clamps against this frame; the menu bar is not in the way because
+// the panel sits at NSStatusWindowLevel, above it.
+static void ccpmNotchRefreshScreen(void) {
   NSScreen *screen = [NSScreen mainScreen];
   if (screen == nil) {
     screen = [[NSScreen screens] firstObject];
@@ -64,25 +96,51 @@ static void ccpmRailRefreshVisible(void) {
   if (screen == nil) {
     return; // headless or mid-reconfiguration; keep the last known frame
   }
-  NSRect v = [screen visibleFrame];
-  os_unfair_lock_lock(&gVisibleLock);
-  gVisible = v;
-  os_unfair_lock_unlock(&gVisibleLock);
+  NSRect f = [screen frame];
+
+  // The hardware notch is not exposed directly. It is the gap between the two
+  // menu-bar strips either side of the cutout. Both APIs are 12.0+; on
+  // anything older, and on any display without a notch, the auxiliary areas
+  // are nil and the size stays zero.
+  //
+  // Its depth is the deepest of the top safe-area inset and the two strips,
+  // not the inset alone (codenotch 1.18): the inset is the area the system
+  // asks apps to keep clear, and it collapses when the menu bar is hidden or
+  // auto-hides. The hole does not move when that happens, and a notch sized
+  // from the collapsed inset comes out shallower than the cutout it joins — a
+  // step along its foot. The strips are the hole's own height either way.
+  NSSize hw = NSMakeSize(0, 0);
+  if (@available(macOS 12.0, *)) {
+    NSRect left = screen.auxiliaryTopLeftArea;
+    NSRect right = screen.auxiliaryTopRightArea;
+    if (!NSIsEmptyRect(left) && !NSIsEmptyRect(right)) {
+      CGFloat w = NSWidth(f) - NSWidth(left) - NSWidth(right);
+      CGFloat h = MAX(screen.safeAreaInsets.top, MAX(NSHeight(left), NSHeight(right)));
+      if (w > 0 && h > 0) {
+        hw = NSMakeSize(w, h);
+      }
+    }
+  }
+
+  os_unfair_lock_lock(&gScreenLock);
+  gScreen = f;
+  gHardware = hw;
+  os_unfair_lock_unlock(&gScreenLock);
 }
 
-@implementation CCPMRailScreenObserver
+@implementation CCPMNotchScreenObserver
 - (void)screensChanged:(NSNotification *)note {
   (void)note;
-  ccpmRailRefreshVisible();
+  ccpmNotchRefreshScreen();
 }
 @end
 
-void CCPMRailStart(void) {
+void CCPMNotchStart(void) {
   ccpmRailOnMain(^{
-    ccpmRailRefreshVisible();
+    ccpmNotchRefreshScreen();
 
     if (gObserver == nil) {
-      gObserver = [[CCPMRailScreenObserver alloc] init];
+      gObserver = [[CCPMNotchScreenObserver alloc] init];
       [[NSNotificationCenter defaultCenter]
           addObserver:gObserver
              selector:@selector(screensChanged:)
@@ -93,8 +151,8 @@ void CCPMRailStart(void) {
       return;
     }
 
-    NSRect initial = NSMakeRect(0, 0, 64, 240);
-    gPanel = [[CCPMRailPanel alloc]
+    NSRect initial = NSMakeRect(0, 0, 320, 480);
+    gPanel = [[CCPMNotchPanel alloc]
         initWithContentRect:initial
                   styleMask:(NSWindowStyleMaskBorderless |
                              NSWindowStyleMaskNonactivatingPanel)
@@ -102,8 +160,8 @@ void CCPMRailStart(void) {
                       defer:NO];
 
     // NSStatusWindowLevel (25), not NSFloatingWindowLevel (3): floating sits
-    // BELOW the menu bar (24), which is exactly where a notch-adjacent rail
-    // needs to be visible.
+    // BELOW the menu bar (24), which is exactly where a notch needs to be
+    // visible.
     gPanel.level = NSStatusWindowLevel;
 
     // CanJoinAllSpaces  — follows the user between Spaces instead of stranding
@@ -114,7 +172,7 @@ void CCPMRailStart(void) {
                                 NSWindowCollectionBehaviorStationary |
                                 NSWindowCollectionBehaviorFullScreenAuxiliary;
 
-    // NSPanel defaults hidesOnDeactivate to YES, which would make the rail
+    // NSPanel defaults hidesOnDeactivate to YES, which would make the notch
     // vanish the moment the user clicked into any other app — i.e. almost
     // always. canHide=NO keeps it alive through [NSApp hide:], which is what
     // Wails' HideWindowOnClose path calls when the main window closes.
@@ -124,34 +182,35 @@ void CCPMRailStart(void) {
     gPanel.becomesKeyOnlyIfNeeded = YES;
     gPanel.opaque = NO;
     gPanel.backgroundColor = [NSColor clearColor];
-    gPanel.hasShadow = YES;
+    gPanel.movable = NO;
+    gPanel.movableByWindowBackground = NO;
 
-    NSVisualEffectView *fx =
-        [[NSVisualEffectView alloc] initWithFrame:initial];
-    // HUDWindow is the material that reads as a floating overlay rather than a
-    // document window, but it is 10.14+ while the bundle still declares a
-    // 10.13 minimum. Guarded rather than silenced; on 10.13 the untouched
-    // default (appearance-based) is the right fallback, and every non-deprecated
-    // alternative is itself 10.14+.
-    if (@available(macOS 10.14, *)) {
-      fx.material = NSVisualEffectMaterialHUDWindow;
-    }
-    fx.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-    fx.state = NSVisualEffectStateActive;
-    fx.wantsLayer = YES;
-    fx.layer.cornerRadius = 18.0;
-    fx.layer.masksToBounds = YES;
-    fx.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    gPanel.contentView = fx;
+    // No window shadow. The panel is mostly empty space, and AppKit draws the
+    // shadow around the WINDOW, not around the drawn shape — so a shadow here
+    // outlines a large invisible rectangle hanging off the screen edge. The
+    // black body is meant to look welded to the bezel and wants none anyway.
+    gPanel.hasShadow = NO;
 
-    // NSTrackingInVisibleRect means the area follows the view through every
-    // resize the hover reveal performs, so this is the only install needed.
-    CCPMRailUpdateTracking();
+    CCPMNotchContainer *container =
+        [[CCPMNotchContainer alloc] initWithFrame:initial];
+    container.wantsLayer = YES;
+    container.layer.backgroundColor = NSColor.clearColor.CGColor;
+    container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    gPanel.contentView = container;
+
+    // Everything visible is drawn as layers by render_darwin.m, on top of
+    // this container: the black body as a CAShapeLayer whose path morphs
+    // between the folded and open shapes, the rings clipped by the same path,
+    // and the hover card. No NSVisualEffectView — codenotch's notch is solid
+    // black, which is what lets it read as part of the bezel rather than as a
+    // translucent window laid over the screen.
+    ccpmNotchStartWatching();
   });
 }
 
-void CCPMRailStop(void) {
+void CCPMNotchStop(void) {
   ccpmRailOnMain(^{
+    ccpmNotchStopWatching();
     if (gObserver != nil) {
       [[NSNotificationCenter defaultCenter] removeObserver:gObserver];
       gObserver = nil;
@@ -159,7 +218,6 @@ void CCPMRailStop(void) {
     if (gPanel == nil) {
       return;
     }
-    ccpmCalloutStop();
     [gPanel orderOut:nil];
     [gPanel close];
     gPanel = nil;
@@ -167,61 +225,82 @@ void CCPMRailStop(void) {
 }
 
 // Main thread only, which every caller in render_darwin.m already is.
-NSPanel *CCPMRailPanelRef(void) { return gPanel; }
+NSPanel *CCPMNotchPanelRef(void) { return gPanel; }
 
-void CCPMRailShow(void) {
+void CCPMNotchShow(void) {
   ccpmRailOnMain(^{
     if (gPanel == nil) {
       return;
     }
-    // orderFrontRegardless, not makeKeyAndOrderFront: the rail must appear
+    // orderFrontRegardless, not makeKeyAndOrderFront: the notch must appear
     // without activating ccpm or pulling focus from the user's frontmost app.
     [gPanel orderFrontRegardless];
+    ccpmNotchUpdateInteractive();
   });
 }
 
-void CCPMRailHide(void) {
+void CCPMNotchHide(void) {
   ccpmRailOnMain(^{
     if (gPanel == nil) {
       return;
     }
+    // orderOut, deliberately not alphaValue = 0. An invisible panel that is
+    // still on screen keeps taking the mouse over its live rects, so "hidden"
+    // would silently go on swallowing clicks at the screen edge.
     [gPanel orderOut:nil];
   });
 }
 
-int CCPMRailIsVisible(void) {
+int CCPMNotchIsVisible(void) {
   // Read-only and cheap; safe to answer from any thread without a hop.
   return (gPanel != nil && [gPanel isVisible]) ? 1 : 0;
 }
 
-void CCPMRailVisibleFrame(double *x, double *y, double *w, double *h) {
-  os_unfair_lock_lock(&gVisibleLock);
-  NSRect v = gVisible;
-  os_unfair_lock_unlock(&gVisibleLock);
+// Warms the cache synchronously the first time, then answers from it.
+//
+// CCPMNotchStart hands its work to the main queue and returns immediately, so
+// Go's very first placement lands here before the main thread has published
+// anything. Warming once beats shipping a panel placed against a zero screen.
+//
+// dispatch_sync is safe here and only here: this is a leaf read that takes no
+// lock the main thread waits on, and the isMainThread branch keeps it from
+// deadlocking against itself.
+static NSRect ccpmNotchCachedScreen(NSSize *hardware) {
+  os_unfair_lock_lock(&gScreenLock);
+  NSRect v = gScreen;
+  NSSize hw = gHardware;
+  os_unfair_lock_unlock(&gScreenLock);
 
-  // CCPMRailStart hands its work to the main queue and returns immediately, so
-  // Go's very first placement lands here before the main thread has published
-  // anything. Warm the cache synchronously that once, rather than shipping a
-  // panel placed against a zero screen.
-  //
-  // dispatch_sync is safe here and only here: this is a leaf read that takes no
-  // lock the main thread waits on, and the isMainThread branch keeps it from
-  // deadlocking against itself.
   if (v.size.width <= 0 || v.size.height <= 0) {
     if ([NSThread isMainThread]) {
-      ccpmRailRefreshVisible();
+      ccpmNotchRefreshScreen();
     } else {
       dispatch_sync(dispatch_get_main_queue(), ^{
-        ccpmRailRefreshVisible();
+        ccpmNotchRefreshScreen();
       });
     }
-    os_unfair_lock_lock(&gVisibleLock);
-    v = gVisible;
-    os_unfair_lock_unlock(&gVisibleLock);
+    os_unfair_lock_lock(&gScreenLock);
+    v = gScreen;
+    hw = gHardware;
+    os_unfair_lock_unlock(&gScreenLock);
   }
+  if (hardware) {
+    *hardware = hw;
+  }
+  return v;
+}
 
+void CCPMNotchScreenFrame(double *x, double *y, double *w, double *h) {
+  NSRect v = ccpmNotchCachedScreen(NULL);
   if (x) *x = v.origin.x;
   if (y) *y = v.origin.y;
   if (w) *w = v.size.width;
   if (h) *h = v.size.height;
+}
+
+void CCPMNotchHardwareSize(double *w, double *h) {
+  NSSize hw = NSMakeSize(0, 0);
+  ccpmNotchCachedScreen(&hw);
+  if (w) *w = hw.width;
+  if (h) *h = hw.height;
 }

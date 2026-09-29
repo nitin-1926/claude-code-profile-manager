@@ -67,18 +67,30 @@ func TestSetLayoutRecomputesFrame(t *testing.T) {
 	}
 }
 
-// VisibleFrame reads a cache the main thread publishes. Without a running
+// ScreenFrame reads a cache the main thread publishes. Without a running
 // NSApplication it is legitimately zero — the contract is that it never panics
 // and never returns garbage, not that it returns a real screen.
-func TestVisibleFrameIsSafeWithoutAppKitRunning(t *testing.T) {
-	v := VisibleFrame()
+func TestScreenFrameIsSafeWithoutAppKitRunning(t *testing.T) {
+	v := ScreenFrame()
 	if v.W < 0 || v.H < 0 {
-		t.Errorf("negative visible frame: %+v", v)
+		t.Errorf("negative screen frame: %+v", v)
 	}
 	// Whatever it returns, it must feed PanelRect without producing a
 	// zero-area or NaN panel.
-	r := PanelRect(v, EdgeRight, 3)
+	r := PanelRect(v, Spec{Edge: EdgeRight, Profiles: 3})
 	if r.W <= 0 || r.H <= 0 {
-		t.Errorf("visible frame %+v produced an unplaceable panel %+v", v, r)
+		t.Errorf("screen frame %+v produced an unplaceable panel %+v", v, r)
+	}
+}
+
+// HardwareNotch is likewise cache-backed and must be answerable with no AppKit
+// running. A display without a notch reports 0x0, which is not an error.
+func TestHardwareNotchIsSafeWithoutAppKitRunning(t *testing.T) {
+	r, ok := HardwareNotch()
+	if r.W < 0 || r.H < 0 {
+		t.Errorf("negative hardware notch: %+v", r)
+	}
+	if ok != (r.W > 0 && r.H > 0) {
+		t.Errorf("hardware notch %+v disagrees with its own ok=%v", r, ok)
 	}
 }
