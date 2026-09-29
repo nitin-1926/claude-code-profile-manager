@@ -17,14 +17,17 @@ var (
 )
 
 // specs enumerates every combination worth checking: each edge, a range of
-// profile counts, and the top edge both with and without a hardware notch.
+// profile counts, the top edge both with and without a hardware notch, and
+// all of it with the percentages both shown and hidden.
 func specs() []Spec {
 	var out []Spec
-	for _, e := range allEdges {
-		for n := 1; n <= 6; n++ {
-			out = append(out, Spec{Edge: e, Profiles: n})
-			if e == EdgeTop {
-				out = append(out, Spec{Edge: e, Profiles: n, Hardware: notch16})
+	for _, hide := range []bool{false, true} {
+		for _, e := range allEdges {
+			for n := 1; n <= 6; n++ {
+				out = append(out, Spec{Edge: e, Profiles: n, HidePercent: hide})
+				if e == EdgeTop {
+					out = append(out, Spec{Edge: e, Profiles: n, Hardware: notch16, HidePercent: hide})
+				}
 			}
 		}
 	}
@@ -460,5 +463,62 @@ func TestOpenLiveRegionsIncludeTheHoveredCard(t *testing.T) {
 	}
 	if got := len(LiveRects(p, s, true, 9)); got != 1 {
 		t.Errorf("out-of-range hover index produced %d rects", got)
+	}
+}
+
+// TestHiddenPercentGivesTheRoomBack: with the percentages off, nothing may
+// still be reserved for them. Numbers worked by hand from the design
+// constants, like TestLayoutMatchesTheReference's.
+func TestHiddenPercentGivesTheRoomBack(t *testing.T) {
+	// Down a side edge the label line leaves each cell, and both ends pad a
+	// ring, so they take the pads' mean: 2 x 22.49 + 3 x 44 + 2 x 31.40.
+	side := Spec{Edge: EdgeRight, Profiles: 3, HidePercent: true}
+	if got := side.ExpandedLength() - 2*CurlRadius; !near(got, 239.78) {
+		t.Errorf("side, hidden: body length %.2f, want 239.78 (321.13 with labels)", got)
+	}
+	if !near(side.ExpandedDepth(), SideBodyDepth) {
+		t.Errorf("side, hidden: depth %.2f, want the unchanged %.2f", side.ExpandedDepth(), SideBodyDepth)
+	}
+
+	// Across a horizontal edge the label line leaves the depth: the ring and
+	// its margins, 69.95, not the 97.06 that holds a reading under it.
+	bottom := Spec{Edge: EdgeBottom, Profiles: 3, HidePercent: true}
+	if !near(bottom.ExpandedDepth(), 69.95) {
+		t.Errorf("bottom, hidden: depth %.2f, want 69.95", bottom.ExpandedDepth())
+	}
+
+	// Joined to a hardware notch, that lighter depth is what scales onto the
+	// hole: 32 / 69.95 = 0.4575, a 20.13pt ring where labels leave 14.51 —
+	// the one-ring case's size, for every ring.
+	for n := 1; n <= 3; n++ {
+		j := Spec{Edge: EdgeTop, Profiles: n, Hardware: notch16, HidePercent: true}
+		p := PanelRect(screen16, j)
+		hole := (p.W - notch16.W) / 2
+		open := NotchRect(p, j, true)
+		// Nothing crosses the hole, so the pair balances about it even with
+		// one ring, where a shown percentage makes the far side short.
+		if !near(open.X+open.W/2, hole+notch16.W/2) {
+			t.Errorf("joined n=%d, hidden: open pair is not symmetric about the hole", n)
+		}
+		for i, c := range Cells(p, j) {
+			if !near(c.Ring.W, 20.13) {
+				t.Errorf("joined n=%d, hidden: ring %d is %.2fpt, want 20.13", n, i, c.Ring.W)
+			}
+			if c.Across {
+				t.Errorf("joined n=%d, hidden: ring %d reads across a hole with nothing to show", n, i)
+			}
+		}
+	}
+
+	// And no edge hands the renderer a label box to draw into.
+	for _, s := range specs() {
+		if !s.HidePercent {
+			continue
+		}
+		for i, c := range Cells(PanelRect(screen16, s), s) {
+			if c.Label != (Rect{}) {
+				t.Errorf("%+v: ring %d has label box %+v with percentages hidden", s, i, c.Label)
+			}
+		}
 	}
 }

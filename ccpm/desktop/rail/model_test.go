@@ -43,7 +43,7 @@ func available(profile string, fiveHour, sevenDay float64) services.ProfileLimit
 }
 
 func TestBuildModelMapsBothWindows(t *testing.T) {
-	m := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite, now)
+	m := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite, usage.KeyFiveHour, now)
 	if len(m.Slots) != 1 {
 		t.Fatalf("got %d slots, want 1", len(m.Slots))
 	}
@@ -76,7 +76,7 @@ func TestUnavailableProfileDrawsNoFill(t *testing.T) {
 			Profile:   "cin",
 			Available: false,
 			Reason:    reason,
-		}}, ThemeGraphite, now)
+		}}, ThemeGraphite, usage.KeyFiveHour, now)
 		s := m.Slots[0]
 		if s.Available {
 			t.Errorf("%s: slot reported available", reason)
@@ -101,7 +101,7 @@ func TestPartialWindowsLeaveTheOtherArcEmpty(t *testing.T) {
 		Profile:   "labs",
 		Available: true,
 		Windows:   []services.LimitWindowDTO{{Key: usage.KeyFiveHour, UsedPercentage: 10}},
-	}}, ThemeGraphite, now)
+	}}, ThemeGraphite, usage.KeyFiveHour, now)
 	s := m.Slots[0]
 	if s.Outer != 0.1 {
 		t.Errorf("outer = %v, want 0.1", s.Outer)
@@ -120,7 +120,7 @@ func TestPercentRoundsRatherThanTruncates(t *testing.T) {
 		100:  "100%",
 	}
 	for used, want := range cases {
-		m := BuildModel([]services.ProfileLimits{available("work", used, 0)}, ThemeGraphite, now)
+		m := BuildModel([]services.ProfileLimits{available("work", used, 0)}, ThemeGraphite, usage.KeyFiveHour, now)
 		if got := m.Slots[0].Percent; got != want {
 			t.Errorf("%v%% used rendered as %q, want %q", used, got, want)
 		}
@@ -129,7 +129,7 @@ func TestPercentRoundsRatherThanTruncates(t *testing.T) {
 
 func TestBuildModelPreservesOrder(t *testing.T) {
 	in := []services.ProfileLimits{available("cin", 1, 1), available("labs", 2, 2), available("work", 3, 3)}
-	m := BuildModel(in, ThemeGraphite, now)
+	m := BuildModel(in, ThemeGraphite, usage.KeyFiveHour, now)
 	for i, want := range []string{"cin", "labs", "work"} {
 		if m.Slots[i].Profile != want {
 			t.Errorf("slot %d is %q, want %q — ring order must not reshuffle between refreshes", i, m.Slots[i].Profile, want)
@@ -138,12 +138,37 @@ func TestBuildModelPreservesOrder(t *testing.T) {
 }
 
 func TestBuildModelCarriesTheTheme(t *testing.T) {
-	if got := BuildModel(nil, ThemeLight, now).Theme; got != PaletteFor(ThemeLight) {
+	if got := BuildModel(nil, ThemeLight, usage.KeyFiveHour, now).Theme; got != PaletteFor(ThemeLight) {
 		t.Errorf("theme = %+v, want the light palette", got)
 	}
 	// No profiles is a legitimate state (all toggled off); it must not panic
 	// and must still carry a usable palette.
-	if BuildModel(nil, ThemeGraphite, now).Theme.Foreground == 0 {
+	if BuildModel(nil, ThemeGraphite, usage.KeyFiveHour, now).Theme.Foreground == 0 {
 		t.Error("an empty model has no usable foreground colour")
+	}
+}
+
+// Picking the weekly window as the main ring swaps which window is the big
+// outer arc and whose figure is the label, and nothing else: the five-hour
+// window becomes the inner arc, each keeping its own colour.
+func TestBuildModelWeeklyMainRingSwapsTheArcs(t *testing.T) {
+	m := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite, usage.KeySevenDay, now)
+	s := m.Slots[0]
+	if s.Outer != 0.3 || s.Inner != 0.8 {
+		t.Errorf("weekly main: outer %v inner %v, want the seven-day 0.3 outside and the five-hour 0.8 inside", s.Outer, s.Inner)
+	}
+	if s.Percent != "30%" {
+		t.Errorf("weekly main: percent = %q, want the seven-day figure", s.Percent)
+	}
+	if s.OuterRGB != NotchAmple || s.InnerRGB != NotchWatch {
+		t.Errorf("weekly main: colours %#06x/%#06x did not travel with their windows", s.OuterRGB, s.InnerRGB)
+	}
+
+	// Anything that is not the weekly key is the five-hour default, so a
+	// stale or empty preference can never leave the ring blank.
+	for _, main := range []string{usage.KeyFiveHour, "", "monthly"} {
+		if got := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite, main, now).Slots[0]; got.Outer != 0.8 || got.Percent != "80%" {
+			t.Errorf("main %q: outer %v percent %q, want the five-hour default", main, got.Outer, got.Percent)
+		}
 	}
 }

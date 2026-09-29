@@ -464,8 +464,9 @@ static NSString *ccpmInitial(NSString *profile) {
   return [[profile substringWithRange:r] uppercaseString];
 }
 
-// One profile: the ring, the thin weekly ring inside it, the profile's initial
-// where the reference puts its provider mark, and the percentage beneath.
+// One profile: the main ring, the thin secondary ring inside it (which window
+// is which was settled in Go), the profile's initial where the reference puts
+// its provider mark, and the percentage beneath.
 //
 // Returned as a container spanning the whole panel so the cell's ring and
 // label rects — both panel-local, from Go — are used as they arrive.
@@ -534,6 +535,11 @@ static CALayer *ccpmCellLayer(NSDictionary *slot, NSInteger i) {
                              glyph, [NSColor colorWithWhite:1 alpha:0.9], NSFontWeightSemibold,
                              kCAAlignmentCenter)];
 
+  // With percentages hidden Go sends no label box, and the geometry has
+  // already given its room back to the rings.
+  if (NSIsEmptyRect(label)) {
+    return cell;
+  }
   // Across a hardware notch the one ring's reading has the other side to
   // itself: the larger size, held against the hole it reads across.
   NSDictionary *layout = gCells[i];

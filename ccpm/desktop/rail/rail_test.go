@@ -16,7 +16,7 @@ func TestControllerCallsAreSafeBeforeStartAndAfterStop(t *testing.T) {
 	c := New()
 
 	// Before Start.
-	c.SetLayout(EdgeLeft, 3)
+	c.SetLayout(EdgeLeft, 3, true)
 	c.SetVisible(true)
 	c.SetVisible(false)
 	_ = c.Visible()
@@ -30,7 +30,7 @@ func TestControllerCallsAreSafeBeforeStartAndAfterStop(t *testing.T) {
 
 	// And again after an explicit Stop.
 	c.Stop()
-	c.SetLayout(EdgeTop, 1)
+	c.SetLayout(EdgeTop, 1, true)
 	c.SetVisible(true)
 	_ = c.Frame()
 }
@@ -51,16 +51,16 @@ func TestControllerDefaults(t *testing.T) {
 func TestSetLayoutRecomputesFrame(t *testing.T) {
 	c := New()
 
-	c.SetLayout(EdgeRight, 1)
+	c.SetLayout(EdgeRight, 1, true)
 	one := c.Frame()
-	c.SetLayout(EdgeRight, 4)
+	c.SetLayout(EdgeRight, 4, true)
 	four := c.Frame()
 
 	if four.H <= one.H {
 		t.Errorf("four profiles (h=%v) should need more height than one (h=%v)", four.H, one.H)
 	}
 
-	c.SetLayout(EdgeBottom, 4)
+	c.SetLayout(EdgeBottom, 4, true)
 	bottom := c.Frame()
 	if bottom.W <= bottom.H {
 		t.Errorf("a bottom-edge rail should be wider than it is tall: %+v", bottom)

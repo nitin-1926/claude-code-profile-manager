@@ -21,22 +21,22 @@ type Model struct {
 
 // Slot is one profile's ring.
 //
-// Two concentric arcs: the outer is the five-hour window, the inner the
-// seven-day. Both matter and a person watching the rail wants the shape of both
-// without hovering — that is the entire reason the rail exists rather than a
-// menu item.
+// Two concentric arcs: the outer is the main window — five-hour unless the
+// user picked the weekly one — and the inner the other. Both matter and a
+// person watching the rail wants the shape of both without hovering — that is
+// the entire reason the rail exists rather than a menu item.
 type Slot struct {
 	Profile string `json:"profile"`
-	// Percent is the label under the ring: the five-hour figure, or an em-dash
-	// when there is nothing honest to show.
+	// Percent is the label under the ring: the main window's figure, or an
+	// em-dash when there is nothing honest to show.
 	Percent string `json:"percent"`
 	// Available is false when this profile has no usable reading. The renderer
 	// draws track only — never a filled arc, because a 0% arc reads as "plenty
 	// of headroom" when the truth is "we do not know".
 	Available bool `json:"available"`
 
-	Outer    float64 `json:"outer"` // five-hour fill, 0..1
-	Inner    float64 `json:"inner"` // seven-day fill, 0..1
+	Outer    float64 `json:"outer"` // main window's fill, 0..1
+	Inner    float64 `json:"inner"` // the other window's fill, 0..1
 	OuterRGB RGB     `json:"outerRGB"`
 	InnerRGB RGB     `json:"innerRGB"`
 
@@ -67,15 +67,20 @@ func FillFraction(usedPercentage float64) float64 {
 //
 // Order is the caller's; it is already name-sorted by LimitsService.All so the
 // rings do not reshuffle between refreshes.
-func BuildModel(limits []services.ProfileLimits, theme string, now time.Time) Model {
+//
+// main is the usage window drawn as the big outer ring (usage.KeySevenDay, or
+// anything else for the five-hour default). Swapping here rather than in the
+// renderer keeps Outer/Inner meaning "big ring / small ring" all the way down,
+// so the Objective-C side has no second copy of the choice to keep in step.
+func BuildModel(limits []services.ProfileLimits, theme, main string, now time.Time) Model {
 	m := Model{Theme: PaletteFor(theme), Slots: make([]Slot, 0, len(limits))}
 	for _, l := range limits {
-		m.Slots = append(m.Slots, buildSlot(l, now))
+		m.Slots = append(m.Slots, buildSlot(l, main == usage.KeySevenDay, now))
 	}
 	return m
 }
 
-func buildSlot(l services.ProfileLimits, now time.Time) Slot {
+func buildSlot(l services.ProfileLimits, weeklyMain bool, now time.Time) Slot {
 	s := Slot{
 		Callout:   BuildCallout(l, now),
 		Profile:   l.Profile,
@@ -95,11 +100,19 @@ func buildSlot(l services.ProfileLimits, now time.Time) Slot {
 		// HeadroomColor grades on what is LEFT, so invert here rather than
 		// teaching it about used-percentages and having two conventions.
 		color := NotchColor(int(100 - w.UsedPercentage))
+		var isMain bool
 		switch w.Key {
 		case usage.KeyFiveHour:
+			isMain = !weeklyMain
+		case usage.KeySevenDay:
+			isMain = weeklyMain
+		default:
+			continue
+		}
+		if isMain {
 			s.Outer, s.OuterRGB = frac, color
 			s.Percent = fmt.Sprintf("%d%%", int(w.UsedPercentage+0.5))
-		case usage.KeySevenDay:
+		} else {
 			s.Inner, s.InnerRGB = frac, color
 		}
 	}

@@ -72,12 +72,12 @@ func (a *App) ApplyRailPrefs() {
 		}
 	}
 
-	a.rail.SetLayout(rail.ParseEdge(prefs.RailEdge), len(shown))
-	a.rail.SetModel(rail.BuildModel(shown, prefs.Theme, time.Now()))
-	a.rail.SetVisibility(notchVisibility(prefs.RailMode))
-	// Hover mode still shows the panel; the reveal is what hover drives. Hidden
-	// is the only mode that takes it off screen entirely.
-	a.rail.SetVisible(prefs.RailMode != services.RailModeHidden && len(shown) > 0)
+	a.rail.SetLayout(rail.ParseEdge(prefs.RailEdge), len(shown), prefs.RailPercent)
+	a.rail.SetModel(rail.BuildModel(shown, prefs.Theme, prefs.RailMain, time.Now()))
+	a.rail.SetVisibility(notchVisibility(prefs))
+	// Hover mode still shows the panel; the reveal is what hover drives. The
+	// master switch is the only thing that takes it off screen entirely.
+	a.rail.SetVisible(prefs.RailOn && len(shown) > 0)
 }
 
 // onSecondInstanceLaunch runs when the single-instance lock turns away another
@@ -113,15 +113,16 @@ func (a *App) PickDirectory() string {
 	return dir
 }
 
-// notchVisibility maps the stored preference onto the notch's tri-state. The
+// notchVisibility maps the stored preferences onto the notch's tri-state. The
 // notch owns the whole reveal decision now, so it needs to know about "always"
-// as its own mode rather than inferring it from a hover flag being off.
-func notchVisibility(mode string) rail.Visibility {
-	switch mode {
-	case services.RailModeAlways:
-		return rail.VisibilityAlways
-	case services.RailModeHidden:
+// as its own mode rather than inferring it from a hover flag being off. Off is
+// the master switch, whatever reveal it is keeping for later.
+func notchVisibility(p services.DesktopPrefs) rail.Visibility {
+	switch {
+	case !p.RailOn:
 		return rail.VisibilityHidden
+	case p.RailMode == services.RailModeAlways:
+		return rail.VisibilityAlways
 	default:
 		return rail.VisibilityHover
 	}

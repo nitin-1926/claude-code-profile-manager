@@ -28,7 +28,9 @@ type Controller struct {
 	started  bool
 	edge     Edge
 	profiles int
-	visible  bool
+	// hidePercent drops the percentage labels and the room reserved for them.
+	hidePercent bool
+	visible     bool
 	// visibility is the tri-state from prefs: hidden, hover-reveal, always
 	// expanded. It replaces the old hover bool, which could not express
 	// "always" without a second flag the C layer had to combine itself.
@@ -77,12 +79,14 @@ func (c *Controller) Stop() {
 	c.visible = false
 }
 
-// SetLayout updates the edge and profile count, re-placing the panel.
-func (c *Controller) SetLayout(edge Edge, profiles int) {
+// SetLayout updates the edge, profile count and whether percentages are
+// drawn, re-placing the panel: hiding them changes the notch's size.
+func (c *Controller) SetLayout(edge Edge, profiles int, percent bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.edge = edge
 	c.profiles = profiles
+	c.hidePercent = !percent
 	c.applyLocked()
 	// Slot and card rects are panel-local but derived from the placement, so a
 	// re-place makes the ones the renderer is holding wrong.
@@ -114,7 +118,7 @@ func (c *Controller) SetModel(m Model) {
 // The hardware notch is only consulted on the top edge, the one place the
 // notch can join to it.
 func (c *Controller) specLocked() Spec {
-	s := Spec{Edge: c.edge, Profiles: c.profiles}
+	s := Spec{Edge: c.edge, Profiles: c.profiles, HidePercent: c.hidePercent}
 	if c.edge == EdgeTop {
 		if hw, ok := HardwareNotch(); ok {
 			s.Hardware = hw

@@ -158,6 +158,11 @@ type Spec struct {
 	// Hardware is the display's physical notch (W, H), or zero. Only used on
 	// the top edge, where the notch joins to it.
 	Hardware Rect
+	// HidePercent drops the percentage under every ring, and the room the
+	// geometry reserves for it: a line reserved for a reading that is not
+	// drawn would come straight off the rings. The zero value shows them, so
+	// every Spec written before the setting existed still means what it did.
+	HidePercent bool
 }
 
 // Flush reports whether the collapsed notch is joined to a hardware notch.
@@ -173,29 +178,35 @@ func cellExtent() float64 { return RingDiameter + RingLabelGap + PercentLineHeig
 // sideRingMargin is the clear band either side of a ring across a side edge.
 func sideRingMargin() float64 { return (SideBodyDepth - RingDiameter) / 2 }
 
+// labelsAlong reports whether each ring's percentage sits beneath it ALONG
+// the stack, which is only down a side edge with percentages shown.
+func (s Spec) labelsAlong() bool { return s.Edge.Vertical() && !s.HidePercent }
+
 // cellAlong is what one cell claims ALONG the stack. Down a side edge that is
 // the ring and the label beneath it; across a horizontal edge the label has
-// moved into the depth, so the cell is the ring alone. Using the side-edge
-// figure there left 27pt of nothing between every pair of rings.
+// moved into the depth, so the cell is the ring alone — as it is anywhere the
+// percentage is hidden. Using the side-edge figure there left 27pt of nothing
+// between every pair of rings.
 func (s Spec) cellAlong() float64 {
-	if s.Edge.Vertical() {
+	if s.labelsAlong() {
 		return cellExtent()
 	}
 	return RingDiameter
 }
 
-// padStart and padEnd are PadTop/PadBottom down a side edge. Across a
-// horizontal edge both ends pad the same thing — a ring — so they become one
-// number, their mean, which keeps a single ring centred in its own bar.
+// padStart and padEnd are PadTop/PadBottom down a side edge. Where both ends
+// pad the same thing — a ring, across a horizontal edge or with no label under
+// the last ring — they become one number, their mean, which keeps a single
+// ring centred in its own bar.
 func (s Spec) padStart() float64 {
-	if s.Edge.Vertical() {
+	if s.labelsAlong() {
 		return PadTop
 	}
 	return (PadTop + PadBottom) / 2
 }
 
 func (s Spec) padEnd() float64 {
-	if s.Edge.Vertical() {
+	if s.labelsAlong() {
 		return PadBottom
 	}
 	return (PadTop + PadBottom) / 2
@@ -206,12 +217,13 @@ func (s Spec) padEnd() float64 {
 //
 // Joined with one ring, the ring's percentage moves across the hole (see
 // readsAcross), so the depth holds the ring alone: reserving a line for a
-// reading that is not drawn there would come straight off the ring.
+// reading that is not drawn there would come straight off the ring. The same
+// holds when the percentage is hidden altogether.
 func (s Spec) BodyDepth() float64 {
 	if s.Edge.Vertical() {
 		return SideBodyDepth
 	}
-	if s.readsAcross() {
+	if s.readsAcross() || s.HidePercent {
 		return 2*sideRingMargin() + RingDiameter
 	}
 	return 2*sideRingMargin() + cellExtent()
@@ -222,8 +234,9 @@ func (s Spec) BodyDepth() float64 {
 // either side and only one side has rings to carry; with a single ring the
 // other side takes its reading, level with it, and the ring keeps the whole
 // depth. With more there is still only one other side, so each ring keeps its
-// percentage under it.
-func (s Spec) readsAcross() bool { return s.Flush() && s.n() == 1 }
+// percentage under it. With the percentage hidden there is nothing to carry,
+// so the two sides balance as they do with several rings.
+func (s Spec) readsAcross() bool { return s.Flush() && s.n() == 1 && !s.HidePercent }
 
 // scale is the size the notch is drawn at: 1 everywhere, except joined to a
 // hardware notch, where it is the one scale that lands the body's design depth
@@ -464,7 +477,7 @@ type Cell struct {
 	// Ring is the ring's square box, RingDiameter on a side.
 	Ring Rect `json:"ring"`
 	// Label is the percentage's line box, beneath the ring on a side edge and
-	// inward of it on a horizontal one.
+	// inward of it on a horizontal one. Zero with Spec.HidePercent.
 	Label Rect `json:"label"`
 	// Across marks a label drawn on the far side of a hardware notch from its
 	// ring (see Spec.readsAcross): the larger size, held against the hole.
@@ -557,6 +570,11 @@ func Cells(panel Rect, s Spec) []Cell {
 		tailAlong := clamp(centre-TailHeight/2, cardAlong, cardAlong+ca-TailHeight)
 		tail := place(panel, s.Edge, tailAlong, TailHeight, depth+TailGap, TailLength)
 
+		// Hidden percentages get no box at all: the renderer draws a label
+		// only into a rect with area, so a zero rect is the whole signal.
+		if s.HidePercent {
+			label = Rect{}
+		}
 		out = append(out, Cell{Ring: ring, Label: label, Across: across, Slot: slot, Card: card, Body: body, Tail: tail})
 	}
 	return out
