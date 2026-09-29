@@ -108,9 +108,15 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
 
 ### Download (macOS)
 
-Grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
+The quickest install is one line in Terminal. It picks the build for your chip, verifies its checksum and puts **CCPM** in **Applications**, ready to open with no Gatekeeper prompt:
 
-Open the `.dmg` and drag **CCPM** into **Applications**. The app is not notarized yet (that needs an Apple Developer account), and on **macOS 15 Sequoia and later** Gatekeeper no longer lets right-click → Open past that: it refuses to launch the app and may even call it **"damaged"**. It isn't — the download is checksummed and ad-hoc signed, macOS just can't vouch for who built it. Clear the download flag once and it opens normally:
+```sh
+curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh
+```
+
+Or grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
+
+Open the `.dmg` and drag **CCPM** into **Applications**. The app is not notarized yet (that needs an Apple Developer account), and on **macOS 15 Sequoia and later** Gatekeeper no longer lets right-click → Open past that: it refuses to launch the app and may even call it **"damaged"**. It isn't — the download is checksummed and ad-hoc signed, macOS just can't vouch for who built it. (Other apps you download open after a confirmation because their developers pay Apple to notarize them; a browser download of an app that is not notarized gets no such dialog. The one-liner above avoids this because `curl` does not mark what it downloads.) Clear the download flag once and it opens normally:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/CCPM.app
