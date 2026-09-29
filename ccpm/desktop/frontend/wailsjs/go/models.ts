@@ -117,8 +117,11 @@ export namespace services {
 	    }
 	}
 	export class DesktopPrefs {
+	    railOn: boolean;
 	    railMode: string;
 	    railEdge: string;
+	    railPercent: boolean;
+	    railMain: string;
 	    railProfiles: Record<string, boolean>;
 	    theme: string;
 	
@@ -128,8 +131,11 @@ export namespace services {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.railOn = source["railOn"];
 	        this.railMode = source["railMode"];
 	        this.railEdge = source["railEdge"];
+	        this.railPercent = source["railPercent"];
+	        this.railMain = source["railMain"];
 	        this.railProfiles = source["railProfiles"];
 	        this.theme = source["theme"];
 	    }

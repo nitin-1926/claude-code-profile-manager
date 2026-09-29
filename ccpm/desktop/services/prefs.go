@@ -9,6 +9,7 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
 // Desktop-only preferences, kept in ~/.ccpm/desktop.json rather than in
@@ -20,14 +21,25 @@ import (
 // its placement before any webview exists, so localStorage — where the theme
 // preference lives — cannot own this.
 
-// Rail visibility modes.
+// Rail reveal modes. Whether the notch is shown at all is RailOn, not a third
+// mode: keeping the two apart is what lets switching the notch back on restore
+// the reveal the user had picked instead of resetting it.
 const (
 	RailModeAlways = "always"
 	RailModeHover  = "hover"
+	// RailModeHidden is only ever READ, from a desktop.json written before
+	// RailOn existed; normalize turns it into RailOn=false.
 	RailModeHidden = "hidden"
 )
 
-// Rail edges.
+// Rail main-ring choices: which usage window is the big outer ring. They are
+// the usage window keys themselves, so nothing has to translate between the
+// preference and the reading.
+const (
+	RailMainFiveHour = usage.KeyFiveHour
+	RailMainSevenDay = usage.KeySevenDay
+)
+
 // Theme names, matching the `data-theme` values in
 // desktop/frontend/src/globals.css. Duplicated as constants here rather than
 // imported from the rail package so services stays free of cgo.
@@ -37,6 +49,7 @@ const (
 	ThemeLight    = "light"
 )
 
+// Rail edges.
 const (
 	RailEdgeRight  = "right"
 	RailEdgeLeft   = "left"
@@ -46,8 +59,18 @@ const (
 
 // DesktopPrefs is the whole desktop-local preference set.
 type DesktopPrefs struct {
+	// RailOn is the master switch. RailMode keeps the reveal choice while the
+	// notch is off, so turning it back on returns to hover or always as left.
+	RailOn   bool   `json:"railOn"`
 	RailMode string `json:"railMode"`
 	RailEdge string `json:"railEdge"`
+	// RailPercent draws the percentage under each ring. Worth turning off on
+	// the top edge with several profiles, where the labels scale down to a few
+	// points tall and the rings get the room back.
+	RailPercent bool `json:"railPercent"`
+	// RailMain is the usage window drawn as the big ring: RailMainFiveHour or
+	// RailMainSevenDay. The other window is the small inner ring.
+	RailMain string `json:"railMain"`
 	// RailProfiles holds explicit per-profile choices only. A profile absent
 	// from this map is enabled — so a newly created profile shows up on the
 	// rail without the user having to go and find a switch for it.
@@ -61,10 +84,18 @@ type DesktopPrefs struct {
 // DefaultPrefs is what a machine with no preferences file gets. Hover rather
 // than always-on so the rail introduces itself without immediately occupying
 // screen edge for someone who did not ask for it.
+//
+// It is also what LoadPrefs decodes the file ON TOP of, so a key the file does
+// not have keeps its default. That is how a desktop.json written before
+// RailOn and RailPercent existed still loads with the notch and its
+// percentages on, rather than with Go's false for a missing bool.
 func DefaultPrefs() DesktopPrefs {
 	return DesktopPrefs{
+		RailOn:       true,
 		RailMode:     RailModeHover,
 		RailEdge:     RailEdgeRight,
+		RailPercent:  true,
+		RailMain:     RailMainFiveHour,
 		RailProfiles: map[string]bool{},
 		Theme:        ThemeGraphite,
 	}
@@ -84,9 +115,19 @@ func (p DesktopPrefs) RailEnabled(profile string) bool {
 // fall back to the default rather than propagating.
 func (p DesktopPrefs) normalize() DesktopPrefs {
 	switch p.RailMode {
-	case RailModeAlways, RailModeHover, RailModeHidden:
+	case RailModeAlways, RailModeHover:
+	case RailModeHidden:
+		// A file from before the master switch. It never recorded which reveal
+		// preceded "hidden", so switching back on gets the default one.
+		p.RailOn = false
+		p.RailMode = RailModeHover
 	default:
 		p.RailMode = RailModeHover
+	}
+	switch p.RailMain {
+	case RailMainFiveHour, RailMainSevenDay:
+	default:
+		p.RailMain = RailMainFiveHour
 	}
 	switch p.RailEdge {
 	case RailEdgeRight, RailEdgeLeft, RailEdgeTop, RailEdgeBottom:
@@ -124,7 +165,7 @@ func LoadPrefs() DesktopPrefs {
 	if err != nil {
 		return DefaultPrefs()
 	}
-	var p DesktopPrefs
+	p := DefaultPrefs()
 	if json.Unmarshal(data, &p) != nil {
 		return DefaultPrefs()
 	}

@@ -166,3 +166,96 @@ func TestThemeNormalizesToAKnownValue(t *testing.T) {
 		}
 	}
 }
+
+// writePrefsFile puts raw JSON where LoadPrefs reads it, standing in for a
+// desktop.json written by an earlier build.
+func writePrefsFile(t *testing.T, base, body string) {
+	t.Helper()
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "desktop.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A desktop.json from before the notch settings existed has no railOn,
+// railPercent or railMain. Missing keys must keep their defaults — on, shown,
+// five-hour — not decode as Go's false and switch the notch off on upgrade.
+func TestPrefsFromBeforeTheNotchSettingsKeepDefaults(t *testing.T) {
+	base := withTempHome(t)
+	writePrefsFile(t, base, `{"railMode":"always","railEdge":"top","railProfiles":{"cin":false},"theme":"light"}`)
+
+	got := LoadPrefs()
+	if !got.RailOn {
+		t.Error("an old file without railOn loaded with the notch switched off")
+	}
+	if !got.RailPercent {
+		t.Error("an old file without railPercent loaded with the percentages hidden")
+	}
+	if got.RailMain != RailMainFiveHour {
+		t.Errorf("an old file without railMain loaded main ring %q, want %q", got.RailMain, RailMainFiveHour)
+	}
+	if got.RailMode != RailModeAlways || got.RailEdge != RailEdgeTop || got.Theme != ThemeLight || got.RailEnabled("cin") {
+		t.Errorf("an old file's own values were lost: %+v", got)
+	}
+}
+
+// "hidden" used to be a reveal mode. It now means the master switch is off,
+// with the reveal kept separately so switching back on restores it.
+func TestPrefsMigrateHiddenModeToSwitchedOff(t *testing.T) {
+	base := withTempHome(t)
+	writePrefsFile(t, base, `{"railMode":"hidden","railEdge":"left"}`)
+
+	got := LoadPrefs()
+	if got.RailOn {
+		t.Error(`railMode "hidden" loaded with the notch switched on`)
+	}
+	if got.RailMode != RailModeHover {
+		t.Errorf(`railMode "hidden" migrated to reveal %q, want %q`, got.RailMode, RailModeHover)
+	}
+	if got.RailEdge != RailEdgeLeft {
+		t.Errorf("migration clobbered the edge: %q", got.RailEdge)
+	}
+}
+
+// The master switch must not touch the reveal choice: off and back on returns
+// to "always" rather than resetting to the default.
+func TestSwitchingTheNotchOffKeepsTheReveal(t *testing.T) {
+	withTempHome(t)
+	var s PrefsService
+
+	on, err := s.Set(DesktopPrefs{RailOn: true, RailMode: RailModeAlways, RailPercent: true})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	on.RailOn = false
+	off, err := s.Set(on)
+	if err != nil {
+		t.Fatalf("Set off: %v", err)
+	}
+	if off.RailOn || off.RailMode != RailModeAlways {
+		t.Errorf("switched off: on=%v mode=%q, want off with always kept", off.RailOn, off.RailMode)
+	}
+	off.RailOn = true
+	back, err := s.Set(off)
+	if err != nil {
+		t.Fatalf("Set on: %v", err)
+	}
+	if !back.RailOn || back.RailMode != RailModeAlways {
+		t.Errorf("switched back on: on=%v mode=%q, want on with always restored", back.RailOn, back.RailMode)
+	}
+}
+
+func TestRailMainNormalizesToAKnownWindow(t *testing.T) {
+	for _, valid := range []string{RailMainFiveHour, RailMainSevenDay} {
+		if got := (DesktopPrefs{RailMain: valid}).normalize().RailMain; got != valid {
+			t.Errorf("normalize dropped the valid main ring %q, got %q", valid, got)
+		}
+	}
+	for _, bad := range []string{"", "weekly", "FIVE_HOUR"} {
+		if got := (DesktopPrefs{RailMain: bad}).normalize().RailMain; got != RailMainFiveHour {
+			t.Errorf("normalize(%q) = %q, want the five-hour fallback", bad, got)
+		}
+	}
+}
