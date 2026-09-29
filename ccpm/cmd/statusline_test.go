@@ -142,6 +142,7 @@ func TestFormatWindowPastResetDropsClock(t *testing.T) {
 func TestRunStatusLineRenderPersistsRateLimits(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 
 	profileDir := filepath.Join(home, "profiles", "work")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
@@ -194,6 +195,7 @@ func TestRunStatusLineRenderPersistsRateLimits(t *testing.T) {
 func TestRunStatusLineRenderWithoutRateLimitsWritesNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 
 	profileDir := filepath.Join(home, "profiles", "apikey")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
@@ -220,6 +222,7 @@ func TestRunStatusLineRenderWithoutRateLimitsWritesNothing(t *testing.T) {
 func TestPersistRateLimitsIgnoresUnknownProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 	writeTestConfig(t, home, "work", filepath.Join(home, "profiles", "work"))
 
 	var in statusLineInput
