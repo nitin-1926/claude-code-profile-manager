@@ -262,9 +262,11 @@ int CCPMNotchIsVisible(void) {
 // Go's very first placement lands here before the main thread has published
 // anything. Warming once beats shipping a panel placed against a zero screen.
 //
-// dispatch_sync is safe here and only here: this is a leaf read that takes no
-// lock the main thread waits on, and the isMainThread branch keeps it from
-// deadlocking against itself.
+// The wait is bounded, never a bare dispatch_sync. In the app the main thread
+// runs [NSApp run] and answers within microseconds; with no run loop servicing
+// the main queue (go test, a headless CI runner) a dispatch_sync blocked
+// forever. After the timeout the frame stays zero and Go places against its
+// fallback screen, as it does for any unpublished frame.
 static NSRect ccpmNotchCachedScreen(NSSize *hardware) {
   os_unfair_lock_lock(&gScreenLock);
   NSRect v = gScreen;
@@ -275,9 +277,13 @@ static NSRect ccpmNotchCachedScreen(NSSize *hardware) {
     if ([NSThread isMainThread]) {
       ccpmNotchRefreshScreen();
     } else {
-      dispatch_sync(dispatch_get_main_queue(), ^{
+      dispatch_semaphore_t done = dispatch_semaphore_create(0);
+      dispatch_async(dispatch_get_main_queue(), ^{
         ccpmNotchRefreshScreen();
+        dispatch_semaphore_signal(done);
       });
+      dispatch_semaphore_wait(
+          done, dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC));
     }
     os_unfair_lock_lock(&gScreenLock);
     v = gScreen;
