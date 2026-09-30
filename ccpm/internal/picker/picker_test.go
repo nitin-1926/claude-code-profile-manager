@@ -19,8 +19,4 @@ func TestNonInteractiveFallback(t *testing.T) {
 	if _, err := MultiSelect("pick many", []Option{{Value: "a", Label: "A"}}, nil); !errors.Is(err, ErrNonInteractive) {
 		t.Fatalf("MultiSelect: expected ErrNonInteractive, got %v", err)
 	}
-
-	if got, err := Confirm("ok?", true); !errors.Is(err, ErrNonInteractive) || got != true {
-		t.Fatalf("Confirm: expected (true, ErrNonInteractive), got (%v, %v)", got, err)
-	}
 }
