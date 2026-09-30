@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -23,7 +21,7 @@ var renameCmd = &cobra.Command{
 	Use:   "rename <old-name> <new-name>",
 	Short: "Rename a profile",
 	Args:              cobra.ExactArgs(2),
-	RunE:              lockedRunE(runRename),
+	RunE:              runRename,
 	ValidArgsFunction: completeProfileNames,
 }
 
@@ -31,6 +29,9 @@ func init() {
 	rootCmd.AddCommand(renameCmd)
 }
 
+// runRename validates and asks about an orphan dir BEFORE taking the config
+// lock — a y/N prompt held under the lock would stall every concurrent locked
+// command — then renames under the lock against re-loaded config.
 func runRename(cmd *cobra.Command, args []string) error {
 	oldName, newName := args[0], args[1]
 
@@ -42,13 +43,8 @@ func runRename(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-
-	p, exists := cfg.Profiles[oldName]
-	if !exists {
-		return fmt.Errorf("profile %q not found", oldName)
-	}
-	if _, exists := cfg.Profiles[newName]; exists {
-		return fmt.Errorf("profile %q already exists", newName)
+	if err := checkRenameNames(cfg, oldName, newName); err != nil {
+		return err
 	}
 
 	// If newName isn't in the registry but a directory by that name still
@@ -61,22 +57,51 @@ func runRename(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	removeOrphan := false
 	if info, statErr := os.Stat(newDirPath); statErr == nil && info.IsDir() {
 		fileCount, totalBytes := summarizeDir(newDirPath)
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"Directory %s exists on disk but is not a registered profile.\n"+
 				"  contents: %d file(s), %s\n",
 			newDirPath, fileCount, humanizeBytes(totalBytes))
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if !stdinIsTerminal() {
 			return fmt.Errorf("orphan directory %q present; refusing to clobber in non-interactive mode (remove it manually first)", newDirPath)
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "Remove this directory and continue with the rename? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		if strings.TrimSpace(strings.ToLower(input)) != "y" {
+		if strings.ToLower(readAnswer()) != "y" {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Cancelled.")
 			return nil
 		}
+		removeOrphan = true
+	}
+
+	return withConfigLock(func() error { return renameLocked(cmd, oldName, newName, newDirPath, removeOrphan) })
+}
+
+func checkRenameNames(cfg *config.Config, oldName, newName string) error {
+	if _, exists := cfg.Profiles[oldName]; !exists {
+		return fmt.Errorf("profile %q not found", oldName)
+	}
+	if _, exists := cfg.Profiles[newName]; exists {
+		return fmt.Errorf("profile %q already exists", newName)
+	}
+	return nil
+}
+
+// renameLocked performs the rename. Caller holds the config lock.
+func renameLocked(cmd *cobra.Command, oldName, newName, newDirPath string, removeOrphan bool) error {
+	// Re-load and re-validate: config may have changed while the user was
+	// answering the prompt.
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if err := checkRenameNames(cfg, oldName, newName); err != nil {
+		return err
+	}
+	p := cfg.Profiles[oldName]
+
+	if removeOrphan {
 		// Best-effort: also delete any orphan keychain entry whose namespace
 		// hashes from this exact path. If `claude` had ever logged in here,
 		// the entry is stale anyway.

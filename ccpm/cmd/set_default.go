@@ -23,7 +23,7 @@ var setDefaultCmd = &cobra.Command{
 	Use:               "set-default [name]",
 	Short:             "Set profile as default for VS Code / IDE extension",
 	Args:              cobra.MaximumNArgs(1),
-	RunE:              lockedRunE(runSetDefault),
+	RunE:              runSetDefault,
 	ValidArgsFunction: completeProfileNames,
 }
 
@@ -38,16 +38,18 @@ func init() {
 	rootCmd.AddCommand(unsetDefaultCmd)
 }
 
+// runSetDefault shows the picker (when no name is given) BEFORE taking the
+// config lock — a picker held under the lock would stall every concurrent
+// locked command — then applies the choice under the lock.
 func runSetDefault(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
 	var name string
 	if len(args) == 1 {
 		name = args[0]
 	} else {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
 		// No name given — prompt if interactive, else error with a hint.
 		names := config.ProfileNames(cfg)
 		if len(names) == 0 {
@@ -64,7 +66,7 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 			}
 			opts[i] = picker.Option{Value: n, Label: n, Description: desc}
 		}
-		choice, err := picker.Select("Which profile should be the VSCode default?", opts)
+		choice, err := selectOption("Which profile should be the VSCode default?", opts)
 		if err != nil {
 			if errors.Is(err, picker.ErrNonInteractive) {
 				return fmt.Errorf("profile name is required (e.g. `ccpm set-default %s`)", names[0])
@@ -72,6 +74,16 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		name = choice
+	}
+	return withConfigLock(func() error { return applySetDefault(name) })
+}
+
+// applySetDefault makes name the default. Caller holds the config lock; config
+// is re-loaded here so the picker's snapshot is never the one written back.
+func applySetDefault(name string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	p, exists := cfg.Profiles[name]

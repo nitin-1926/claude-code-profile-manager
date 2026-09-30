@@ -430,6 +430,75 @@ func TestUninstall_HasOwnForceFlagAndRefusesNonTTY(t *testing.T) {
 	}
 }
 
+// --- Finding 6: interactive prompts run before the config lock is taken ---
+//
+// A prompt held under the lock makes every concurrent locked command time
+// out (15s) and `ccpm run` skip its prelaunch for as long as the user thinks.
+
+func TestSetDefault_PickerRunsOutsideLock(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "work", "api_key")
+	called, heldDuringPick := false, false
+	selectOption = func(string, []picker.Option) (string, error) {
+		called, heldDuringPick = true, lockHeld(t)
+		return "", picker.ErrNonInteractive
+	}
+
+	_ = setDefaultCmd.RunE(setDefaultCmd, nil)
+	if !called {
+		t.Fatal("set-default without a name did not show the picker")
+	}
+	if heldDuringPick {
+		t.Fatal("set-default picker shown while holding the config lock")
+	}
+}
+
+func TestRename_OrphanPromptRunsOutsideLock(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+	orphan, _ := profile.GetDir("new")
+	writeFile(t, filepath.Join(orphan, "leftover"), "x")
+	stdinIsTerminal = func() bool { return true }
+	heldDuringPrompt := false
+	readAnswer = func() string { heldDuringPrompt = lockHeld(t); return "n" }
+
+	if err := renameCmd.RunE(renameCmd, []string{"old", "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if heldDuringPrompt {
+		t.Fatal("orphan-dir y/N prompt shown while holding the config lock")
+	}
+	if !exists(filepath.Join(orphan, "leftover")) {
+		t.Fatal("orphan dir removed although the user declined")
+	}
+}
+
+func TestRename_ConfirmedOrphanIsReplaced(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+	if err := lc.store.SetAPIKey("old", "sk-ant-test"); err != nil {
+		t.Fatal(err)
+	}
+	orphan, _ := profile.GetDir("new")
+	writeFile(t, filepath.Join(orphan, "leftover"), "x")
+	stdinIsTerminal = func() bool { return true }
+	readAnswer = func() string { return "y" }
+
+	if err := renameCmd.RunE(renameCmd, []string{"old", "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(orphan, "leftover")) {
+		t.Fatal("orphan contents survived a confirmed rename")
+	}
+	if !slices.Contains(lc.oauthDeleted, orphan) {
+		t.Errorf("orphan's stale OAuth keychain entry not deleted: %v", lc.oauthDeleted)
+	}
+	cfg, _ := config.Load()
+	if _, ok := cfg.Profiles["new"]; !ok {
+		t.Fatal("rename did not complete after confirming the orphan removal")
+	}
+}
+
 // --- Finding 2: clone / import from-profile carry profile-scoped state -----
 
 // seedProfileScopedSkill links share/skills/<id> into dir/skills/<id> and
