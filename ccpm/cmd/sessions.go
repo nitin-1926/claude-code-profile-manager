@@ -1,15 +1,14 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -72,42 +71,39 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	var targetSubdir string
+	// The session index the desktop History tab uses: one entry per real
+	// session (subagent transcripts fold into their parent instead of becoming
+	// rows), titled by Claude Code's ai-title or the first real prompt. It is
+	// the same incremental history.json sidecar the desktop writes; a failed
+	// save still returns a usable index, so a read-only profile still lists.
+	ix, _ := transcript.BuildIndex(p.Dir)
+
+	// Claude Code names the directory after the PHYSICAL cwd (/private/tmp),
+	// while os.Getwd returns the logical $PWD (/tmp) — accept either.
+	var dirs map[string]bool
 	if !sessionsAll {
-		cwd, err := os.Getwd()
-		if err == nil {
-			targetSubdir = encodeCwdForClaude(cwd)
+		if cwd, err := os.Getwd(); err == nil {
+			dirs = map[string]bool{encodeCwdForClaude(cwd): true}
+			if phys, err := filepath.EvalSymlinks(cwd); err == nil {
+				dirs[encodeCwdForClaude(phys)] = true
+			}
 		}
 	}
 
-	var sessions []sessionRecord
-	walkErr := filepath.WalkDir(projectsRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			// When not in --all mode, prune other project subdirs.
-			if !sessionsAll && targetSubdir != "" {
-				rel, _ := filepath.Rel(projectsRoot, path)
-				if rel != "." && rel != targetSubdir && !strings.HasPrefix(rel, targetSubdir+string(filepath.Separator)) {
-					return fs.SkipDir
-				}
+	var sessions []*transcript.Entry
+	for _, e := range ix.Entries {
+		if dirs != nil {
+			dir, _, _ := strings.Cut(e.RelPath, "/")
+			if !dirs[dir] {
+				continue
 			}
-			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".jsonl") {
-			return nil
+		// The index keeps sessions whose transcript Claude Code has pruned;
+		// those cannot be resumed, so they are not listed here.
+		if fi, err := os.Lstat(filepath.Join(projectsRoot, filepath.FromSlash(e.RelPath))); err != nil || !fi.Mode().IsRegular() {
+			continue
 		}
-		rec, rerr := readSessionHeader(path)
-		if rerr != nil {
-			// Skip unreadable files silently — native claude may be mid-write.
-			return nil
-		}
-		sessions = append(sessions, rec)
-		return nil
-	})
-	if walkErr != nil {
-		return fmt.Errorf("scanning sessions: %w", walkErr)
+		sessions = append(sessions, e)
 	}
 
 	if len(sessions) == 0 {
@@ -123,7 +119,12 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ModTime.After(sessions[j].ModTime) })
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].ModTime != sessions[j].ModTime {
+			return sessions[i].ModTime > sessions[j].ModTime
+		}
+		return sessions[i].SessionID < sessions[j].SessionID
+	})
 	total := len(sessions)
 	if sessionsLimit > 0 && total > sessionsLimit {
 		sessions = sessions[:sessionsLimit]
@@ -140,9 +141,9 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		for _, s := range sessions {
 			out = append(out, sessionJSON{
 				SessionID:   s.SessionID,
-				Started:     s.ModTime.UTC().Format(time.RFC3339),
+				Started:     sessionStarted(s).UTC().Format(time.RFC3339),
 				Cwd:         s.Cwd,
-				FirstPrompt: s.FirstPrompt,
+				FirstPrompt: s.Title,
 			})
 		}
 		data, err := json.MarshalIndent(out, "", "  ")
@@ -157,10 +158,9 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %-36s %-19s %-40s %s\n", bold("SESSION ID"), bold("STARTED"), bold("PROJECT"), bold("FIRST PROMPT"))
 	fmt.Printf("  %s\n", strings.Repeat("─", 110))
 	for _, s := range sessions {
-		started := s.ModTime.Local().Format("2006-01-02 15:04:05")
-		project := truncate(s.Cwd, 40)
-		firstPrompt := truncate(s.FirstPrompt, 60)
-		fmt.Printf("  %-36s %-19s %-40s %s\n", s.SessionID, started, project, firstPrompt)
+		started := sessionStarted(s).Local().Format("2006-01-02 15:04:05")
+		fmt.Printf("  %-36s %-19s %-40s %s\n",
+			terminalSafe(s.SessionID), started, truncate(terminalSafe(s.Cwd), 40), truncate(terminalSafe(s.Title), 60))
 	}
 	if shown := len(sessions); shown < total {
 		color.New(color.Faint).Printf("  (showing %d of %d — use --limit 0 for all)\n", shown, total)
@@ -168,68 +168,32 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// sessionRecord is the minimal shape we surface. Native claude's .jsonl files
-// hold many more fields per line; we only peek the first line for ID, cwd,
-// and the first user prompt if it's nearby.
-type sessionRecord struct {
-	SessionID   string
-	Cwd         string
-	FirstPrompt string
-	ModTime     time.Time
+// sessionStarted is the session's first transcript timestamp, falling back to
+// the transcript's mtime for a file with no timestamped line.
+func sessionStarted(e *transcript.Entry) time.Time {
+	if t, err := time.Parse(time.RFC3339, e.FirstTS); err == nil {
+		return t
+	}
+	return time.Unix(e.ModTime, 0)
 }
 
-// readSessionHeader opens <path>, reads the first ~8 lines, and fishes out a
-// session ID, cwd, and the first user prompt. Limits how many lines we read so
-// a long session doesn't become an O(file) operation here.
-func readSessionHeader(path string) (sessionRecord, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return sessionRecord{}, err
-	}
-	rec := sessionRecord{
-		SessionID: strings.TrimSuffix(filepath.Base(path), ".jsonl"),
-		ModTime:   info.ModTime(),
-	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return rec, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	lines := 0
-	for scanner.Scan() {
-		lines++
-		if lines > 12 {
-			break
+// terminalSafe makes transcript-derived text safe to print into a terminal.
+// Titles and cwds come from transcript content, which can carry anything a
+// pasted log or fetched page did: an OSC 52 sequence writes the clipboard, a
+// CSI one repaints the screen. Line breaks and tabs become spaces so a row stays
+// one row; every other C0, DEL, and C1 control is dropped. (Invalid UTF-8 — a
+// raw single-byte 0x9b CSI — cannot arrive here: these strings come out of
+// encoding/json, which replaces invalid bytes with U+FFFD.)
+func terminalSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			return -1
 		}
-		var entry map[string]interface{}
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			continue
-		}
-		if id, ok := entry["sessionId"].(string); ok && rec.SessionID == "" {
-			rec.SessionID = id
-		}
-		if cwd, ok := entry["cwd"].(string); ok && rec.Cwd == "" {
-			rec.Cwd = cwd
-		}
-		if rec.FirstPrompt == "" {
-			if prompt := extractUserPrompt(entry); prompt != "" {
-				rec.FirstPrompt = prompt
-			}
-		}
-	}
-	return rec, nil
-}
-
-// extractUserPrompt pulls a human-readable preview from a session line. It
-// delegates to internal/transcript so the History reader and this command share
-// one content-block decoder and can never drift — the same reasoning as
-// encodeCwdForClaude below.
-func extractUserPrompt(entry map[string]interface{}) string {
-	return transcript.FirstUserPrompt(entry)
+		return r
+	}, s)
 }
 
 // encodeCwdForClaude mirrors native Claude Code's cwd encoding used in
@@ -239,12 +203,14 @@ func encodeCwdForClaude(cwd string) string {
 	return usage.EncodeCwd(cwd)
 }
 
+// truncate clips s to at most max runes, marking a cut with "…". It counts
+// runes, not bytes: a byte cut split multi-byte characters into invalid UTF-8.
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
 	if max <= 1 {
-		return s[:max]
+		return transcript.ClipRunes(s, max)
 	}
-	return s[:max-1] + "…"
+	return transcript.ClipRunes(s, max-1) + "…"
 }

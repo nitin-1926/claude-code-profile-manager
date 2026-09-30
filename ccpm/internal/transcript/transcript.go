@@ -650,48 +650,6 @@ func PageAround(path, uuid string, limit int) (Page, int, error) {
 	return page, at, err
 }
 
-// FirstUserPrompt pulls a human-readable preview out of one decoded transcript
-// line. The shape varies across Claude Code versions, so a few known spots are
-// probed: a v1 top-level "content" string, and v2's message.content as either a
-// string or an array of typed blocks.
-//
-// This is the content-block decoding that cmd/sessions.go used to own. It lives
-// here so there is exactly one implementation to keep current when the format
-// moves.
-func FirstUserPrompt(entry map[string]any) string {
-	if role, _ := entry["role"].(string); role != "user" && entry["role"] != nil {
-		return ""
-	}
-	if s, ok := entry["content"].(string); ok {
-		return strings.TrimSpace(s)
-	}
-	msg, ok := entry["message"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	if role, _ := msg["role"].(string); role != "user" && msg["role"] != nil {
-		return ""
-	}
-	switch content := msg["content"].(type) {
-	case string:
-		return strings.TrimSpace(content)
-	case []any:
-		for _, blk := range content {
-			bm, ok := blk.(map[string]any)
-			if !ok {
-				continue
-			}
-			if t, _ := bm["type"].(string); t != "text" {
-				continue
-			}
-			if text, ok := bm["text"].(string); ok {
-				return strings.TrimSpace(text)
-			}
-		}
-	}
-	return ""
-}
-
 // isTitleWorthy rejects the prompts that make a useless session title: the
 // slash-command envelopes Claude Code writes as ordinary user lines
 // ("<command-name>/model</command-name>…") and its own stdout echoes. Without

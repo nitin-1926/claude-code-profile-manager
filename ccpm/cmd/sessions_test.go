@@ -1,6 +1,160 @@
 package cmd
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/transcript"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
+)
+
+// sessionsFixture registers a profile "work" under a temp HOME and returns its
+// directory. The session flags are package globals, so they are reset after.
+func sessionsFixture(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	profileDir := filepath.Join(home, "profiles", "work")
+	writeTestConfig(t, home, "work", profileDir)
+	t.Cleanup(func() { sessionsAll, sessionsJSON, sessionsLimit = false, false, 20 })
+	sessionsAll, sessionsJSON, sessionsLimit = false, false, 20
+	return profileDir
+}
+
+// writeSession writes a transcript shaped like Claude Code's: one user line and
+// one assistant line, each with its own uuid, the assistant carrying a
+// message.id + requestId usage key.
+func writeSession(t *testing.T, path, sess, cwd, prompt string) {
+	t.Helper()
+	lines := []map[string]any{
+		{"type": "user", "uuid": sess + "-u1", "parentUuid": nil, "isSidechain": false,
+			"sessionId": sess, "cwd": cwd, "timestamp": "2026-06-27T10:00:00.000Z",
+			"message": map[string]any{"role": "user", "content": prompt}},
+		{"type": "assistant", "uuid": sess + "-a1", "parentUuid": sess + "-u1", "isSidechain": false,
+			"sessionId": sess, "cwd": cwd, "timestamp": "2026-06-27T10:00:05.000Z", "requestId": "req_" + sess,
+			"message": map[string]any{"id": "msg_" + sess, "role": "assistant", "model": "claude-opus-4-8",
+				"content": []any{map[string]any{"type": "text", "text": "ok"}},
+				"usage":   map[string]any{"input_tokens": 10, "output_tokens": 2}}},
+	}
+	var sb strings.Builder
+	for _, l := range lines {
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type listedSession struct {
+	SessionID   string `json:"session_id"`
+	Started     string `json:"started"`
+	Cwd         string `json:"cwd"`
+	FirstPrompt string `json:"first_prompt"`
+}
+
+func listSessionsJSON(t *testing.T) []listedSession {
+	t.Helper()
+	sessionsJSON = true
+	defer func() { sessionsJSON = false }()
+	out := captureStdout(t, func() error { return runSessionsList(nil, []string{"work"}) })
+	var got []listedSession
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not a JSON array: %v\n%s", err, out)
+	}
+	return got
+}
+
+// Subagent transcripts live beside their session under <sid>/subagents/. They
+// are not sessions — `claude --resume agent-…` resumes nothing — and on real
+// profiles they outnumber real sessions ~9:1, pushing them off --limit. A
+// session whose transcript Claude Code has pruned is equally unresumable.
+func TestSessionsListShowsOnlyResumableSessions(t *testing.T) {
+	profileDir := sessionsFixture(t)
+	proj := filepath.Join(profileDir, "projects", usage.EncodeCwd("/repo"))
+	writeSession(t, filepath.Join(proj, "s1.jsonl"), "s1", "/repo", "real prompt")
+	writeSession(t, filepath.Join(proj, "s1", "subagents", "agent-a1.jsonl"), "s1", "/repo", "subagent task")
+	writeSession(t, filepath.Join(proj, "gone.jsonl"), "gone", "/repo", "pruned later")
+	if _, err := transcript.BuildIndex(profileDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(proj, "gone.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsAll = true
+	got := listSessionsJSON(t)
+	if len(got) != 1 || got[0].SessionID != "s1" {
+		t.Fatalf("listed %+v, want only s1", got)
+	}
+	if got[0].Cwd != "/repo" || got[0].FirstPrompt != "real prompt" {
+		t.Errorf("row = %+v, want cwd /repo and first_prompt %q", got[0], "real prompt")
+	}
+	if got[0].Started != "2026-06-27T10:00:00Z" {
+		t.Errorf("started = %q, want the session's first timestamp", got[0].Started)
+	}
+}
+
+// Transcript text is attacker-influenced (a pasted log, a fetched page). The
+// table prints it to a terminal, so control sequences must not survive: OSC 52
+// writes the clipboard, CSI repaints the screen. A multi-line prompt must not
+// break the row, and truncation must not split a rune.
+func TestSessionsListTableIsTerminalSafe(t *testing.T) {
+	profileDir := sessionsFixture(t)
+	proj := filepath.Join(profileDir, "projects", usage.EncodeCwd("/repo"))
+	evil := "hi \x1b]52;c;cHduZWQ=\x07 there \u009b2J done"
+	writeSession(t, filepath.Join(proj, "s1.jsonl"), "s1", "/repo", evil)
+	writeSession(t, filepath.Join(proj, "s2.jsonl"), "s2", "/repo", strings.Repeat("é", 100))
+
+	sessionsAll = true
+	out := captureStdout(t, func() error { return runSessionsList(nil, []string{"work"}) })
+	if strings.ContainsAny(out, "\x1b\x07\u009b") {
+		t.Errorf("control characters reached the terminal: %q", out)
+	}
+	if !utf8.ValidString(out) {
+		t.Errorf("output is not valid UTF-8 (a rune was split): %q", out)
+	}
+	if !strings.Contains(out, "éé…") {
+		t.Errorf("long title was not clipped with an ellipsis: %q", out)
+	}
+}
+
+// Claude Code records the PHYSICAL cwd (/private/tmp on macOS), while
+// os.Getwd returns the logical $PWD (/tmp). Encoding only the logical path
+// found nothing in any symlinked directory.
+func TestSessionsListMatchesPhysicalCwd(t *testing.T) {
+	profileDir := sessionsFixture(t)
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	proj := filepath.Join(profileDir, "projects", usage.EncodeCwd(real))
+	writeSession(t, filepath.Join(proj, "s1.jsonl"), "s1", real, "here")
+	writeSession(t, filepath.Join(profileDir, "projects", "-elsewhere", "s2.jsonl"), "s2", "/elsewhere", "not here")
+
+	t.Chdir(link)
+	t.Setenv("PWD", link) // os.Getwd trusts $PWD when it names the same dir
+	got := listSessionsJSON(t)
+	if len(got) != 1 || got[0].SessionID != "s1" {
+		t.Fatalf("listed %+v from a symlinked cwd, want only s1", got)
+	}
+}
 
 // These expectations previously encoded a bug: runs of non-alphanumerics were
 // collapsed and the ends trimmed, so "/Users/alex/code/repo" came out as
@@ -24,56 +178,5 @@ func TestEncodeCwdForClaude(t *testing.T) {
 		if got := encodeCwdForClaude(in); got != want {
 			t.Errorf("encodeCwdForClaude(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestExtractUserPrompt(t *testing.T) {
-	cases := []struct {
-		name  string
-		entry map[string]interface{}
-		want  string
-	}{
-		{
-			name:  "v1 top-level content string",
-			entry: map[string]interface{}{"role": "user", "content": "hello"},
-			want:  "hello",
-		},
-		{
-			name: "v2 message.content string",
-			entry: map[string]interface{}{
-				"message": map[string]interface{}{"role": "user", "content": "hi there"},
-			},
-			want: "hi there",
-		},
-		{
-			name: "v2 message.content typed blocks",
-			entry: map[string]interface{}{
-				"message": map[string]interface{}{
-					"role": "user",
-					"content": []interface{}{
-						map[string]interface{}{"type": "image"},
-						map[string]interface{}{"type": "text", "text": "   question   "},
-					},
-				},
-			},
-			want: "question",
-		},
-		{
-			name:  "assistant role returns empty",
-			entry: map[string]interface{}{"role": "assistant", "content": "nope"},
-			want:  "",
-		},
-		{
-			name:  "no known shape",
-			entry: map[string]interface{}{"foo": "bar"},
-			want:  "",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := extractUserPrompt(c.entry); got != c.want {
-				t.Errorf("got %q, want %q", got, c.want)
-			}
-		})
 	}
 }
