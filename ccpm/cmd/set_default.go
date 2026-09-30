@@ -330,7 +330,9 @@ func syncOAuthIdentityFromDefault(prevDir string) error {
 	if err := os.MkdirAll(prevDir, config.DirPerm); err != nil {
 		return err
 	}
-	return writeClaudeJSON(dstPath, dst)
+	// WriteJSON writes through a dotfiles symlink rather than replacing
+	// it, and fsyncs before the rename.
+	return settingsmerge.WriteJSON(dstPath, dst)
 }
 
 // copyCredentialsFromDefault mirrors copyCredentialsToDefault in reverse, for
@@ -431,7 +433,9 @@ func syncOAuthIdentityToDefault(profileDir string) error {
 	if !wrote {
 		return nil
 	}
-	return writeClaudeJSON(dstPath, dst)
+	// WriteJSON writes through a dotfiles symlink rather than replacing
+	// it, and fsyncs before the rename.
+	return settingsmerge.WriteJSON(dstPath, dst)
 }
 
 func readClaudeJSON(path string) (map[string]interface{}, error) {
@@ -450,31 +454,6 @@ func readClaudeJSON(path string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return m, nil
-}
-
-// writeClaudeJSON serializes the map back to disk atomically with 0600 perms,
-// matching how Claude Code itself writes the file.
-func writeClaudeJSON(path string, data map[string]interface{}) error {
-	bytes, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-	bytes = append(bytes, '\n')
-	// NOTE: deliberately NOT routed through atomicwrite. This targets the
-	// Claude-Code-owned ~/.claude.json (and a profile's .claude.json), which a
-	// user may have symlinked into a dotfiles repo. atomicwrite refuses to
-	// overwrite a symlink (a guard meant for ccpm-owned files), which would turn
-	// set-default into a hard failure for those users. The temp-file + rename
-	// below preserves the long-standing behavior of replacing the target.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, bytes, 0600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
 }
 
 // applyAPIKeyDefault makes an API-key profile the de-facto default that CLI

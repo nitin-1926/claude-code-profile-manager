@@ -499,6 +499,31 @@ func TestRename_ConfirmedOrphanIsReplaced(t *testing.T) {
 	}
 }
 
+// --- Finding 7: identity sync writes through a dotfiles symlink -----------
+
+func TestSyncOAuthIdentityToDefault_PreservesDotfilesSymlink(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	dir := lc.addProfile(t, "work", "oauth")
+	writeFile(t, filepath.Join(dir, ".claude.json"), `{"oauthAccount":{"emailAddress":"me@work"},"userID":"u1"}`)
+	dotfile := filepath.Join(lc.home, "dotfiles", "claude.json")
+	writeFile(t, dotfile, `{"theme":"dark"}`)
+	link := filepath.Join(lc.home, ".claude.json")
+	if err := os.Symlink(dotfile, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncOAuthIdentityToDefault(dir); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("~/.claude.json symlink replaced by a regular file (err=%v)", err)
+	}
+	got := readJSONFile(t, dotfile)
+	if got["userID"] != "u1" || got["theme"] != "dark" {
+		t.Fatalf("identity not written through to the symlink target: %v", got)
+	}
+}
+
 // --- Finding 2: clone / import from-profile carry profile-scoped state -----
 
 // seedProfileScopedSkill links share/skills/<id> into dir/skills/<id> and
