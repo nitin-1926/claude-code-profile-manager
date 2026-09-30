@@ -111,18 +111,6 @@ func LoadManagedSettings() (map[string]interface{}, error) {
 	return merged, nil
 }
 
-// ManagedMCP returns the managed layer's mcpServers block (if any). It's
-// stripped from the settings map before being handed back so the
-// settings-side merge doesn't trip the stale-mcpServers cleanup.
-func ManagedMCP(managed map[string]interface{}) map[string]interface{} {
-	servers, _ := managed["mcpServers"].(map[string]interface{})
-	if servers == nil {
-		return map[string]interface{}{}
-	}
-	delete(managed, "mcpServers")
-	return servers
-}
-
 func readIfExists(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

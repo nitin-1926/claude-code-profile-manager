@@ -362,5 +362,7 @@ func WarnUntrusted(projectRoot string, stripped []string) {
 	if _, already := warnedOnce.LoadOrStore(projectRoot, struct{}{}); already {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "Note: project %q is not trusted — skipped %v from its .claude/settings.json. Run `ccpm trust add %q` to apply them in future launches.\n", projectRoot, stripped, projectRoot)
+	// The project layer only feeds ccpm's effective-settings view (it is never
+	// written into a profile); Claude Code applies project settings itself.
+	fmt.Fprintf(os.Stderr, "Note: project %q is not trusted — ccpm's view leaves out %v from its .claude/settings.json. Run `ccpm trust add %q` to include them.\n", projectRoot, stripped, projectRoot)
 }

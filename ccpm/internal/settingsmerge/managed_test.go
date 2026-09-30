@@ -71,20 +71,6 @@ func TestLoadManagedSettings_MissingDirIsEmpty(t *testing.T) {
 	}
 }
 
-func TestManagedMCP_StripsServers(t *testing.T) {
-	managed := map[string]interface{}{
-		"model":      "foo",
-		"mcpServers": map[string]interface{}{"a": map[string]interface{}{"type": "http"}},
-	}
-	servers := ManagedMCP(managed)
-	if _, stillThere := managed["mcpServers"]; stillThere {
-		t.Fatalf("mcpServers should be stripped from managed settings map")
-	}
-	if _, ok := servers["a"]; !ok {
-		t.Fatalf("expected server 'a' to be returned")
-	}
-}
-
 // TestManagedSettingsDirForOS pins the per-OS system directory to the paths
 // Claude Code documents. The Windows one must be absolute: filepath.Join("C:",
 // ...) yields the drive-relative "C:ProgramData\...", which resolves against
