@@ -75,7 +75,7 @@ func loadHostClaudeSettings() (map[string]interface{}, error) {
 	}
 	// mcpServers here would be unusual (native Claude reads MCPs from
 	// ~/.claude.json, not this file), but if present we strip it so it
-	// doesn't trigger the stale-mcpServers cleanup in MaterializeMCP.
+	// doesn't trigger the stale-mcpServers cleanup in MaterializeAll.
 	delete(doc, "mcpServers")
 	return doc, nil
 }
@@ -202,7 +202,7 @@ func WriteJSON(path string, data map[string]interface{}) error {
 
 // ComputeMerged returns the fully-merged settings map for a profile without
 // writing to disk. It is the single source of truth for the settings-side
-// precedence pipeline; Materialize uses it to produce the on-disk state, and
+// precedence pipeline; MaterializeAll uses it to produce the on-disk state, and
 // advisory commands (`ccpm settings get/show`, `ccpm hooks list`,
 // `ccpm plugin list`) use it to describe that same state.
 //
@@ -292,24 +292,13 @@ func ComputeMerged(profileDir, profileName, projectRoot string) (map[string]inte
 	return merged, nil
 }
 
-// Materialize builds the effective settings.json for a profile and writes it
-// to <profileDir>/settings.json. See ComputeMerged for the precedence rules.
-func Materialize(profileDir, profileName, projectRoot string) error {
-	merged, err := ComputeMerged(profileDir, profileName, projectRoot)
-	if err != nil {
-		return err
-	}
-	return WriteJSON(filepath.Join(profileDir, "settings.json"), merged)
-}
-
 // MaterializeAll computes both the merged settings and merged MCP state for a
 // profile and writes them in a single atomicwrite transaction. Either both
 // files reach their new state, or neither does — a crash, disk-full, or
 // permissions error mid-merge cannot leave the profile half-written.
 //
 // This is the function `ccpm run` (and any other command that materializes a
-// profile in one shot) should call. The standalone Materialize and
-// MaterializeMCP exports remain for callers that genuinely need only one half.
+// profile in one shot) should call.
 func MaterializeAll(profileDir, profileName, projectRoot string) error {
 	merged, err := ComputeMerged(profileDir, profileName, projectRoot)
 	if err != nil {
@@ -364,11 +353,10 @@ func marshalIndentedJSON(m map[string]interface{}) ([]byte, error) {
 	return append(bytes, '\n'), nil
 }
 
-// MaterializeMCP merges MCP server definitions into the profile's .claude.json
-// under the top-level "mcpServers" key — that's where Claude Code actually
-// reads user-scope MCP config from. settings.json#mcpServers is a no-op as far
-// as Claude Code is concerned, so any stale entries left there by earlier ccpm
-// versions are cleaned up here.
+// computeMergedMCPServers returns the merged mcpServers map for a profile
+// without writing anything; MaterializeAll writes it to the profile's
+// .claude.json#mcpServers, where Claude Code reads user-scope MCP config.
+// The existing argument is the parsed contents of <profileDir>/.claude.json.
 //
 // Merge precedence (later wins):
 //  1. Servers already present in <profile>/.claude.json#mcpServers (lowest —
@@ -386,51 +374,6 @@ func marshalIndentedJSON(m map[string]interface{}) ([]byte, error) {
 //  6. Managed/enterprise MCPs from managed-settings.json#mcpServers (plus
 //     managed-settings.d/*.json). Highest precedence so admin-published
 //     servers beat project and profile ones, matching the settings layer.
-//
-// Pass projectRoot="" to skip the project layer.
-func MaterializeMCP(profileDir, profileName, projectRoot string) error {
-	claudeJSONPath := filepath.Join(profileDir, ".claude.json")
-	existing, err := LoadJSON(claudeJSONPath)
-	if err != nil {
-		return fmt.Errorf("loading profile .claude.json: %w", err)
-	}
-
-	mcpServers, err := computeMergedMCPServers(profileName, projectRoot, existing)
-	if err != nil {
-		return err
-	}
-
-	if len(mcpServers) > 0 {
-		existing["mcpServers"] = mcpServers
-		if err := WriteJSON(claudeJSONPath, existing); err != nil {
-			return fmt.Errorf("writing profile .claude.json: %w", err)
-		}
-	}
-
-	// Clean up stale mcpServers left in settings.json by older ccpm versions.
-	// Claude Code never read that location, so any data there is either
-	// already-migrated (duplicated in .claude.json now) or was ineffective
-	// from the start.
-	settingsPath := filepath.Join(profileDir, "settings.json")
-	settings, serr := LoadJSON(settingsPath)
-	if serr == nil {
-		if _, present := settings["mcpServers"]; present {
-			delete(settings, "mcpServers")
-			if err := WriteJSON(settingsPath, settings); err != nil {
-				return fmt.Errorf("cleaning stale mcpServers from settings.json: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
-
-// computeMergedMCPServers returns the merged mcpServers map for a profile
-// without writing anything. It implements the precedence layers documented on
-// MaterializeMCP. The existing argument is the parsed contents of
-// <profileDir>/.claude.json (its mcpServers entry serves as the lowest
-// implicit priority — values surviving from a previous materialize that no
-// newer source redefines).
 func computeMergedMCPServers(profileName, projectRoot string, existing map[string]interface{}) (map[string]interface{}, error) {
 	mcpDir, err := share.MCPDir()
 	if err != nil {

