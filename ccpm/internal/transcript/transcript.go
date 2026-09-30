@@ -142,19 +142,16 @@ type rawLine struct {
 // usageKey is the identity under which a usage-bearing line is counted exactly
 // once, or "" when the line carries no countable usage.
 //
-// This MUST match internal/usage/ingest.go's dedupKey. Claude Code writes one
-// API response as several assistant lines sharing a message.id, each carrying a
-// growing usage snapshot, so summing lines over-counts about 2x — measured
-// 1.87x-2.29x across five real transcripts. Every line has its own uuid, so
-// keying on uuid dedups nothing at all.
+// The rule is usage.DedupKey, shared so this and the usage store agree by
+// construction. Claude Code writes one API response as several assistant lines
+// sharing a message.id, each carrying a growing usage snapshot, so summing
+// lines over-counts about 2x — measured 1.87x-2.29x across five real
+// transcripts. Every line has its own uuid, so keying on uuid dedups nothing.
 func (l rawLine) usageKey() string {
-	if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
+	if l.Message == nil {
 		return ""
 	}
-	if l.Message.ID != "" {
-		return l.Message.ID + "|" + l.RequestID
-	}
-	return l.Message.Model + "|" + l.Timestamp
+	return usage.DedupKey(l.Type, l.Message.Usage != nil, l.Message.ID, l.RequestID, l.Message.Model, l.Timestamp)
 }
 
 // usageTokens is the four-way tally on this line, zero when it carries none.
