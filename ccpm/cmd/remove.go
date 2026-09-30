@@ -108,6 +108,13 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove vault backup: %v\n", err)
 		}
 
+		// Removing the default: stop pointing GUI/IDE claude (launchd env,
+		// LaunchAgent that re-applies it at login) at the deleted dir, and
+		// drop its API key from ~/.claude/settings.json.
+		if freshCfg.DefaultProfile == name {
+			releaseSystemDefault(p.AuthMethod == "api_key")
+		}
+
 		freshCfg.RemoveProfile(name)
 		if err := config.Save(freshCfg); err != nil {
 			return fmt.Errorf("saving config: %w", err)

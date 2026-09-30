@@ -197,6 +197,14 @@ func runRename(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
+	// set-default pinned launchd's CLAUDE_CONFIG_DIR (and the LaunchAgent
+	// that re-applies it at login) to the old dir; follow the move.
+	if cfg.DefaultProfile == newName && p.AuthMethod == "oauth" {
+		if err := setSystemDefault(newDir); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not re-point system-wide CLAUDE_CONFIG_DIR: %v\n", err)
+		}
+	}
+
 	color.New(color.FgGreen, color.Bold).Printf("✓ Profile %q renamed to %q\n", oldName, newName)
 	return nil
 }

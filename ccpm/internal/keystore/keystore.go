@@ -24,6 +24,9 @@ type Store interface {
 	GetAPIKey(profile string) (string, error)
 	DeleteAPIKey(profile string) error
 	GetOrCreateVaultMasterKey() ([]byte, error)
+	// DeleteVaultMasterKey removes the vault master key. Only `ccpm uninstall`
+	// calls it, after every vault file it encrypts is gone. Absent is not an error.
+	DeleteVaultMasterKey() error
 }
 
 // SystemStore uses the OS keychain via go-keyring.
@@ -80,6 +83,14 @@ func (s *SystemStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 	}
 
 	return key, nil
+}
+
+func (s *SystemStore) DeleteVaultMasterKey() error {
+	err := keyring.Delete(serviceVault, vaultAccount)
+	if err == keyring.ErrNotFound {
+		return nil
+	}
+	return err
 }
 
 // decodeVaultKey accepts a keychain-stored master key. New installs store the
@@ -146,4 +157,9 @@ func (m *MemoryStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 	}
 	m.data[serviceVault+"/"+vaultAccount] = base64.StdEncoding.EncodeToString(key)
 	return key, nil
+}
+
+func (m *MemoryStore) DeleteVaultMasterKey() error {
+	delete(m.data, serviceVault+"/"+vaultAccount)
+	return nil
 }

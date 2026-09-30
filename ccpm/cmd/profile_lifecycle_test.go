@@ -18,9 +18,15 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
 
-// recordingStore is an in-memory keystore.
+// recordingStore is an in-memory keystore that also records vault-key deletes.
 type recordingStore struct {
 	keystore.Store
+	vaultDeleted bool
+}
+
+func (r *recordingStore) DeleteVaultMasterKey() error {
+	r.vaultDeleted = true
+	return r.Store.DeleteVaultMasterKey()
 }
 
 // lifecycle records every keychain / launchd side effect a command attempted.
@@ -304,6 +310,93 @@ func TestRemove_DeletesOAuthKeychainEntry(t *testing.T) {
 	}
 	if _, ok := lc.oauth[dir]; ok || !slices.Contains(lc.oauthDeleted, dir) {
 		t.Fatalf("OAuth keychain entry for %s survived remove (deleted: %v)", dir, lc.oauthDeleted)
+	}
+}
+
+// --- Finding 4: remove/rename/uninstall keep the system default consistent -
+
+func TestRemove_DefaultOAuthProfileClearsSystemDefault(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "oauth")
+	lc.setDefault(t, "old")
+	forceRemove = true
+
+	if err := runRemove(removeCmd, []string{"old"}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(lc.systemDefault, []string{"clear"}) {
+		t.Fatalf("launchd CLAUDE_CONFIG_DIR still points at the deleted dir: %v", lc.systemDefault)
+	}
+}
+
+func TestRemove_DefaultAPIKeyProfileStripsKeyFromHostSettings(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+	lc.setDefault(t, "old")
+	hostSettings := filepath.Join(lc.home, ".claude", "settings.json")
+	writeFile(t, hostSettings, `{"theme":"dark","env":{"ANTHROPIC_API_KEY":"sk-ant-removed"}}`)
+	forceRemove = true
+
+	if err := runRemove(removeCmd, []string{"old"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readJSONFile(t, hostSettings)
+	if got["env"] != nil || got["theme"] != "dark" {
+		t.Fatalf("removed default's API key left in ~/.claude/settings.json: %v", got)
+	}
+}
+
+func TestRemove_NonDefaultLeavesSystemDefaultAlone(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "keep", "oauth")
+	lc.addProfile(t, "old", "oauth")
+	lc.setDefault(t, "keep")
+	forceRemove = true
+
+	if err := runRemove(removeCmd, []string{"old"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(lc.systemDefault) != 0 {
+		t.Fatalf("system default touched when removing a non-default profile: %v", lc.systemDefault)
+	}
+}
+
+func TestRename_DefaultOAuthProfileRepointsSystemDefault(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "oauth")
+	lc.setDefault(t, "old")
+
+	if err := renameCmd.RunE(renameCmd, []string{"old", "new"}); err != nil {
+		t.Fatal(err)
+	}
+	newDir, _ := profile.GetDir("new")
+	if !slices.Equal(lc.systemDefault, []string{"set:" + newDir}) {
+		t.Fatalf("launchd CLAUDE_CONFIG_DIR not re-pointed at %s: %v", newDir, lc.systemDefault)
+	}
+}
+
+func TestUninstall_ClearsSystemDefaultOAuthEntriesAndVaultKey(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	oauthDir := lc.addProfile(t, "work", "oauth")
+	lc.addProfile(t, "keys", "api_key")
+	lc.setDefault(t, "work")
+	lc.oauth[oauthDir] = "payload"
+	forceRemove = true
+
+	if err := runUninstall(uninstallCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lc.oauth[oauthDir]; ok {
+		t.Error("OAuth keychain entry survived uninstall")
+	}
+	if !slices.Contains(lc.systemDefault, "clear") {
+		t.Errorf("launchd CLAUDE_CONFIG_DIR left pointing into the deleted ~/.ccpm: %v", lc.systemDefault)
+	}
+	if !lc.store.vaultDeleted {
+		t.Error("vault master key not deleted, though the help says uninstall removes it")
+	}
+	if exists(filepath.Join(lc.home, ".ccpm")) {
+		t.Error("~/.ccpm not removed")
 	}
 }
 

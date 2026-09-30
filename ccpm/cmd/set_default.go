@@ -114,7 +114,7 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 		// Works around the Claude Code v2.1.x startup-refresh path that 401s
 		// when CLAUDE_CONFIG_DIR resolves to bare ~/.claude. Best-effort: a
 		// failure here doesn't undo the keychain/identity sync above.
-		if err := setSystemDefaultConfigDir(p.Dir); err != nil {
+		if err := setSystemDefault(p.Dir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not register system-wide CLAUDE_CONFIG_DIR: %v\n", err)
 			yellow.Println("  → IDE extensions may not pick up this profile until you restart them with the env set manually.")
 		}
@@ -123,7 +123,7 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 		// CLAUDE_CONFIG_DIR we previously set for an OAuth profile. claude
 		// then reads ANTHROPIC_API_KEY from ~/.claude/settings.json's env
 		// block as before.
-		if err := clearSystemDefaultConfigDir(); err != nil {
+		if err := clearSystemDefault(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
 		}
 		if err := applyAPIKeyDefault(name); err != nil {
@@ -154,15 +154,7 @@ func runUnsetDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if err := clearAPIKeyEnv(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not strip ANTHROPIC_API_KEY from ~/.claude/settings.json: %v\n", err)
-	}
-	// Remove the system-wide CLAUDE_CONFIG_DIR we may have set during a
-	// previous `set-default` for an OAuth profile, so IDE extensions stop
-	// being pinned to any specific profile on next launch.
-	if err := clearSystemDefaultConfigDir(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
-	}
+	releaseSystemDefault(true)
 
 	cfg.DefaultProfile = ""
 	if err := config.Save(cfg); err != nil {
@@ -174,6 +166,23 @@ func runUnsetDefault(cmd *cobra.Command, args []string) error {
 		fmt.Println("Restart Cursor/VSCode/Antigravity windows for the change to take effect.")
 	}
 	return nil
+}
+
+// releaseSystemDefault undoes what set-default pushed outside ~/.ccpm: the
+// launchd CLAUDE_CONFIG_DIR + LaunchAgent (so IDE extensions stop being pinned
+// to a profile dir on next launch) and, when clearAPIKey, the
+// ANTHROPIC_API_KEY env set-default wrote into ~/.claude/settings.json. Used
+// by unset-default, and by remove/uninstall when the default goes away.
+// Best-effort: warns, never fails the caller.
+func releaseSystemDefault(clearAPIKey bool) {
+	if clearAPIKey {
+		if err := clearAPIKeyEnv(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not strip ANTHROPIC_API_KEY from ~/.claude/settings.json: %v\n", err)
+		}
+	}
+	if err := clearSystemDefault(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
+	}
 }
 
 // saveDefaultBackToProfile is the inverse of applyOAuthDefault: it folds the
