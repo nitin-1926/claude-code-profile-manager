@@ -989,16 +989,29 @@ func TestAMatchOutsideTheScopeDoesNotTruncate(t *testing.T) {
 // while leaving whole subagent transcripts unread.
 func TestDroppedSessionsCountsQuotaSkippedFiles(t *testing.T) {
 	dir := t.TempDir()
+	// Explicit mtimes, parent newest. Candidates are scanned newest first by
+	// whole-second mtime, so leaving this to the clock made the test flaky:
+	// when a second ticked over between writes (the Windows runner, now and
+	// then) the subagents sorted first, filled the quota themselves, and only
+	// two transcripts went unopened.
+	now := time.Now()
+	age := func(path string, minutes int) {
+		t.Helper()
+		ts := now.Add(-time.Duration(minutes) * time.Minute)
+		if err := os.Chtimes(path, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// The parent alone fills a quota of 2.
-	writeSessionTranscript(t, dir, "/repo", "parent",
+	age(writeSessionTranscript(t, dir, "/repo", "parent",
 		userLine(t, "u1", "hitme once"),
 		userLine(t, "u2", "hitme twice"),
 		userLine(t, "u3", "hitme thrice"),
-	)
+	), 1)
 	// Three subagent transcripts that will never be opened.
 	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
-	for _, name := range []string{"agent-a.jsonl", "agent-b.jsonl", "agent-c.jsonl"} {
-		writeJSONL(t, subs, name, userLine(t, "s-"+name, "hitme from a subagent"))
+	for i, name := range []string{"agent-a.jsonl", "agent-b.jsonl", "agent-c.jsonl"} {
+		age(writeJSONL(t, subs, name, userLine(t, "s-"+name, "hitme from a subagent")), 2+i)
 	}
 
 	res := Search(context.Background(), scopeOf(dir), "hitme", SearchOpts{MaxPerSession: 2})
