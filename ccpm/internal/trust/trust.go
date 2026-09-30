@@ -1,12 +1,13 @@
 // Package trust manages the list of project directories whose .claude/settings.json
-// is allowed to contribute security-sensitive keys (hooks, permissions,
-// statusLine, mcpServers, env, enabledPlugins) to the profile merge.
+// is allowed to contribute keys beyond a small allowlist of inert ones (hooks,
+// permissions, apiKeyHelper and the other command helpers, env, …) to the
+// profile merge.
 //
 // A cloned git repo can drop a .claude/settings.json with arbitrary hooks or
-// permission overrides; merging those silently would mean `git clone + ccpm run`
+// command helpers; merging those silently would mean `git clone + ccpm run`
 // is enough for an attacker-controlled repo to register shell commands. ccpm
-// therefore treats every project as untrusted by default: dangerous keys are
-// stripped, and the user is told how to opt in. An explicit `ccpm trust add
+// therefore treats every project as untrusted by default: every key not on
+// SafeProjectKeys is stripped, and the user is told how to opt in. An explicit `ccpm trust add
 // <path>` is required to let a project's settings contribute those keys.
 package trust
 
@@ -25,11 +26,50 @@ import (
 
 const trustFilename = "trusted-projects.json"
 
-// DangerousKeys lists the top-level keys in a project's settings.json /
-// settings.local.json / .mcp.json that can grant shell access or bypass safety
-// rails. Project-scoped writes of these keys are dropped from the merge unless
-// the project is in the trust list.
-var DangerousKeys = []string{"hooks", "permissions", "statusLine", "mcpServers", "env", "enabledPlugins"}
+// SafeProjectKeys is the allowlist of top-level settings keys an UNTRUSTED
+// project's settings.json / settings.local.json may contribute: display,
+// editor and model preferences that can't run a command, widen permissions,
+// load code or redirect credentials. Everything else is stripped. It is an
+// allowlist, not a blocklist, because Claude Code keeps adding keys that
+// execute a shell command (apiKeyHelper, awsAuthRefresh, awsCredentialExport,
+// gcpAuthRefresh, otelHeadersHelper, fileSuggestion, subagentStatusLine,
+// processWrapper, …) and a blocklist lets each new one through until someone
+// notices. Add a key here only after checking Claude Code's settings reference
+// shows it is inert.
+var SafeProjectKeys = map[string]bool{
+	"$schema":                    true,
+	"alwaysThinkingEnabled":      true,
+	"attribution":                true,
+	"autoCompactEnabled":         true,
+	"cleanupPeriodDays":          true,
+	"companyAnnouncements":       true,
+	"editorMode":                 true,
+	"effortLevel":                true,
+	"emojiCompletionEnabled":     true,
+	"fastMode":                   true,
+	"includeCoAuthoredBy":        true,
+	"includeGitInstructions":     true,
+	"keybindingFlavor":           true,
+	"language":                   true,
+	"maxProseWidth":              true,
+	"model":                      true,
+	"outputStyle":                true,
+	"prefersReducedMotion":       true,
+	"promptSuggestionEnabled":    true,
+	"respectGitignore":           true,
+	"showThinkingSummaries":      true,
+	"showTurnDuration":           true,
+	"spinnerTipsEnabled":         true,
+	"spinnerVerbs":               true,
+	"syntaxHighlightingDisabled": true,
+	"teammateMode":               true,
+	"terminalProgressBarEnabled": true,
+	"theme":                      true,
+	"timeFormat":                 true,
+	"timeZone":                   true,
+	"verbose":                    true,
+	"viewMode":                   true,
+}
 
 // Record is one entry in the trust list.
 type Record struct {
@@ -209,31 +249,23 @@ func All() ([]Record, error) {
 	return l.Projects, nil
 }
 
-// FilterProjectLayer returns a copy of settings with dangerous top-level keys
-// removed when the project is untrusted. Triggered reports which keys were
-// stripped so the caller can log them once.
+// FilterProjectLayer returns a copy of settings keeping only SafeProjectKeys
+// when the project is untrusted. stripped reports (sorted) which keys were
+// dropped so the caller can log them once.
 func FilterProjectLayer(settings map[string]interface{}, projectRoot string) (filtered map[string]interface{}, stripped []string) {
 	if IsTrusted(projectRoot) {
 		return settings, nil
 	}
 	out := make(map[string]interface{}, len(settings))
 	for k, v := range settings {
-		if isDangerous(k) {
+		if !SafeProjectKeys[k] {
 			stripped = append(stripped, k)
 			continue
 		}
 		out[k] = v
 	}
+	sort.Strings(stripped)
 	return out, stripped
-}
-
-func isDangerous(key string) bool {
-	for _, d := range DangerousKeys {
-		if d == key {
-			return true
-		}
-	}
-	return false
 }
 
 // dangerousEnvNames are env keys a project layer must never set, trusted or
