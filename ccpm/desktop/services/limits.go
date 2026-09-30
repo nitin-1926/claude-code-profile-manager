@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
@@ -188,9 +187,4 @@ func PlanLabel(tier string) string {
 	default:
 		return tier
 	}
-}
-
-// Age is exposed so the frontend and the rail format freshness identically.
-func Age(capturedAt int64, now time.Time) time.Duration {
-	return usage.Limits{CapturedAt: capturedAt}.Age(now)
 }

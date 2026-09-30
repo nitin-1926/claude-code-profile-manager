@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -126,23 +125,14 @@ func (s *MutateService) OpenFolder(name string) CmdResult {
 	if !ok {
 		return CmdResult{Error: "unknown profile: " + name}
 	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", pc.Dir)
-	case "windows":
-		cmd = exec.Command("explorer", pc.Dir)
-	default:
-		cmd = exec.Command("xdg-open", pc.Dir)
-	}
-	if err := cmd.Start(); err != nil {
+	if err := exec.Command("open", pc.Dir).Start(); err != nil {
 		return CmdResult{Error: err.Error()}
 	}
 	return CmdResult{OK: true, Output: pc.Dir}
 }
 
 // Launch opens a new Terminal running `ccpm run <name>` (spawns Claude Code with
-// the profile). macOS only for v1; other platforms get a copyable command.
+// the profile).
 func (s *MutateService) Launch(name string) CmdResult {
 	if err := profile.ValidateName(name); err != nil {
 		return CmdResult{Error: err.Error()}
@@ -324,9 +314,6 @@ func (s *MutateService) terminal(workdir string, args ...string) CmdResult {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
 	}
 	full := composeCommand(bin, workdir, args...)
-	if runtime.GOOS != "darwin" {
-		return CmdResult{OK: false, Output: full, Error: "open a terminal and run: " + full}
-	}
 	script := fmt.Sprintf(`tell application "Terminal"
 	activate
 	do script %q

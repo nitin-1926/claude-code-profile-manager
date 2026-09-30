@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
@@ -180,15 +179,5 @@ func TestPlanReportsLimits(t *testing.T) {
 		if planReportsLimits(tier) {
 			t.Errorf("%q should not be treated as a limit-reporting tier", tier)
 		}
-	}
-}
-
-func TestAgeMatchesUsageEngine(t *testing.T) {
-	now := time.Unix(1_700_003_600, 0)
-	if got := Age(1_700_000_000, now); got != time.Hour {
-		t.Errorf("Age = %v, want 1h", got)
-	}
-	if got := Age(0, now); got != 0 {
-		t.Errorf("Age of an absent reading = %v, want 0", got)
 	}
 }
