@@ -144,6 +144,7 @@ export namespace services {
 	    name: string;
 	    type: string;
 	    sources: string[];
+	    removable: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new McpView(source);
@@ -154,6 +155,7 @@ export namespace services {
 	        this.name = source["name"];
 	        this.type = source["type"];
 	        this.sources = source["sources"];
+	        this.removable = source["removable"];
 	    }
 	}
 	export class EnvVar {

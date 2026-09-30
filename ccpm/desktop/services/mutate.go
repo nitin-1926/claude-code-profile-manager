@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -188,8 +189,17 @@ func (s *MutateService) AddHTTPMCP(name, url, profile string) CmdResult {
 	return runCCPM("mcp", "add", name, "--scope", "profile", "--profile", profile, "--transport", "http", "--url", url)
 }
 
-// RemoveMCP removes a profile-scoped MCP server.
+// RemoveMCP removes a profile-scoped MCP server. It refuses, before asking the
+// CLI, a server this profile does not hold at profile scope: a CLI older than
+// its own guard deletes another profile's record and reports success.
 func (s *MutateService) RemoveMCP(name, profile string) CmdResult {
+	list, err := readMCP(profile)
+	if err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	if !slices.ContainsFunc(list, func(m McpView) bool { return m.Name == name && m.Removable }) {
+		return CmdResult{Error: fmt.Sprintf("MCP server %q is not installed in profile %q — it comes from another scope", name, profile)}
+	}
 	return runCCPM("mcp", "remove", name, "--scope", "profile", "--profile", profile)
 }
 

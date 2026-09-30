@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
 
 type PermissionView struct {
@@ -34,6 +37,9 @@ type McpView struct {
 	Name    string   `json:"name"`
 	Type    string   `json:"type"`
 	Sources []string `json:"sources"`
+	// Removable is true when this profile holds the server at profile scope —
+	// the only kind RemoveMCP can take out of it.
+	Removable bool `json:"removable"`
 }
 
 type Details struct {
@@ -98,22 +104,52 @@ func (s *DetailsService) Get(profile string) (*Details, error) {
 	}
 	sort.Slice(out.Env, func(i, j int) bool { return out.Env[i].Key < out.Env[j].Key })
 
-	mcp, mcpErr := readMCP()
+	mcp, mcpErr := readMCP(profile)
 	if mcp != nil {
 		out.Mcp = mcp
 	}
 	return out, errors.Join(mergeErr, mcpErr)
 }
 
-// readMCP shells `ccpm mcp list --json` (read of a write-tool) and parses it.
-func readMCP() ([]McpView, error) {
+// mcpRow is one row of `ccpm mcp list --json`.
+type mcpRow struct {
+	Name     string   `json:"name"`
+	Type     string   `json:"type"`
+	Sources  []string `json:"sources"`
+	Profiles []string `json:"profiles"`
+}
+
+// readMCP shells `ccpm mcp list --json` (read of a write-tool) and keeps what
+// applies to profile. The CLI lists every profile's profile-scoped servers, so
+// a "ccpm-profile" source survives only when this profile holds the server:
+// its profile-scope record names the profile, or its fragment has the entry.
+func readMCP(profile string) ([]McpView, error) {
 	r, out := execCCPM(20*time.Second, "mcp", "list", "--json")
 	if !r.OK {
 		return nil, fmt.Errorf("listing MCP servers: %s", r.Error)
 	}
-	var list []McpView
-	if err := json.Unmarshal(out, &list); err != nil {
+	var rows []mcpRow
+	if err := json.Unmarshal(out, &rows); err != nil {
 		return nil, fmt.Errorf("listing MCP servers: ccpm mcp list --json printed something that is not JSON: %w", err)
+	}
+	var frag map[string]interface{}
+	if dir, err := share.MCPDir(); err == nil {
+		frag, _ = settingsmerge.LoadJSON(filepath.Join(dir, profile+".json"))
+	}
+	list := make([]McpView, 0, len(rows))
+	for _, row := range rows {
+		_, inFrag := frag[row.Name]
+		held := inFrag || (slices.Contains(row.Sources, "ccpm-profile") && slices.Contains(row.Profiles, profile))
+		sources := make([]string, 0, len(row.Sources))
+		for _, s := range row.Sources {
+			if s != "ccpm-profile" || held {
+				sources = append(sources, s)
+			}
+		}
+		if len(sources) == 0 {
+			continue
+		}
+		list = append(list, McpView{Name: row.Name, Type: row.Type, Sources: sources, Removable: held})
 	}
 	return list, nil
 }
