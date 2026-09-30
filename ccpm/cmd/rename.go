@@ -14,9 +14,8 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profilelife"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/vault"
 )
 
@@ -81,7 +80,7 @@ func runRename(cmd *cobra.Command, args []string) error {
 		// Best-effort: also delete any orphan keychain entry whose namespace
 		// hashes from this exact path. If `claude` had ever logged in here,
 		// the entry is stale anyway.
-		_ = credentials.DeleteMacKeychainOAuth(newDirPath)
+		_ = deleteOAuthKeychain(newDirPath)
 		if err := os.RemoveAll(newDirPath); err != nil {
 			return fmt.Errorf("removing orphan directory: %w", err)
 		}
@@ -100,15 +99,28 @@ func runRename(cmd *cobra.Command, args []string) error {
 	}
 	var oauthPayload string
 	if p.AuthMethod == "oauth" {
-		if kc, err := credentials.ReadMacKeychainOAuth(oldDir); err != nil {
+		if kc, err := readOAuthKeychain(oldDir); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read OAuth keychain entry: %v\n", err)
 		} else if kc != nil {
 			oauthPayload = kc.Raw
 		}
 	}
 
+	// Move the name-keyed stores (settings/MCP fragments, manifest refs)
+	// first: a single reversible transaction, undone by undoStores if any
+	// later step fails.
+	if err := profilelife.Rename(oldName, newName); err != nil {
+		return fmt.Errorf("renaming profile settings/MCP fragments and manifest refs: %w", err)
+	}
+	undoStores := func() {
+		if err := profilelife.Rename(newName, oldName); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not restore settings/MCP fragments to %q: %v\n", oldName, err)
+		}
+	}
+
 	// Rename profile directory
 	if err := profile.Rename(oldName, newName); err != nil {
+		undoStores()
 		return fmt.Errorf("renaming profile directory: %w", err)
 	}
 
@@ -130,18 +142,19 @@ func runRename(cmd *cobra.Command, args []string) error {
 	// roll back the directory rename so the user isn't left with a profile dir
 	// that no longer matches its keychain namespace.
 	if oauthPayload != "" {
-		if err := credentials.WriteMacKeychainOAuth(newDir, oauthPayload); err != nil {
+		if err := writeOAuthKeychain(newDir, oauthPayload); err != nil {
 			_ = profile.Rename(newName, oldName)
+			undoStores()
 			return fmt.Errorf("migrating OAuth keychain entry to new name: %w", err)
 		}
-		if err := credentials.DeleteMacKeychainOAuth(oldDir); err != nil {
+		if err := deleteOAuthKeychain(oldDir); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove old OAuth keychain entry: %v\n", err)
 		}
 	}
 
 	// Move API key in keychain if applicable
 	if p.AuthMethod == "api_key" {
-		store := keystore.New()
+		store := newKeystore()
 		key, err := store.GetAPIKey(oldName)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read API key from keychain: %v\n", err)
@@ -151,6 +164,7 @@ func runRename(cmd *cobra.Command, args []string) error {
 				// metadata has been rewritten yet, so the dir and its on-disk
 				// references stay consistent after the rollback.
 				_ = profile.Rename(newName, oldName)
+				undoStores()
 				return fmt.Errorf("storing API key under new name: %w", err)
 			}
 			if err := store.DeleteAPIKey(oldName); err != nil {
@@ -172,7 +186,7 @@ func runRename(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rename vault backup if present
-	v := vault.New(keystore.New())
+	v := vault.New(newKeystore())
 	if err := v.Rename(oldName, newName); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not rename vault backup: %v\n", err)
 	}

@@ -1,0 +1,290 @@
+package cmd
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/lock"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
+)
+
+// recordingStore is an in-memory keystore.
+type recordingStore struct {
+	keystore.Store
+}
+
+// lifecycle records every keychain / launchd side effect a command attempted.
+type lifecycle struct {
+	home          string
+	store         *recordingStore
+	oauth         map[string]string // profile dir -> keychain payload
+	oauthDeleted  []string
+	systemDefault []string // "set:<dir>" or "clear"
+}
+
+// lifecycleSandbox isolates HOME and swaps every side-effect seam for a
+// recorder, so lifecycle commands can run end-to-end without touching the real
+// keychain, launchd, or terminal.
+func lifecycleSandbox(t *testing.T) *lifecycle {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := share.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	lc := &lifecycle{home: home, store: &recordingStore{Store: keystore.NewMemoryStore()}, oauth: map[string]string{}}
+
+	saved := []func(){}
+	swap := func(restore func()) { saved = append(saved, restore) }
+	{
+		a, b, c, d, e, f, g, h, i, j := newKeystore, readOAuthKeychain, writeOAuthKeychain, deleteOAuthKeychain, setSystemDefault, clearSystemDefault, selectOption, stdinIsTerminal, checkCredentials, readAnswer
+		swap(func() {
+			newKeystore, readOAuthKeychain, writeOAuthKeychain, deleteOAuthKeychain, setSystemDefault, clearSystemDefault, selectOption, stdinIsTerminal, checkCredentials, readAnswer = a, b, c, d, e, f, g, h, i, j
+		})
+	}
+	fr, cn := forceRemove, cloneNoAuth
+	swap(func() { forceRemove, cloneNoAuth = fr, cn })
+	t.Cleanup(func() {
+		for _, r := range saved {
+			r()
+		}
+	})
+
+	newKeystore = func() keystore.Store { return lc.store }
+	readOAuthKeychain = func(dir string) (*credentials.MacKeychainOAuth, error) {
+		if raw, ok := lc.oauth[dir]; ok {
+			return &credentials.MacKeychainOAuth{Raw: raw, AccessToken: "tok"}, nil
+		}
+		return nil, nil
+	}
+	writeOAuthKeychain = func(dir, raw string) error { lc.oauth[dir] = raw; return nil }
+	deleteOAuthKeychain = func(dir string) error {
+		lc.oauthDeleted = append(lc.oauthDeleted, dir)
+		delete(lc.oauth, dir)
+		return nil
+	}
+	setSystemDefault = func(dir string) error { lc.systemDefault = append(lc.systemDefault, "set:"+dir); return nil }
+	clearSystemDefault = func() error { lc.systemDefault = append(lc.systemDefault, "clear"); return nil }
+	selectOption = func(string, []picker.Option) (string, error) { return "", picker.ErrNonInteractive }
+	stdinIsTerminal = func() bool { return false }
+	readAnswer = func() string { t.Fatal("unexpected confirmation prompt"); return "" }
+	checkCredentials = func(string, string, string) credentials.CredStatus {
+		t.Fatal("unexpected credential check")
+		return credentials.CredStatus{}
+	}
+	return lc
+}
+
+// addProfile creates and registers a profile in the sandbox.
+func (lc *lifecycle) addProfile(t *testing.T, name, auth string) string {
+	t.Helper()
+	dir, err := profile.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AddProfile(name, dir, auth)
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func (lc *lifecycle) setDefault(t *testing.T, name string) {
+	t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.DefaultProfile = name
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeFragments gives name a settings fragment, owned sidecar and MCP fragment.
+func writeFragments(t *testing.T, name string) {
+	t.Helper()
+	settingsDir, _ := share.SettingsDir()
+	mcpDir, _ := share.MCPDir()
+	writeFile(t, filepath.Join(settingsDir, name+".json"), `{"model":"`+name+`-model","env":{"TOKEN":"x"}}`)
+	writeFile(t, filepath.Join(settingsDir, name+".owned.json"), `{"keys":["model"]}`)
+	writeFile(t, filepath.Join(mcpDir, name+".json"), `{"`+name+`-server":{"command":"srv","env":{"API_TOKEN":"secret"}}}`)
+}
+
+func fragmentFiles(name string) []string {
+	settingsDir, _ := share.SettingsDir()
+	mcpDir, _ := share.MCPDir()
+	return []string{
+		filepath.Join(settingsDir, name+".json"),
+		filepath.Join(settingsDir, name+".owned.json"),
+		filepath.Join(mcpDir, name+".json"),
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+func saveInstalls(t *testing.T, installs ...manifest.Install) {
+	t.Helper()
+	if err := manifest.Save(&manifest.Manifest{Version: "1", Installs: installs}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func loadInstalls(t *testing.T) []manifest.Install {
+	t.Helper()
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m.Installs
+}
+
+func findInstall(installs []manifest.Install, id string) *manifest.Install {
+	for i := range installs {
+		if installs[i].ID == id {
+			return &installs[i]
+		}
+	}
+	return nil
+}
+
+// lockHeld reports whether ccpm's global config lock is currently held.
+func lockHeld(t *testing.T) bool {
+	t.Helper()
+	path, err := config.LockPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := lock.Acquire(path, 50*time.Millisecond)
+	if err != nil {
+		return true
+	}
+	_ = h.Release()
+	return false
+}
+
+func readJSONFile(t *testing.T, path string) map[string]interface{} {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// --- Finding 1: remove / rename must carry every per-profile store ---------
+
+func TestRemove_DeletesFragmentsAndManifestRefs(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+	lc.addProfile(t, "other", "api_key")
+	writeFragments(t, "old")
+	saveInstalls(t,
+		manifest.Install{ID: "solo", Kind: manifest.KindSkill, Scope: manifest.ScopeProfile, Profiles: []string{"old"}},
+		manifest.Install{ID: "shared", Kind: manifest.KindSkill, Scope: manifest.ScopeProfile, Profiles: []string{"old", "other"}},
+		manifest.Install{ID: "glob", Kind: manifest.KindSkill, Scope: manifest.ScopeGlobal, Profiles: []string{"old", "other"}},
+	)
+	forceRemove = true
+
+	if err := runRemove(removeCmd, []string{"old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, f := range fragmentFiles("old") {
+		if exists(f) {
+			t.Errorf("%s survived remove; a later `ccpm add old` would inherit it", f)
+		}
+	}
+	installs := loadInstalls(t)
+	if findInstall(installs, "solo") != nil {
+		t.Error("profile-scoped entry owned only by the removed profile still in manifest")
+	}
+	for _, id := range []string{"shared", "glob"} {
+		inst := findInstall(installs, id)
+		if inst == nil || !slices.Equal(inst.Profiles, []string{"other"}) {
+			t.Errorf("%s: want profiles [other], got %+v", id, inst)
+		}
+	}
+}
+
+func TestRename_MovesFragmentsAndManifestRefs(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+	if err := lc.store.SetAPIKey("old", "sk-ant-test"); err != nil {
+		t.Fatal(err)
+	}
+	writeFragments(t, "old")
+	saveInstalls(t, manifest.Install{ID: "solo", Kind: manifest.KindMCP, Scope: manifest.ScopeProfile, Profiles: []string{"old"}})
+
+	if err := renameCmd.RunE(renameCmd, []string{"old", "new"}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldFiles, newFiles := fragmentFiles("old"), fragmentFiles("new")
+	for i := range oldFiles {
+		if exists(oldFiles[i]) {
+			t.Errorf("%s left behind under the old name", oldFiles[i])
+		}
+		if !exists(newFiles[i]) {
+			t.Errorf("%s missing after rename: settings/MCP lost", newFiles[i])
+		}
+	}
+	if got := readJSONFile(t, newFiles[2]); got["old-server"] == nil {
+		t.Errorf("MCP fragment content not carried over: %v", got)
+	}
+	if inst := findInstall(loadInstalls(t), "solo"); inst == nil || !slices.Equal(inst.Profiles, []string{"new"}) {
+		t.Errorf("manifest ref not renamed: %+v", inst)
+	}
+}
+
+// A fragment orphaned under the new name (e.g. by an older ccpm's remove) must
+// not leak into the renamed profile when the old one has none.
+func TestRename_DropsOrphanFragmentsUnderNewName(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+	if err := lc.store.SetAPIKey("old", "sk-ant-test"); err != nil {
+		t.Fatal(err)
+	}
+	writeFragments(t, "new")
+
+	if err := renameCmd.RunE(renameCmd, []string{"old", "new"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fragmentFiles("new") {
+		if exists(f) {
+			t.Errorf("orphan %s inherited by renamed profile", f)
+		}
+	}
+}

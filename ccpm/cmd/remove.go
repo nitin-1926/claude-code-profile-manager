@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profilelife"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/vault"
 )
 
@@ -65,6 +65,13 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	// commands. Re-load config inside the lock so we delete from the freshest
 	// state instead of clobbering a concurrent profile add/rename.
 	return withConfigLock(func() error {
+		// Name-keyed stores first (settings/MCP fragments, manifest refs): if
+		// this transaction fails nothing has been deleted yet. Left behind,
+		// they would be inherited by the next profile created with this name.
+		if err := profilelife.Remove(name); err != nil {
+			return fmt.Errorf("removing profile settings/MCP fragments and manifest refs: %w", err)
+		}
+
 		// Remove profile directory
 		if err := profile.Remove(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -72,14 +79,14 @@ func runRemove(cmd *cobra.Command, args []string) error {
 
 		// Remove API key from keychain if applicable
 		if p.AuthMethod == "api_key" {
-			store := keystore.New()
+			store := newKeystore()
 			if err := store.DeleteAPIKey(name); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not remove API key from keychain: %v\n", err)
 			}
 		}
 
 		// Remove vault backup
-		v := vault.New(keystore.New())
+		v := vault.New(newKeystore())
 		if err := v.Remove(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove vault backup: %v\n", err)
 		}
