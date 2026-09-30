@@ -232,7 +232,7 @@ func linkCascadeEntry(profileDir, profileName string, inst manifest.Install) err
 			return nil
 		}
 		dst := filepath.Join(profileDir, dirs.profileSubdir, entry)
-		return share.Link(src, dst)
+		return linkUnlessProfileLocal(src, dst)
 	}
 	return nil
 }
