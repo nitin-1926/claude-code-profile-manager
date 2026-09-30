@@ -41,11 +41,27 @@ jobs:
           Native desktop app for managing Claude Code profiles.
 
           ### Install
-          Download the `.dmg` for your Mac — **Apple Silicon** (`arm64`) or **Intel** (`amd64`) — open it and drag **CCPM** into **Applications**. The app is distributed unsigned (no Apple Developer account), so on first launch macOS Gatekeeper asks you to approve it once: right-click the app → **Open**, or if that's blocked (macOS Sequoia and later), allow it under **System Settings → Privacy & Security → Open Anyway**. That's a one-time step — after that it launches normally, and updates install themselves in place (no re-approval, no re-dragging).
+          Recommended, one line in Terminal (picks your chip, verifies the checksum, installs to Applications):
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh
+          ```
+
+          Or download the `.dmg` for your Mac, **Apple Silicon** (`arm64`) or **Intel** (`amd64`), and drag **CCPM** into **Applications**. The app is ad-hoc signed but not notarized (that needs a paid Apple Developer ID), so macOS refuses a browser-downloaded copy and on macOS 15 and later calls it **"damaged"**. It is not. Clear the download flag once, then open it normally:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/CCPM.app
+          ```
+
+          Either way it is a one-time step: updates install themselves from inside the app, with no prompt.
 
           The app uses the `ccpm` CLI for write actions; install it from the [README](https://github.com/nitin-1926/claude-code-profile-manager#install) if you haven't.
           EOF
 
+      # --latest=false: CLI and desktop releases share one list, and GitHub's
+      # "Latest" badge is what /releases/latest resolves to. A desktop release
+      # holding it broke the CLI's curl installer and `ccpm version
+      # --check-latest`, both of which expect a v* tag there.
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,4 +72,5 @@ jobs:
             ccpm/desktop/dist/*.app.zip \
             ccpm/desktop/dist/checksums.txt \
             --title "CCPM Desktop v${VER}" \
-            --notes-file /tmp/desktop-notes.md
+            --notes-file /tmp/desktop-notes.md \
+            --latest=false

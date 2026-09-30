@@ -25,6 +25,17 @@ receives security fixes. Please upgrade before reporting.
 ## Scope
 
 ccpm manages Claude Code profiles and reads local transcripts on your machine.
+
+The desktop app's **History** tab goes further than counting: it renders and
+searches the text of those transcripts. That content never leaves your machine —
+ccpm makes no network requests for it — but it is worth knowing what is on
+screen. Search covers your prompts, Claude's replies, and the commands and file
+paths Claude ran; **tool output is excluded by default** and is one explicit
+toggle away, because that is where a `cat` of a credentials file or a pasted
+`.env` ends up. Note the limit of that default plainly: a secret you pasted into
+a *prompt* is in your own text, and is therefore in the default scope. ccpm does
+not redact transcript content, and a partial redactor would be false comfort.
+
 Reports we're particularly interested in:
 
 - Leakage of secrets/credentials across profiles or into shared/host assets.

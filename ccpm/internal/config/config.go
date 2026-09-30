@@ -34,6 +34,32 @@ type ProfileConfig struct {
 	CreatedAt  string            `json:"created_at"`
 	LastUsed   string            `json:"last_used"`
 	Env        map[string]string `json:"env,omitempty"`
+	// StatusLine overrides Settings.StatusLine for sessions launched under this
+	// profile. nil means "no override" — fall back to the global default.
+	StatusLine *StatusLineLayout `json:"statusline,omitempty"`
+}
+
+// StatusLineLayout records which segments `ccpm statusline` renders and on
+// which of its two rows. It is plain data with no behaviour: the segment
+// catalog, the defaults, and the resolution rules live in internal/statusline,
+// which imports this package. Keeping the shape here and the logic there is
+// what lets both `package cmd` and the darwin-only desktop services share one
+// definition without an import cycle.
+//
+// Off is stored explicitly rather than inferred as "listed in neither row".
+// Without it there is no way to tell a segment the user switched off from one
+// that did not exist when they configured their layout, so every segment added
+// in a later ccpm version would be silently invisible to everyone who had ever
+// opened the picker. A known segment in none of the three buckets is new, and
+// internal/statusline places it at its catalog default.
+//
+// Order within a row is significant and preserved as stored. Both UIs keep it:
+// the desktop app has move up/down controls, and the picker preserves an order
+// already set rather than re-sorting to catalog order.
+type StatusLineLayout struct {
+	Row1 []string `json:"row1"`
+	Row2 []string `json:"row2"`
+	Off  []string `json:"off,omitempty"`
 }
 
 type Settings struct {
@@ -60,6 +86,12 @@ type Settings struct {
 	// lazy catch-up on demand, so warming is an optimization, not a requirement.
 	// Use Settings.UsageTrackingEnabled() to read the resolved value.
 	UsageTracking *bool `json:"usage_tracking,omitempty"`
+	// StatusLine is the global default segment layout for `ccpm statusline`,
+	// overridable per profile via ProfileConfig.StatusLine. nil means the user
+	// has never configured one, which is also the signal
+	// `ccpm config set statusline true` uses to offer the picker exactly once.
+	// Resolve it with statusline.Resolve rather than reading it directly.
+	StatusLine *StatusLineLayout `json:"statusline,omitempty"`
 }
 
 // StatusLineEnabled returns the resolved value of the default-statusLine

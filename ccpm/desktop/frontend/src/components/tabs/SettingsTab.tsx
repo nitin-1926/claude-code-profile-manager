@@ -5,6 +5,7 @@ import type { CmdResult, SettingKV } from '@/types'
 import { useToast } from '@/components/ui/Toast'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
+import { StatusLineSection } from '@/components/settings/StatusLineSection'
 import { NotchSection } from '@/components/settings/NotchSection'
 import { Plus, Save } from 'lucide-react'
 
@@ -40,6 +41,12 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
     }
   }
 
+  // The status line section is rendered by both the error and the loading
+  // branches below, not just the happy path: it reads a different service, so
+  // a settings failure has no bearing on it. Previously a corrupt settings.json
+  // hid an editor that would have loaded fine — and a useLive refetch failure
+  // unmounted it, discarding an unsaved draft.
+  const statusLine = <StatusLineSection profile={profile} />
   // The notch section reads its own service and is app-wide, so it renders in
   // the error and loading branches too: a profile's broken settings.json has
   // no bearing on it.
@@ -50,6 +57,7 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   if (error)
     return (
       <div className="px-6 py-5">
+        {statusLine}
         {notch}
         <div className="text-sm text-destructive">Could not load settings: {error}</div>
       </div>
@@ -57,6 +65,7 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   if (!data)
     return (
       <div className="px-6 py-5">
+        {statusLine}
         {notch}
         <div className="text-sm text-muted-foreground">Loading settings…</div>
       </div>
@@ -65,6 +74,7 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
 
   return (
     <div className="px-6 py-5">
+      {statusLine}
       {notch}
 
       <div className="mb-3 flex items-center justify-between">

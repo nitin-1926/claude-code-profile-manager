@@ -31,6 +31,8 @@ func main() {
 	// making the frontend call ApplyRailPrefs after each Set removes the only
 	// way the two can drift apart.
 	prefs.OnChange = app.ApplyRailPrefs
+	history := services.NewHistory()
+	statusline := services.NewStatusLine()
 
 	err := wails.Run(&options.App{
 		Title:     "CCPM",
@@ -75,6 +77,8 @@ func main() {
 			settings,
 			limits,
 			prefs,
+			history,
+			statusline,
 			updater,
 		},
 	})
