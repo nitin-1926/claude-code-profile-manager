@@ -38,12 +38,15 @@ detect_platform() {
 # desktop app's desktop-v* releases share the list. The listing is newest first,
 # so the first vX.Y.Z tag not flagged as a prerelease is the newest CLI
 # release. Splitting on commas puts each key on its own line; tag_name comes
-# before prerelease within a release, and nested objects carry neither.
+# before prerelease within a release, and nested objects carry neither. awk
+# reads to the end rather than exiting at the first match: an early exit closes
+# the pipe under curl, which then prints "Failure writing output" to the user.
 get_latest_version() {
     curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
         tr ',' '\n' |
         awk -F'"' '/"tag_name":/ { tag = $4 }
-            /"prerelease": *false/ { if (tag ~ /^v[0-9][0-9.]*$/) { print substr(tag, 2); exit } }'
+            /"prerelease": *false/ { if (!found && tag ~ /^v[0-9][0-9.]*$/) found = substr(tag, 2) }
+            END { if (found) print found }'
 }
 
 # Pick a SHA-256 verifier available on the host. Errors out if none found —

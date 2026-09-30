@@ -37,7 +37,8 @@ main() {
     TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
         tr ',' '\n' |
         awk -F'"' '/"tag_name":/ { tag = $4 }
-            /"prerelease": *false/ { if (tag ~ /^desktop-v[0-9][0-9.]*$/) { print tag; exit } }')
+            /"prerelease": *false/ { if (!found && tag ~ /^desktop-v[0-9][0-9.]*$/) found = tag }
+            END { if (found) print found }')
     if [ -z "$TAG" ]; then
         echo "Error: could not find a desktop release. See https://github.com/${REPO}/releases?q=desktop-v" >&2
         exit 1
@@ -66,7 +67,9 @@ main() {
     /usr/bin/ditto -x -k "${TMP_DIR}/${ZIP}" "$TMP_DIR"
     /usr/bin/codesign --verify --deep --strict "${TMP_DIR}/${APP}"
 
-    if pgrep -x CCPM >/dev/null 2>&1; then
+    # Only the copy being replaced: an install into another folder must not
+    # quit a CCPM the user is running from /Applications.
+    if pgrep -f "${INSTALL_DIR}/${APP}/Contents/MacOS/CCPM" >/dev/null 2>&1; then
         echo "  quitting the running CCPM"
         osascript -e 'tell application "CCPM" to quit' >/dev/null 2>&1 || true
         sleep 1
