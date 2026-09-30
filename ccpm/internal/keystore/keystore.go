@@ -3,6 +3,7 @@ package keystore
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 
@@ -24,7 +25,20 @@ type Store interface {
 	GetAPIKey(profile string) (string, error)
 	DeleteAPIKey(profile string) error
 	GetOrCreateVaultMasterKey() ([]byte, error)
+	// GetVaultMasterKey never creates a key: reads (vault restore) must not
+	// mint a new one, or existing backups become undecryptable.
+	GetVaultMasterKey() ([]byte, error)
 }
+
+// ErrVaultKeyNotFound is returned by GetVaultMasterKey when the keychain has
+// no vault master key.
+var ErrVaultKeyNotFound = errors.New("vault master key not found in keychain")
+
+// Indirection so tests can simulate keychain failures other than not-found.
+var (
+	keyringGet = keyring.Get
+	keyringSet = keyring.Set
+)
 
 // SystemStore uses the OS keychain via go-keyring.
 type SystemStore struct{}
@@ -54,31 +68,46 @@ func (s *SystemStore) DeleteAPIKey(profile string) error {
 }
 
 func (s *SystemStore) GetOrCreateVaultMasterKey() ([]byte, error) {
-	if existing, err := keyring.Get(serviceVault, vaultAccount); err == nil {
-		key, legacy, decodeErr := decodeVaultKey(existing)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decoding master key from keychain: %w", decodeErr)
-		}
-		if legacy {
-			// Migrate the raw-byte legacy entry to base64 immediately so the
-			// length-based fallback below can be removed.
-			if err := keyring.Set(serviceVault, vaultAccount, base64.StdEncoding.EncodeToString(key)); err != nil {
-				return nil, fmt.Errorf("migrating legacy master key to base64: %w", err)
-			}
-			fmt.Fprintln(os.Stderr, "ccpm: migrated vault master key to base64 keychain encoding")
-		}
-		return key, nil
+	key, err := s.GetVaultMasterKey()
+	if !errors.Is(err, ErrVaultKeyNotFound) {
+		// Found, or a real failure (locked keychain, denied ACL prompt, bad
+		// decode). Creating on anything but not-found would overwrite the real
+		// key and make every existing .enc backup permanently undecryptable.
+		return key, err
 	}
 
-	key := make([]byte, vaultKeyBytes)
+	key = make([]byte, vaultKeyBytes)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("generating master key: %w", err)
 	}
 
-	if err := keyring.Set(serviceVault, vaultAccount, base64.StdEncoding.EncodeToString(key)); err != nil {
+	if err := keyringSet(serviceVault, vaultAccount, base64.StdEncoding.EncodeToString(key)); err != nil {
 		return nil, fmt.Errorf("storing master key in keychain: %w", err)
 	}
 
+	return key, nil
+}
+
+func (s *SystemStore) GetVaultMasterKey() ([]byte, error) {
+	existing, err := keyringGet(serviceVault, vaultAccount)
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil, ErrVaultKeyNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading vault master key from keychain: %w", err)
+	}
+	key, legacy, err := decodeVaultKey(existing)
+	if err != nil {
+		return nil, fmt.Errorf("decoding master key from keychain: %w", err)
+	}
+	if legacy {
+		// Migrate the raw-byte legacy entry to base64 immediately so the
+		// length-based fallback below can be removed.
+		if err := keyringSet(serviceVault, vaultAccount, base64.StdEncoding.EncodeToString(key)); err != nil {
+			return nil, fmt.Errorf("migrating legacy master key to base64: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "ccpm: migrated vault master key to base64 keychain encoding")
+	}
 	return key, nil
 }
 
@@ -130,20 +159,29 @@ func (m *MemoryStore) DeleteAPIKey(profile string) error {
 }
 
 func (m *MemoryStore) GetOrCreateVaultMasterKey() ([]byte, error) {
-	if existing, ok := m.data[serviceVault+"/"+vaultAccount]; ok {
-		key, legacy, err := decodeVaultKey(existing)
-		if err != nil {
-			return nil, err
-		}
-		if legacy {
-			m.data[serviceVault+"/"+vaultAccount] = base64.StdEncoding.EncodeToString(key)
-		}
-		return key, nil
+	key, err := m.GetVaultMasterKey()
+	if !errors.Is(err, ErrVaultKeyNotFound) {
+		return key, err
 	}
-	key := make([]byte, vaultKeyBytes)
+	key = make([]byte, vaultKeyBytes)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
 	m.data[serviceVault+"/"+vaultAccount] = base64.StdEncoding.EncodeToString(key)
+	return key, nil
+}
+
+func (m *MemoryStore) GetVaultMasterKey() ([]byte, error) {
+	existing, ok := m.data[serviceVault+"/"+vaultAccount]
+	if !ok {
+		return nil, ErrVaultKeyNotFound
+	}
+	key, legacy, err := decodeVaultKey(existing)
+	if err != nil {
+		return nil, err
+	}
+	if legacy {
+		m.data[serviceVault+"/"+vaultAccount] = base64.StdEncoding.EncodeToString(key)
+	}
 	return key, nil
 }
