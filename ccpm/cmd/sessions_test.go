@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/transcript"
@@ -61,6 +62,7 @@ func writeSession(t *testing.T, path, sess, cwd, prompt string) {
 type listedSession struct {
 	SessionID   string `json:"session_id"`
 	Started     string `json:"started"`
+	LastActive  string `json:"last_active"`
 	Cwd         string `json:"cwd"`
 	FirstPrompt string `json:"first_prompt"`
 }
@@ -178,5 +180,41 @@ func TestEncodeCwdForClaude(t *testing.T) {
 		if got := encodeCwdForClaude(in); got != want {
 			t.Errorf("encodeCwdForClaude(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Rows are ordered by last activity, so the table must show last activity: a
+// session started long ago but resumed today belongs at the top, and printing
+// its start date there made the list look unsorted.
+func TestSessionsListShowsTheActivityItIsSortedBy(t *testing.T) {
+	profileDir := sessionsFixture(t)
+	proj := filepath.Join(profileDir, "projects", usage.EncodeCwd("/repo"))
+	oldResumed := filepath.Join(proj, "old.jsonl")
+	fresh := filepath.Join(proj, "fresh.jsonl")
+	writeSession(t, oldResumed, "old", "/repo", "started long ago")
+	writeSession(t, fresh, "fresh", "/repo", "started recently")
+	day := func(d int) time.Time { return time.Date(2026, 9, d, 12, 0, 0, 0, time.UTC) }
+	if err := os.Chtimes(fresh, day(10), day(10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(oldResumed, day(20), day(20)); err != nil { // resumed later
+		t.Fatal(err)
+	}
+	sessionsAll = true
+
+	got := listSessionsJSON(t)
+	if len(got) != 2 || got[0].SessionID != "old" {
+		t.Fatalf("order = %+v, want the most recently active session first", got)
+	}
+	if got[0].LastActive != day(20).Format(time.RFC3339) {
+		t.Errorf("last_active = %q, want %q", got[0].LastActive, day(20).Format(time.RFC3339))
+	}
+
+	out := captureStdout(t, func() error { return runSessionsList(nil, []string{"work"}) })
+	if !strings.Contains(out, "LAST ACTIVE") || strings.Contains(out, "STARTED") {
+		t.Errorf("table header should name the sort key:\n%s", out)
+	}
+	if !strings.Contains(out, day(20).Local().Format("2006-01-02")) {
+		t.Errorf("table should show the last-active date of the top row:\n%s", out)
 	}
 }

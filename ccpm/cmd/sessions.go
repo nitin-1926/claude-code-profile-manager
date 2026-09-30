@@ -134,6 +134,7 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		type sessionJSON struct {
 			SessionID   string `json:"session_id"`
 			Started     string `json:"started"`
+			LastActive  string `json:"last_active"`
 			Cwd         string `json:"cwd,omitempty"`
 			FirstPrompt string `json:"first_prompt,omitempty"`
 		}
@@ -142,6 +143,7 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 			out = append(out, sessionJSON{
 				SessionID:   s.SessionID,
 				Started:     sessionStarted(s).UTC().Format(time.RFC3339),
+				LastActive:  time.Unix(s.ModTime, 0).UTC().Format(time.RFC3339),
 				Cwd:         s.Cwd,
 				FirstPrompt: s.Title,
 			})
@@ -155,12 +157,15 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 	}
 
 	bold := color.New(color.Bold).SprintFunc()
-	fmt.Printf("  %-36s %-19s %-40s %s\n", bold("SESSION ID"), bold("STARTED"), bold("PROJECT"), bold("FIRST PROMPT"))
+	// The column is the sort key: rows are most-recently-active first (what
+	// `claude --resume` offers), so a first-timestamp column here read as
+	// out of order whenever an old session had been resumed recently.
+	fmt.Printf("  %-36s %-19s %-40s %s\n", bold("SESSION ID"), bold("LAST ACTIVE"), bold("PROJECT"), bold("FIRST PROMPT"))
 	fmt.Printf("  %s\n", strings.Repeat("─", 110))
 	for _, s := range sessions {
-		started := sessionStarted(s).Local().Format("2006-01-02 15:04:05")
+		active := time.Unix(s.ModTime, 0).Local().Format("2006-01-02 15:04:05")
 		fmt.Printf("  %-36s %-19s %-40s %s\n",
-			terminalSafe(s.SessionID), started, truncate(terminalSafe(s.Cwd), 40), truncate(terminalSafe(s.Title), 60))
+			terminalSafe(s.SessionID), active, truncate(terminalSafe(s.Cwd), 40), truncate(terminalSafe(s.Title), 60))
 	}
 	if shown := len(sessions); shown < total {
 		color.New(color.Faint).Printf("  (showing %d of %d — use --limit 0 for all)\n", shown, total)
