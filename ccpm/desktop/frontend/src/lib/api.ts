@@ -6,7 +6,7 @@ import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
 import { All as LimitsAll, Get as LimitsGet } from '../../wailsjs/go/services/LimitsService'
-import { Get as PrefsGet, Set as PrefsSet, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
+import { Get as PrefsGet, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
 import {
   Clone as MClone,
   Rename as MRename,
@@ -87,7 +87,6 @@ export const api = {
   },
   prefs: {
     get: () => PrefsGet() as unknown as Promise<DesktopPrefs>,
-    set: (p: DesktopPrefs) => PrefsSet(p as never) as unknown as Promise<DesktopPrefs>,
     setNotch: (p: DesktopPrefs) => SetNotch(p as never) as unknown as Promise<DesktopPrefs>,
     setRailProfile: (name: string, enabled: boolean) =>
       SetRailProfile(name, enabled) as unknown as Promise<DesktopPrefs>,

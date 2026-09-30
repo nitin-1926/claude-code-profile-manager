@@ -112,8 +112,8 @@ func TestSetRailProfileTogglesOne(t *testing.T) {
 	withTempHome(t)
 	var s PrefsService
 
-	if _, err := s.Set(DesktopPrefs{RailMode: RailModeAlways, RailEdge: RailEdgeLeft}); err != nil {
-		t.Fatalf("Set: %v", err)
+	if _, err := s.SetNotch(DesktopPrefs{RailMode: RailModeAlways, RailEdge: RailEdgeLeft}); err != nil {
+		t.Fatalf("SetNotch: %v", err)
 	}
 	got, err := s.SetRailProfile("cin", false)
 	if err != nil {
@@ -132,21 +132,21 @@ func TestSetRailProfileTogglesOne(t *testing.T) {
 	}
 }
 
-// Set returns what was stored, not what was asked for, so the UI cannot end up
+// SetNotch returns what was stored, not what was asked for, so the UI cannot end up
 // rendering a value the file does not hold.
 func TestSetReturnsNormalizedValues(t *testing.T) {
 	withTempHome(t)
 	var s PrefsService
 
-	got, err := s.Set(DesktopPrefs{RailMode: "nonsense", RailEdge: RailEdgeTop})
+	got, err := s.SetNotch(DesktopPrefs{RailMode: "nonsense", RailEdge: RailEdgeTop})
 	if err != nil {
-		t.Fatalf("Set: %v", err)
+		t.Fatalf("SetNotch: %v", err)
 	}
 	if got.RailMode != RailModeHover {
-		t.Errorf("Set returned an unnormalized mode: %q", got.RailMode)
+		t.Errorf("SetNotch returned an unnormalized mode: %q", got.RailMode)
 	}
 	if got.RailEdge != RailEdgeTop {
-		t.Errorf("Set discarded a valid edge: %q", got.RailEdge)
+		t.Errorf("SetNotch discarded a valid edge: %q", got.RailEdge)
 	}
 }
 
@@ -227,22 +227,22 @@ func TestSwitchingTheNotchOffKeepsTheReveal(t *testing.T) {
 	withTempHome(t)
 	var s PrefsService
 
-	on, err := s.Set(DesktopPrefs{RailOn: true, RailMode: RailModeAlways, RailPercent: true})
+	on, err := s.SetNotch(DesktopPrefs{RailOn: true, RailMode: RailModeAlways, RailPercent: true})
 	if err != nil {
-		t.Fatalf("Set: %v", err)
+		t.Fatalf("SetNotch: %v", err)
 	}
 	on.RailOn = false
-	off, err := s.Set(on)
+	off, err := s.SetNotch(on)
 	if err != nil {
-		t.Fatalf("Set off: %v", err)
+		t.Fatalf("SetNotch off: %v", err)
 	}
 	if off.RailOn || off.RailMode != RailModeAlways {
 		t.Errorf("switched off: on=%v mode=%q, want off with always kept", off.RailOn, off.RailMode)
 	}
 	off.RailOn = true
-	back, err := s.Set(off)
+	back, err := s.SetNotch(off)
 	if err != nil {
-		t.Fatalf("Set on: %v", err)
+		t.Fatalf("SetNotch on: %v", err)
 	}
 	if !back.RailOn || back.RailMode != RailModeAlways {
 		t.Errorf("switched back on: on=%v mode=%q, want on with always restored", back.RailOn, back.RailMode)
