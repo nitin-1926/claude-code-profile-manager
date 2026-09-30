@@ -90,10 +90,12 @@ func (s *LimitsService) All() ([]ProfileLimits, error) {
 }
 
 func limitsFor(profile, dir string) ProfileLimits {
-	account, plan := accountAndPlan(dir)
+	account, tier := accountAndPlan(dir)
+	// The reason reads the raw tier; people read the label.
+	plan := PlanLabel(tier)
 	l := usage.LoadLimits(dir)
 	if !l.Available() {
-		out := emptyLimits(profile, reasonForMissing(plan))
+		out := emptyLimits(profile, reasonForMissing(tier))
 		out.Account, out.Plan = account, plan
 		return out
 	}

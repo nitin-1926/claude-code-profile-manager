@@ -49,7 +49,9 @@ func TestLimitsForAvailableProfile(t *testing.T) {
 	if !got.Available || got.Reason != ReasonOK {
 		t.Fatalf("want available with no reason, got available=%v reason=%q", got.Available, got.Reason)
 	}
-	if got.Account != "nitin@rocketium.com" || got.Plan != "default_claude_max_5x" {
+	// Plan is what the notch callout and Notch settings print, so it arrives
+	// as a person reads it — the raw tier used to show through verbatim.
+	if got.Account != "nitin@rocketium.com" || got.Plan != "Max 5x" {
 		t.Errorf("identity not carried through: account=%q plan=%q", got.Account, got.Plan)
 	}
 	if len(got.Windows) != 2 || got.Windows[0].UsedPercentage != 73 {
@@ -74,8 +76,8 @@ func TestLimitsForMissingReadingIsUnavailable(t *testing.T) {
 		if got.Reason != ReasonNoData {
 			t.Errorf("reason = %q, want %q — this profile can report, it just has not yet", got.Reason, ReasonNoData)
 		}
-		if got.Account != "labs@rocketium.com" {
-			t.Errorf("identity should still render for an unavailable profile, got %q", got.Account)
+		if got.Account != "labs@rocketium.com" || got.Plan != "Max 5x" {
+			t.Errorf("identity should still render for an unavailable profile, got %q · %q", got.Account, got.Plan)
 		}
 		if got.Windows == nil {
 			t.Error("windows is nil; marshals to null and breaks .map in the frontend")
