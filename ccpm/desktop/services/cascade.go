@@ -59,13 +59,14 @@ func NewCascade() *CascadeService { return &CascadeService{} }
 
 // Get returns the host→global→profile effective config for a profile.
 func (s *CascadeService) Get(profile string) (*Cascade, error) {
+	empty := &Cascade{Profile: profile, Assets: []CascadeAsset{}, Settings: []CascadeSetting{}}
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, err
+		return empty, err
 	}
 	pc, ok := cfg.Profiles[profile]
 	if !ok {
-		return &Cascade{Profile: profile, Assets: []CascadeAsset{}, Settings: []CascadeSetting{}}, nil
+		return empty, nil
 	}
 
 	home, _ := os.UserHomeDir()
@@ -73,11 +74,12 @@ func (s *CascadeService) Get(profile string) (*Cascade, error) {
 	base, _ := config.BaseDir()
 	globalRoot := filepath.Join(base, "share")
 
+	settings, err := collectSettings(pc.Dir, profile, hostRoot, base)
 	return &Cascade{
 		Profile:  profile,
 		Assets:   collectAssets(pc.Dir, hostRoot, globalRoot, home),
-		Settings: collectSettings(pc.Dir, profile, hostRoot, base),
-	}, nil
+		Settings: settings,
+	}, err
 }
 
 func collectAssets(profileDir, hostRoot, globalRoot, home string) []CascadeAsset {
@@ -147,16 +149,17 @@ func shadows(kind, name string, winner Layer, hostRoot, globalRoot string) []Lay
 	return out
 }
 
-func collectSettings(profileDir, profile, hostRoot, base string) []CascadeSetting {
+func collectSettings(profileDir, profile, hostRoot, base string) ([]CascadeSetting, error) {
 	// the three v1 layers, lowest → highest precedence
 	profileS, _ := settingsmerge.LoadJSON(filepath.Join(profileDir, "settings.json"))
 	hostS, _ := settingsmerge.LoadJSON(filepath.Join(hostRoot, "settings.json"))
 	shareS, _ := settingsmerge.LoadJSON(filepath.Join(base, "share", "settings", profile+".json"))
 
-	// effective values straight from the engine (single source of truth)
+	// effective values straight from the engine (single source of truth). A
+	// merge error is returned, not shown as a profile with no settings.
 	effective, err := settingsmerge.ComputeMerged(profileDir, profile, "")
-	if err != nil || effective == nil {
-		effective = map[string]interface{}{}
+	if err != nil {
+		return []CascadeSetting{}, err
 	}
 
 	keys := map[string]struct{}{}
@@ -196,7 +199,7 @@ func collectSettings(profileDir, profile, hostRoot, base string) []CascadeSettin
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
+	return out, nil
 }
 
 func exists(p string) bool {

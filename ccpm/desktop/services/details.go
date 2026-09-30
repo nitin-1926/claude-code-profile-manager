@@ -4,6 +4,8 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -72,7 +74,9 @@ func (s *DetailsService) Get(profile string) (*Details, error) {
 		return out, nil
 	}
 
-	merged, _ := settingsmerge.ComputeMerged(pc.Dir, profile, "")
+	// A merge error is returned rather than rendered as an empty profile: a
+	// malformed settings.json otherwise reads as "no rules, no plugins".
+	merged, mergeErr := settingsmerge.ComputeMerged(pc.Dir, profile, "")
 	if perms, ok := merged["permissions"].(map[string]interface{}); ok {
 		out.Permissions = PermissionView{
 			Allow: toStrings(perms["allow"]),
@@ -94,23 +98,24 @@ func (s *DetailsService) Get(profile string) (*Details, error) {
 	}
 	sort.Slice(out.Env, func(i, j int) bool { return out.Env[i].Key < out.Env[j].Key })
 
-	if mcp := readMCP(); mcp != nil {
+	mcp, mcpErr := readMCP()
+	if mcp != nil {
 		out.Mcp = mcp
 	}
-	return out, nil
+	return out, errors.Join(mergeErr, mcpErr)
 }
 
 // readMCP shells `ccpm mcp list --json` (read of a write-tool) and parses it.
-func readMCP() []McpView {
+func readMCP() ([]McpView, error) {
 	r, out := execCCPM(20*time.Second, "mcp", "list", "--json")
 	if !r.OK {
-		return nil
+		return nil, fmt.Errorf("listing MCP servers: %s", r.Error)
 	}
 	var list []McpView
-	if json.Unmarshal(out, &list) != nil {
-		return nil
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, fmt.Errorf("listing MCP servers: ccpm mcp list --json printed something that is not JSON: %w", err)
 	}
-	return list
+	return list, nil
 }
 
 // SettingKV is one top-level merged settings key and its JSON value (for the
@@ -141,8 +146,11 @@ func (s *SettingsService) Get(profile string) ([]SettingKV, error) {
 	if !ok {
 		return []SettingKV{}, nil
 	}
-	merged, _ := settingsmerge.ComputeMerged(pc.Dir, profile, "")
+	merged, err := settingsmerge.ComputeMerged(pc.Dir, profile, "")
 	out := []SettingKV{}
+	if err != nil {
+		return out, err
+	}
 	for k, v := range merged {
 		if excludedSettingKeys[k] {
 			continue
