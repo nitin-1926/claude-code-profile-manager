@@ -19,9 +19,9 @@ var (
 )
 
 var removeCmd = &cobra.Command{
-	Use:   "remove <name>",
-	Short: "Delete a profile",
-	Aliases: []string{"rm"},
+	Use:               "remove <name>",
+	Short:             "Delete a profile",
+	Aliases:           []string{"rm"},
 	Args:              cobra.ExactArgs(1),
 	RunE:              runRemove,
 	ValidArgsFunction: completeProfileNames,

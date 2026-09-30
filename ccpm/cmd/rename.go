@@ -18,8 +18,8 @@ import (
 )
 
 var renameCmd = &cobra.Command{
-	Use:   "rename <old-name> <new-name>",
-	Short: "Rename a profile",
+	Use:               "rename <old-name> <new-name>",
+	Short:             "Rename a profile",
 	Args:              cobra.ExactArgs(2),
 	RunE:              runRename,
 	ValidArgsFunction: completeProfileNames,
