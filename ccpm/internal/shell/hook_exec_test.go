@@ -106,8 +106,8 @@ func TestPowerShellHookJoinsOutputAndGuardsSlice(t *testing.T) {
 	}
 }
 
-// TestExportStatementsQuotePerShell: every shell got POSIX '\'' escaping,
-// which is not an escape in PowerShell ('' is) and breaks fish, whose single
+// TestExportStatementsQuotePerShell: every shell got POSIX '\” escaping,
+// which is not an escape in PowerShell (” is) and breaks fish, whose single
 // quotes treat \' and \\ as escapes.
 func TestExportStatementsQuotePerShell(t *testing.T) {
 	dir := `C:\Users\o'brien`
