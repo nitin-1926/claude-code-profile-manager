@@ -52,7 +52,8 @@ func (v *Vault) Backup(profileName string, data []byte) error {
 }
 
 func (v *Vault) Restore(profileName string) ([]byte, error) {
-	key, err := v.Store.GetOrCreateVaultMasterKey()
+	// Get-only: a restore must never mint a master key.
+	key, err := v.Store.GetVaultMasterKey()
 	if err != nil {
 		return nil, fmt.Errorf("getting vault master key: %w", err)
 	}

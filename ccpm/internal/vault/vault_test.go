@@ -3,7 +3,10 @@ package vault
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"testing"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 )
 
 func TestEncryptDecryptRoundtrip(t *testing.T) {
@@ -87,6 +90,35 @@ func TestDecryptTooShort(t *testing.T) {
 	_, err := decrypt([]byte("short"), key)
 	if err == nil {
 		t.Error("decrypt() with too-short data should fail")
+	}
+}
+
+// Restore only reads. If it minted a master key when none is found, a later
+// keychain hiccup-then-recovery would leave two keys in play and backups
+// written under the real one undecryptable.
+func TestRestore_NeverCreatesMasterKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := keystore.NewMemoryStore()
+
+	if _, err := New(store).Restore("work"); !errors.Is(err, keystore.ErrVaultKeyNotFound) {
+		t.Fatalf("Restore with no master key: err = %v, want ErrVaultKeyNotFound", err)
+	}
+	if _, err := store.GetVaultMasterKey(); !errors.Is(err, keystore.ErrVaultKeyNotFound) {
+		t.Fatalf("Restore created a vault master key (GetVaultMasterKey err = %v)", err)
+	}
+}
+
+func TestBackupRestoreRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	v := New(keystore.NewMemoryStore())
+	for _, payload := range []string{"first", "second"} {
+		if err := v.Backup("work", []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := v.Restore("work")
+		if err != nil || string(got) != payload {
+			t.Fatalf("Restore = %q, %v; want %q", got, err, payload)
+		}
 	}
 }
 
