@@ -122,19 +122,6 @@ func groupBlocks(entries []entry, now time.Time) []Block {
 	return blocks
 }
 
-// ActiveBlock returns the active block from LoadBlocks, or nil if none is active.
-func ActiveBlock(profileDir string, now time.Time) (*Block, error) {
-	blocks, err := LoadBlocks(profileDir, now)
-	if err != nil {
-		return nil, err
-	}
-	if n := len(blocks); n > 0 && blocks[n-1].IsActive {
-		b := blocks[n-1]
-		return &b, nil
-	}
-	return nil, nil
-}
-
 type blockAccum struct {
 	start  time.Time
 	lastTS time.Time

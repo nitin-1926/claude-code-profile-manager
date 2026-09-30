@@ -5,9 +5,9 @@
 // per-project / per-session breakdowns, and a contribution-style heatmap
 // without re-parsing every transcript on each run.
 //
-// All token counts are raw counts only — this package deliberately computes no
-// dollar cost (Claude Code transcripts carry no price, and a subscription's
-// real cost is unrelated to API-equivalent pricing).
+// The store holds raw token counts only. Dollar figures are derived at render
+// time from pricing.go's API list prices — an API-equivalent estimate, since
+// transcripts carry no price and a subscription's real cost is unrelated.
 package usage
 
 import (
@@ -29,6 +29,9 @@ import (
 // (Claude appends intermediate usage snapshots then a final larger one; first-
 // wins undercounted). Bumping forces a clean re-ingest so existing stores adopt
 // the corrected counts.
+// v4: FileState's single last-message id became Recent, the trailing dedup keys
+// with their tokens, so a request straddling a sync boundary is counted once
+// and can still adopt a larger final snapshot.
 const storeVersion = 4
 
 // Tokens is the four-way token tally Claude Code reports per assistant message.
@@ -64,9 +67,10 @@ func (t Tokens) Minus(o Tokens) Tokens {
 }
 
 // FileState is the ingest cursor for one transcript file. Offset is the number
-// of bytes already folded (always the end of a complete line). LastMsgID is the
-// last message.id counted from this file, used to dedupe a request whose
-// duplicate lines straddle the offset boundary between two ingest runs.
+// of bytes already folded (always the end of a complete line). Recent is the
+// trailing window of dedup keys counted from this file, used to dedupe a
+// request whose duplicate lines straddle the offset boundary between two
+// ingest runs.
 type FileState struct {
 	Offset  int64        `json:"offset"`
 	Size    int64        `json:"size"`

@@ -166,10 +166,12 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		return prev, rerr
 	}
 
-	// ponytail: bounded to the last recentWindow keys. Claude writes a response's
-	// duplicate lines adjacently, so only keys near the tail can straddle the
-	// next boundary; persisting every key ever seen would grow state.json without
-	// limit. Raise the window if transcripts ever interleave more widely.
+	// ponytail: bounded to the last recentWindow keys; persisting every key ever
+	// seen would grow state.json without limit. A response's duplicate lines are
+	// USUALLY near each other, but not always — a duplicate has been observed
+	// more than 128 keys after its first line. If a sync boundary falls between
+	// such a pair, the late duplicate finds no seeded key and is counted a
+	// second time. Raise the window if that ever shows up in totals.
 	if len(order) > recentWindow {
 		order = order[len(order)-recentWindow:]
 	}
