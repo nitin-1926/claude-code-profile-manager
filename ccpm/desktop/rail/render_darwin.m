@@ -427,6 +427,22 @@ void ccpmNotchStopWatching(void) {
   gPollTimer = nil;
   ccpmCancel(&gFoldWork);
   ccpmCancel(&gCardWork);
+  // The panel is about to go. Drop every layer and state flag tied to it, so a
+  // later Start builds fresh ones on the new panel: EnsureLayers returns early
+  // while gBody is set, which left a restarted notch empty, its layers still
+  // attached to the dead panel.
+  [gBody removeFromSuperlayer];
+  [gContent removeFromSuperlayer];
+  [gCard removeFromSuperlayer];
+  gBody = nil;
+  gClip = nil;
+  gContent = nil;
+  gCard = nil;
+  gCardFor = -1;
+  gCellLayers = nil;
+  gLastFraction = nil;
+  gHovered = -1;
+  gExpanded = NO;
 }
 
 // ---- Layers
