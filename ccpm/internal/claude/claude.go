@@ -116,6 +116,13 @@ func Spawn(profileDir string, extraEnv ...string) error {
 // overrides (extraEnv). CLAUDE_CONFIG_DIR and ANTHROPIC_API_KEY always come
 // from ccpm so a stray value in the parent or profile env can't redirect the
 // launch at the ccpm layer.
+//
+// Each layer REPLACES the keys it sets rather than appending a duplicate:
+// syscall.Exec hands the slice to the child verbatim, and Node (npm-installed
+// claude) reads the first occurrence of a key while Bun reads the last. An
+// appended duplicate meant `ccpm run B` from a shell with CLAUDE_CONFIG_DIR
+// already exported (after `ccpm use A`, or inside a Claude Bash tool) launched
+// on A's directory.
 func execEnv(profileDir, apiKey string, profileEnv, extraEnv map[string]string) (bin, absProfileDir string, env []string, err error) {
 	bin, err = FindBinary()
 	if err != nil {
@@ -127,23 +134,30 @@ func execEnv(profileDir, apiKey string, profileEnv, extraEnv map[string]string) 
 		return "", "", nil, fmt.Errorf("resolving profile path: %w", err)
 	}
 
-	env = os.Environ()
-	env = appendEnvMap(env, profileEnv)
-	env = append(env, fmt.Sprintf("CLAUDE_CONFIG_DIR=%s", absProfileDir))
+	ccpmEnv := map[string]string{"CLAUDE_CONFIG_DIR": absProfileDir}
 	if apiKey != "" {
-		env = append(env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", apiKey))
+		ccpmEnv["ANTHROPIC_API_KEY"] = apiKey
 	}
-	env = appendEnvMap(env, extraEnv)
+	env = os.Environ()
+	env = overrideEnv(env, profileEnv)
+	env = overrideEnv(env, ccpmEnv)
+	env = overrideEnv(env, extraEnv)
 	return bin, absProfileDir, env, nil
 }
 
-// appendEnvMap writes KEY=VALUE pairs to the end of env in a stable order so
-// test output (and `ccpm run -v` debug traces) stay deterministic. Later
-// entries beat earlier ones because Go's exec path honors the last occurrence
-// of a key.
-func appendEnvMap(env []string, m map[string]string) []string {
+// overrideEnv drops every entry of env whose key is in m, then appends m's
+// KEY=VALUE pairs in sorted order so test output (and `ccpm run -v` debug
+// traces) stay deterministic. The result holds each of m's keys exactly once.
+func overrideEnv(env []string, m map[string]string) []string {
 	if len(m) == 0 {
 		return env
+	}
+	out := make([]string, 0, len(env)+len(m))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !envHasKey(m, k) {
+			out = append(out, kv)
+		}
 	}
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -151,9 +165,26 @@ func appendEnvMap(env []string, m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		env = append(env, fmt.Sprintf("%s=%s", k, m[k]))
+		out = append(out, fmt.Sprintf("%s=%s", k, m[k]))
 	}
-	return env
+	return out
+}
+
+// envHasKey reports whether m sets key. Windows env keys are
+// case-insensitive (Path == PATH), so the match is too.
+func envHasKey(m map[string]string, key string) bool {
+	if _, ok := m[key]; ok {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	for k := range m {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // Version runs `<bin> --version` and returns the first line of output,
