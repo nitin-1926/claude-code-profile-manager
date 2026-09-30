@@ -5,7 +5,7 @@ import { useCommand } from '@/lib/useCommand'
 import type { Details } from '@/types'
 import { ConfirmModal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
-import { Plus, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react'
 
 const MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions']
 const BUCKETS = [
@@ -23,6 +23,8 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
   const [draft, setDraft] = useState<Record<string, string>>({ allow: '', ask: '', deny: '' })
   const [envKey, setEnvKey] = useState('')
   const [envVal, setEnvVal] = useState('')
+  // Env values are often tokens and API keys: masked until revealed per row.
+  const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [pending, setPending] = useState<{ kind: 'rule' | 'env'; name: string } | null>(null)
 
   // Drafts are cleared only on success, so a rejected rule stays editable.
@@ -39,6 +41,14 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
       setEnvKey('')
       setEnvVal('')
     }
+  }
+
+  function toggleReveal(key: string) {
+    setRevealed((s) => {
+      const next = new Set(s)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
   }
 
   // Surface the failure instead of an indefinite "Loading…" — useLive
@@ -158,7 +168,18 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
               className={cn('group flex items-center gap-3 px-4 py-2', i < env.length - 1 && 'border-b border-border')}
             >
               <span className="font-mono text-xs text-foreground">{e.key}</span>
-              <span className="truncate font-mono text-xs text-muted-foreground">{e.value}</span>
+              <span className="truncate font-mono text-xs text-muted-foreground">
+                {revealed.has(e.key) ? e.value : '••••••••'}
+              </span>
+              <button
+                title={revealed.has(e.key) ? 'Hide value' : 'Show value'}
+                aria-label={`${revealed.has(e.key) ? 'Hide' : 'Show'} value of ${e.key}`}
+                aria-pressed={revealed.has(e.key)}
+                onClick={() => toggleReveal(e.key)}
+                className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {revealed.has(e.key) ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              </button>
               <button
                 disabled={busy}
                 title="Unset"
