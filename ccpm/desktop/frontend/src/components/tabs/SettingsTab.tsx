@@ -171,7 +171,6 @@ function NewKeyModal({
     <Modal open={open} onClose={onCancel} title="New setting">
       <label className="text-xs text-muted-foreground">Key (dot notation, e.g. statusLine.type)</label>
       <input
-        autoFocus
         value={key}
         onChange={(e) => setKey(e.target.value)}
         placeholder="theme"

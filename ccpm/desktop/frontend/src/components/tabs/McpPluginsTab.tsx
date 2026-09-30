@@ -183,7 +183,6 @@ function OneFieldModal({
     <Modal open={open} onClose={onCancel} title={title}>
       <label className="text-xs text-muted-foreground">{label}</label>
       <input
-        autoFocus
         value={v}
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && ok && onConfirm(v.trim())}
@@ -219,7 +218,6 @@ function TwoFieldModal({
     <Modal open={open} onClose={onCancel} title={title}>
       <label className="text-xs text-muted-foreground">{f1.label}</label>
       <input
-        autoFocus
         value={a}
         onChange={(e) => setA(e.target.value)}
         placeholder={f1.placeholder}
