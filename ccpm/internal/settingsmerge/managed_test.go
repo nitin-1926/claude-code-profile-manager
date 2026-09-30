@@ -85,6 +85,25 @@ func TestManagedMCP_StripsServers(t *testing.T) {
 	}
 }
 
+// TestManagedSettingsDirForOS pins the per-OS system directory to the paths
+// Claude Code documents. The Windows one must be absolute: filepath.Join("C:",
+// ...) yields the drive-relative "C:ProgramData\...", which resolves against
+// the current directory on C: and never loads. Claude Code also no longer
+// reads the legacy C:\ProgramData\ClaudeCode location.
+func TestManagedSettingsDirForOS(t *testing.T) {
+	cases := map[string]string{
+		"darwin":  "/Library/Application Support/ClaudeCode",
+		"linux":   "/etc/claude-code",
+		"windows": `C:\Program Files\ClaudeCode`,
+		"plan9":   "",
+	}
+	for goos, want := range cases {
+		if got := managedSettingsDirFor(goos); got != want {
+			t.Errorf("managedSettingsDirFor(%q) = %q, want %q", goos, got, want)
+		}
+	}
+}
+
 func writeJSONForTest(t *testing.T, path string, data map[string]interface{}) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
