@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
-import type { CmdResult, Details } from '@/types'
-import { useToast } from '@/components/ui/Toast'
+import { useCommand } from '@/lib/useCommand'
+import type { Details } from '@/types'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/Switch'
@@ -10,26 +10,12 @@ import { Plug, Plus, Puzzle, Trash2 } from 'lucide-react'
 
 export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
   const [data, reload, error] = useLive<Details>(() => api.details.get(profile), [profile])
-  const [busy, setBusy] = useState(false)
-  const [addingMcp, setAddingMcp] = useState(false)
-  const [addingPlugin, setAddingPlugin] = useState(false)
-  const toast = useToast()
-
-  function report(action: string, r: CmdResult) {
-    if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-    else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
+  const { busy, run } = useCommand(() => {
     reload()
     onMutated()
-  }
-
-  async function withBusy(fn: () => Promise<void>) {
-    setBusy(true)
-    try {
-      await fn()
-    } finally {
-      setBusy(false)
-    }
-  }
+  })
+  const [addingMcp, setAddingMcp] = useState(false)
+  const [addingPlugin, setAddingPlugin] = useState(false)
 
   // Surface the failure instead of an indefinite "Loading…" — useLive
   // reports fetch errors and every consumer must render them.
@@ -69,7 +55,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
               <RemoveBtn
                 busy={busy}
                 title={`Remove ${m.name} from this profile`}
-                onClick={() => withBusy(async () => report(`Remove ${m.name}`, await api.mutate.removeMCP(m.name, profile)))}
+                onClick={() => run(`Remove ${m.name}`, () => api.mutate.removeMCP(m.name, profile))}
               />
             </div>
           ))}
@@ -102,15 +88,13 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
                   on={p.enabled}
                   disabled={busy}
                   onClick={() =>
-                    withBusy(async () =>
-                      report(`${p.enabled ? 'Disable' : 'Enable'} ${p.name}`, await api.mutate.togglePlugin(p.name, !p.enabled, profile)),
-                    )
+                    run(`${p.enabled ? 'Disable' : 'Enable'} ${p.name}`, () => api.mutate.togglePlugin(p.name, !p.enabled, profile))
                   }
                 />
                 <RemoveBtn
                   busy={busy}
                   title={`Uninstall ${p.name}`}
-                  onClick={() => withBusy(async () => report(`Uninstall ${p.name}`, await api.mutate.removePlugin(p.name, profile)))}
+                  onClick={() => run(`Uninstall ${p.name}`, () => api.mutate.removePlugin(p.name, profile))}
                 />
               </div>
             </div>
@@ -127,7 +111,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
         onCancel={() => setAddingMcp(false)}
         onConfirm={async (name, command) => {
           setAddingMcp(false)
-          await withBusy(async () => report(`Add MCP ${name}`, await api.mutate.addStdioMCP(name, command, profile)))
+          await run(`Add MCP ${name}`, () => api.mutate.addStdioMCP(name, command, profile))
         }}
       />
       <OneFieldModal
@@ -139,7 +123,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
         onCancel={() => setAddingPlugin(false)}
         onConfirm={async (plugin) => {
           setAddingPlugin(false)
-          await withBusy(async () => report(`Install ${plugin}`, await api.mutate.installPlugin(plugin, profile)))
+          await run(`Install ${plugin}`, () => api.mutate.installPlugin(plugin, profile))
         }}
       />
     </div>

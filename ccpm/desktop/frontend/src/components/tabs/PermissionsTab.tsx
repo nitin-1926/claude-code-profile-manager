@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
-import type { CmdResult, Details } from '@/types'
-import { useToast } from '@/components/ui/Toast'
+import { useCommand } from '@/lib/useCommand'
+import type { Details } from '@/types'
 import { cn } from '@/lib/utils'
 import { Plus, Trash2 } from 'lucide-react'
 
@@ -15,25 +15,27 @@ const BUCKETS = [
 
 export function PermissionsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
   const [data, reload, error] = useLive<Details>(() => api.details.get(profile), [profile])
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useCommand(() => {
+    reload()
+    onMutated()
+  })
   const [draft, setDraft] = useState<Record<string, string>>({ allow: '', ask: '', deny: '' })
   const [envKey, setEnvKey] = useState('')
   const [envVal, setEnvVal] = useState('')
-  const toast = useToast()
 
-  function report(action: string, r: CmdResult) {
-    if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-    else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
-    reload()
-    onMutated()
+  // Drafts are cleared only on success, so a rejected rule stays editable.
+  async function addRule(bucket: (typeof BUCKETS)[number]) {
+    const rule = draft[bucket.id].trim()
+    if (!rule) return
+    if (await run(`Add ${bucket.label} rule`, () => api.mutate.addPermission(bucket.id, rule, profile)))
+      setDraft((d) => ({ ...d, [bucket.id]: '' }))
   }
 
-  async function withBusy(fn: () => Promise<void>) {
-    setBusy(true)
-    try {
-      await fn()
-    } finally {
-      setBusy(false)
+  async function setEnv() {
+    const kv = `${envKey.trim()}=${envVal.trim()}`
+    if (await run('Set env var', () => api.mutate.setEnv(kv, profile))) {
+      setEnvKey('')
+      setEnvVal('')
     }
   }
 
@@ -59,7 +61,7 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
             <button
               key={m}
               disabled={busy}
-              onClick={() => withBusy(async () => report(`Set mode ${m}`, await api.mutate.setPermissionMode(m, profile)))}
+              onClick={() => run(`Set mode ${m}`, () => api.mutate.setPermissionMode(m, profile))}
               className={cn(
                 'cursor-pointer rounded-md border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50',
                 p.mode === m
@@ -85,24 +87,13 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
               <input
                 value={draft[b.id]}
                 onChange={(e) => setDraft((d) => ({ ...d, [b.id]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && draft[b.id].trim())
-                    withBusy(async () => {
-                      report(`Add ${b.label} rule`, await api.mutate.addPermission(b.id, draft[b.id].trim(), profile))
-                      setDraft((d) => ({ ...d, [b.id]: '' }))
-                    })
-                }}
+                onKeyDown={(e) => e.key === 'Enter' && !busy && void addRule(b)}
                 placeholder={`e.g. Bash(git status:*)`}
                 className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <button
                 disabled={busy || !draft[b.id].trim()}
-                onClick={() =>
-                  withBusy(async () => {
-                    report(`Add ${b.label} rule`, await api.mutate.addPermission(b.id, draft[b.id].trim(), profile))
-                    setDraft((d) => ({ ...d, [b.id]: '' }))
-                  })
-                }
+                onClick={() => void addRule(b)}
                 className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
               >
                 <Plus className="size-3" /> Add
@@ -119,7 +110,7 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
                   <button
                     disabled={busy}
                     title="Remove rule"
-                    onClick={() => withBusy(async () => report('Remove rule', await api.mutate.removePermission(rule, profile)))}
+                    onClick={() => run('Remove rule', () => api.mutate.removePermission(rule, profile))}
                     className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
                   >
                     <Trash2 className="size-3.5" />
@@ -151,13 +142,7 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
           />
           <button
             disabled={busy || !envKey.trim() || !envVal.trim()}
-            onClick={() =>
-              withBusy(async () => {
-                report('Set env var', await api.mutate.setEnv(`${envKey.trim()}=${envVal.trim()}`, profile))
-                setEnvKey('')
-                setEnvVal('')
-              })
-            }
+            onClick={() => void setEnv()}
             className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
           >
             <Plus className="size-3" /> Set
@@ -175,7 +160,7 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
               <button
                 disabled={busy}
                 title="Unset"
-                onClick={() => withBusy(async () => report(`Unset ${e.key}`, await api.mutate.unsetEnv(e.key, profile)))}
+                onClick={() => run(`Unset ${e.key}`, () => api.mutate.unsetEnv(e.key, profile))}
                 className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
               >
                 <Trash2 className="size-3.5" />
