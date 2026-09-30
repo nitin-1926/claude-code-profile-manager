@@ -30,26 +30,57 @@ func (a *App) startWatcher() {
 
 	home, _ := os.UserHomeDir()
 	base, _ := config.BaseDir()
-	for _, root := range []string{base, filepath.Join(home, ".claude")} {
-		addTree(w, root, 3)
+	a.watchRoots = []string{base, filepath.Join(home, ".claude")}
+	for _, root := range a.watchRoots {
+		addTree(w, a.watchRoots, root)
 	}
 	go a.watchLoop()
 }
 
-// addTree watches root and its subdirectories up to maxDepth, skipping noisy /
-// heavy directories. fsnotify isn't recursive, so we enumerate up front and
-// add new directories lazily in the loop.
-func addTree(w *fsnotify.Watcher, root string, maxDepth int) {
-	base := strings.Count(root, string(os.PathSeparator))
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+// watchDepth is how many levels below a root are watched.
+const watchDepth = 3
+
+// skipDirs are noisy / heavy directories never watched, at any depth.
+var skipDirs = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+	"projects":     true, // transcripts, huge + irrelevant to config
+}
+
+// shouldWatch reports whether directory p belongs in the watch set: under one
+// of roots, within watchDepth of it, and not inside a skipped directory.
+func shouldWatch(roots []string, p string) bool {
+	for _, root := range roots {
+		rel, err := filepath.Rel(root, p)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			continue
+		}
+		if rel == "." {
+			return true
+		}
+		parts := strings.Split(rel, string(os.PathSeparator))
+		if len(parts) > watchDepth {
+			return false
+		}
+		for _, part := range parts {
+			if skipDirs[part] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// addTree watches start and every directory beneath it that shouldWatch
+// admits. fsnotify isn't recursive, so this runs over each root up front and
+// again, lazily, for every directory created while the app runs.
+func addTree(w *fsnotify.Watcher, roots []string, start string) {
+	_ = filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return nil
 		}
-		if strings.Count(p, string(os.PathSeparator))-base > maxDepth {
-			return filepath.SkipDir
-		}
-		switch d.Name() {
-		case ".git", "node_modules", "projects": // projects = transcripts, huge + irrelevant to config
+		if !shouldWatch(roots, p) {
 			return filepath.SkipDir
 		}
 		_ = w.Add(p)
@@ -75,9 +106,9 @@ func (a *App) watchLoop() {
 			}
 			// pick up newly created directories so future changes inside them fire too
 			if ev.Op&fsnotify.Create != 0 {
-				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-					_ = a.watcher.Add(ev.Name)
-				}
+				// through the same filter as the initial walk, or a profile created
+				// while the app runs gets its projects/ watched.
+				addTree(a.watcher, a.watchRoots, ev.Name)
 			}
 			if timer != nil {
 				timer.Stop()

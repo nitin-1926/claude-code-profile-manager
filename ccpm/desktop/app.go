@@ -19,8 +19,11 @@ import (
 type App struct {
 	ctx     context.Context
 	watcher *fsnotify.Watcher
-	updater *services.Updater
-	rail    *rail.Controller
+	// watchRoots are the trees the watcher covers; lazily added directories
+	// are measured against them for depth and the skip list.
+	watchRoots []string
+	updater    *services.Updater
+	rail       *rail.Controller
 }
 
 // NewApp creates a new App application struct
