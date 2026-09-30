@@ -5,7 +5,7 @@ Thanks for your interest in contributing to ccpm. This document covers the basic
 ## Getting started
 
 1. Fork the repo and clone your fork
-2. Install Go 1.22+ and Node.js 20+
+2. Install Go 1.25+ and Node.js 20+
 3. Build the CLI:
 
 ```bash
@@ -36,7 +36,7 @@ scripts/       Installation scripts
 
 ## Before making changes
 
-Two documents are load-bearing for non-trivial work:
+One document is load-bearing for non-trivial work:
 
 - **[AGENTS.md](AGENTS.md)** — architectural briefing: core mental model, directory layout, merge precedence, invariants that must hold. Read this before changing anything that crosses packages or touches the merge stack.
 

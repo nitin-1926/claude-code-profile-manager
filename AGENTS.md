@@ -153,7 +153,7 @@ Three categories — any new MCP-related feature must document which it targets.
 | `ccpm add`                                | Create profile, optionally run import wizard, then auth                 | Writes profile dir, keychain entry, manifest               |
 | `ccpm run`                                | Exec `claude` with `CLAUDE_CONFIG_DIR` set                              | Replaces current process on Unix                           |
 | `ccpm use`                                | Print `export CLAUDE_CONFIG_DIR=...` for shell hook                     | Requires `ccpm shell-init` output in rc file               |
-| `ccpm remove`                             | Delete profile dir, keychain entry, manifest references                 | Irreversible; vault backup is preserved                    |
+| `ccpm remove`                             | Delete profile dir, keychain entry, manifest references                 | Irreversible; also deletes the profile's vault backup      |
 | `ccpm list` / `ccpm status`               | Read-only inventory                                                     | None                                                       |
 | `ccpm doctor`                             | Check env, auth, claude version, diff vs `~/.claude`, symlink integrity | None (warnings never fail)                                 |
 | `ccpm import default`                     | Copy/link targets from `~/.claude`                                      | Writes to share and profile dirs                           |
