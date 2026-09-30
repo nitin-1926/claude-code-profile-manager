@@ -3,7 +3,7 @@ import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
 import { useCommand } from '@/lib/useCommand'
 import type { Details } from '@/types'
-import { Modal } from '@/components/ui/Modal'
+import { ConfirmModal, Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/Switch'
 import { Plug, Plus, Puzzle, Trash2 } from 'lucide-react'
@@ -16,6 +16,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
   })
   const [addingMcp, setAddingMcp] = useState(false)
   const [addingPlugin, setAddingPlugin] = useState(false)
+  const [pending, setPending] = useState<{ kind: 'mcp' | 'plugin'; name: string } | null>(null)
 
   // Surface the failure instead of an indefinite "Loading…" — useLive
   // reports fetch errors and every consumer must render them.
@@ -55,7 +56,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
               <RemoveBtn
                 busy={busy}
                 title={`Remove ${m.name} from this profile`}
-                onClick={() => run(`Remove ${m.name}`, () => api.mutate.removeMCP(m.name, profile))}
+                onClick={() => setPending({ kind: 'mcp', name: m.name })}
               />
             </div>
           ))}
@@ -94,7 +95,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
                 <RemoveBtn
                   busy={busy}
                   title={`Uninstall ${p.name}`}
-                  onClick={() => run(`Uninstall ${p.name}`, () => api.mutate.removePlugin(p.name, profile))}
+                  onClick={() => setPending({ kind: 'plugin', name: p.name })}
                 />
               </div>
             </div>
@@ -126,6 +127,23 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
           await run(`Install ${plugin}`, () => api.mutate.installPlugin(plugin, profile))
         }}
       />
+      <ConfirmModal
+        open={pending !== null}
+        title={pending ? (pending.kind === 'mcp' ? `Remove "${pending.name}"?` : `Uninstall "${pending.name}"?`) : ''}
+        message={
+          pending?.kind === 'plugin'
+            ? 'This uninstalls the plugin from this profile. You can install it again later.'
+            : 'This removes the MCP server from this profile. You can add it back later.'
+        }
+        confirmLabel={pending?.kind === 'plugin' ? 'Uninstall' : 'Remove'}
+        onCancel={() => setPending(null)}
+        onConfirm={async () => {
+          const p = pending
+          setPending(null)
+          if (p?.kind === 'mcp') await run(`Remove ${p.name}`, () => api.mutate.removeMCP(p.name, profile))
+          else if (p) await run(`Uninstall ${p.name}`, () => api.mutate.removePlugin(p.name, profile))
+        }}
+      />
     </div>
   )
 }
@@ -136,7 +154,7 @@ function RemoveBtn({ busy, title, onClick }: { busy: boolean; title: string; onC
       disabled={busy}
       title={title}
       onClick={onClick}
-      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:opacity-50"
     >
       <Trash2 className="size-3.5" />
     </button>

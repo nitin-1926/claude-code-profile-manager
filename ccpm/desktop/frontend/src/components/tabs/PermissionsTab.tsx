@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
 import { useCommand } from '@/lib/useCommand'
 import type { Details } from '@/types'
+import { ConfirmModal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { Plus, Trash2 } from 'lucide-react'
 
@@ -22,6 +23,7 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
   const [draft, setDraft] = useState<Record<string, string>>({ allow: '', ask: '', deny: '' })
   const [envKey, setEnvKey] = useState('')
   const [envVal, setEnvVal] = useState('')
+  const [pending, setPending] = useState<{ kind: 'rule' | 'env'; name: string } | null>(null)
 
   // Drafts are cleared only on success, so a rejected rule stays editable.
   async function addRule(bucket: (typeof BUCKETS)[number]) {
@@ -110,8 +112,8 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
                   <button
                     disabled={busy}
                     title="Remove rule"
-                    onClick={() => run('Remove rule', () => api.mutate.removePermission(rule, profile))}
-                    className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
+                    onClick={() => setPending({ kind: 'rule', name: rule })}
+                    className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:opacity-50"
                   >
                     <Trash2 className="size-3.5" />
                   </button>
@@ -160,8 +162,8 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
               <button
                 disabled={busy}
                 title="Unset"
-                onClick={() => run(`Unset ${e.key}`, () => api.mutate.unsetEnv(e.key, profile))}
-                className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
+                onClick={() => setPending({ kind: 'env', name: e.key })}
+                className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:opacity-50"
               >
                 <Trash2 className="size-3.5" />
               </button>
@@ -169,6 +171,24 @@ export function PermissionsTab({ profile, onMutated }: { profile: string; onMuta
           ))}
         </div>
       </section>
+
+      <ConfirmModal
+        open={pending !== null}
+        title={pending ? (pending.kind === 'rule' ? `Remove rule "${pending.name}"?` : `Unset ${pending.name}?`) : ''}
+        message={
+          pending?.kind === 'env'
+            ? "This removes the variable from this profile's settings."
+            : "This removes the rule from this profile's permissions."
+        }
+        confirmLabel={pending?.kind === 'env' ? 'Unset' : 'Remove'}
+        onCancel={() => setPending(null)}
+        onConfirm={async () => {
+          const p = pending
+          setPending(null)
+          if (p?.kind === 'rule') await run('Remove rule', () => api.mutate.removePermission(p.name, profile))
+          else if (p) await run(`Unset ${p.name}`, () => api.mutate.unsetEnv(p.name, profile))
+        }}
+      />
     </div>
   )
 }
