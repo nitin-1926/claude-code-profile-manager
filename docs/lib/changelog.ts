@@ -34,8 +34,63 @@ export const CHANGELOG: ChangelogSeries[] = [
   {
     series: "0.5.x",
     summary:
-      "Profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
+      "Session history with transcript reading and search, profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
     releases: [
+      {
+        date: "2026-09-24",
+        title: "History: honest failures and accurate counts",
+        categories: ["Fixed"],
+        bullets: [
+          "A transcript the reader cannot open now says why, with a Retry, instead of rendering as an empty conversation. A pruned file, a permission error and a genuinely empty session all looked identical before.",
+          "Opening a search hit in a transcript written since the tab last listed — a subagent file a running session just spawned — used to show a blank page. The session index is now rebuilt on demand rather than the hit being refused.",
+          "Search no longer claims a result was truncated when it was complete. A session holding exactly its per-session match budget reported \"3+ matches, results truncated\" for a result that had found everything.",
+          "Search reports how many transcripts it skipped because a session had already filled its budget. It previously said \"truncated\" while reporting zero skipped, with whole subagent transcripts left unread.",
+          "`ccpm sessions list` now finds sessions in directories containing emoji or other non-BMP characters. Claude Code encodes those paths per UTF-16 unit, so its directory name carries two dashes where ccpm wrote one, and the lookup silently matched nothing.",
+          "Opening the History tab twice at once can no longer drop a just-added session from the list, and the tab no longer triggers its own refresh by writing its index inside the watched directory.",
+          "Search now finds text inside code Claude wrote even when it contains quotes or backslashes: `\"use strict\"` or `C:\\Users` inside a Write or Edit used to match nothing, because tool inputs were searched in their escaped JSON form.",
+          "The reader's Next and Previous prompt buttons now step to the right prompt from anywhere, including from a search hit on a tool call, where they used to jump the wrong way. They also work across long stretches of tool calls with no prompts, and at the last prompt they stay put instead of leaving you on the final page.",
+          "Subagent transcripts opened from a search hit showed an empty page; their turns now show, and a new toggle shows or hides subagent turns anywhere.",
+          "Going Back from the reader to your search results keeps them and your scroll position, instead of re-running the whole search.",
+          "Saving the global status line layout no longer leaves the profile editor showing changes you did not make.",
+        ],
+      },
+      {
+        date: "2026-09-13",
+        title: "Status line: choose your own segments",
+        categories: ["Added"],
+        bullets: [
+          "`ccpm statusline configure` picks which of the nine segments the status line shows, and on which row. It asks for row 1, then row 2 from what is left, and switches off anything you do not pick — then prints the result against sample data so you can see it before starting a session. You are offered it automatically the first time you run `ccpm config set statusline true`.",
+          "Layouts have two scopes: a **global default** for every profile, and a **per-profile override** that wins over it. `ccpm statusline configure --profile work` sets one; `--reset --profile work` drops it again.",
+          "The desktop app's **Settings** tab has the same controls — a row per segment with Off / Row 1 / Row 2, a live preview of both rows, and a switch between the global default and this profile's override.",
+          "Scripts can skip the prompts: `--row1`/`--row2`/`--off` take comma-separated keys and must name all nine between them. An incomplete list is refused rather than filled in, because a segment named nowhere is treated as newly introduced — that is how a layout saved today picks up a segment added in a later release instead of silently never showing it.",
+          "Switching a segment on never invents data: the 5h and 7d windows still show nothing on an API-key profile, because Claude Code sends no rate limits for one. Switching `branch` off also stops ccpm reading `.git/HEAD` on every assistant message.",
+          "Order within a row is yours as well — move-up/move-down controls in the desktop app, and `--row1 a,b,c` renders in the order you give. The interactive picker keeps an order you already set instead of re-sorting it.",
+          "Fixed: every ccpm command printed its error message twice, once from cobra and once from ccpm. Now once.",
+        ],
+      },
+      {
+        date: "2026-09-06",
+        title: "Status line: two rows, with repo, branch and effort",
+        categories: ["Improved"],
+        bullets: [
+          "The in-TUI status line is now **two rows** instead of one. Row 1 is the session — profile, repo (with the subdirectory you are in), git branch, model, context used. Row 2 is the budget — reasoning effort, the 5h and 7d usage windows with the date each renews, session cost. The split is by what you consult them for: row 1 is what you check when you switch windows and need to know you are in the right place, row 2 is the separate question of how much is left. It also makes room for four fields the single line had no space for.",
+          "Reset times now give the day and date when the renewal is not today. A bare \"08:25\" on the seven-day window read as this morning when it was four days out, and a bare weekday still left you counting forward to work out the date.",
+          "The branch is read straight from `.git/HEAD` rather than by shelling out to git — this runs on every assistant message, and a subprocess each time is exactly the cost Claude Code's own docs warn about.",
+        ],
+      },
+      {
+        date: "2026-09-04",
+        title: "History: browse, read and search your past sessions",
+        categories: ["Added", "Fixed"],
+        bullets: [
+          "New **History** tab in the desktop app. Every session the profile has run, listed newest first with a real title (Claude Code's own generated one where it exists, otherwise your opening prompt), the project and branch, the model, response and turn counts, tokens, and an estimated cost.",
+          "Click a session to read the actual conversation. Tool calls fold to a one-line chip you can expand; thinking blocks and subagent turns sit behind toggles. Long sessions page rather than loading whole — the largest transcript on a real machine is 77 MB and decodes to over ten thousand turns.",
+          "Full-text search across every transcript in a profile, with no index to build or keep fresh. Results are snippets grouped by session, newest first; clicking one opens the reader at that exact message, expanding whatever chip it is hiding inside. Search covers your prompts, Claude's replies, the commands and file paths it ran, and the work its subagents did — which is roughly three quarters of what a profile actually contains. Tool *output* is one toggle away, and is excluded by default because that is where pasted credentials tend to end up.",
+          "Resume any listed session in Terminal, in the directory it was originally started from.",
+          "The Usage tab's \"Recent sessions\" list now points at History instead of duplicating it.",
+          "Fixed `ccpm sessions list <profile>`: scoped to the current project it reported no sessions, because the directory-name encoder dropped a leading dash and collapsed repeated separators, so it never matched what Claude Code actually writes on disk. It now matches, and `--all` is no longer the only way to see anything.",
+        ],
+      },
       {
         date: "2026-07-08",
         title: "CCPM Desktop: download for macOS",

@@ -86,7 +86,7 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 
 A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
 
-It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings**, **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings**, **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
 
 <p align="center">
   <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
@@ -110,7 +110,13 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
 
 Grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
 
-Open the `.dmg` and drag **CCPM** into **Applications**. The app is distributed unsigned (no Apple Developer account), so on first launch macOS Gatekeeper asks you to approve it once — **right-click the app → Open** (or **System Settings → Privacy & Security → "Open Anyway"**). It opens normally after that.
+Open the `.dmg` and drag **CCPM** into **Applications**. The app is not notarized yet (that needs an Apple Developer account), and on **macOS 15 Sequoia and later** Gatekeeper no longer lets right-click → Open past that: it refuses to launch the app and may even call it **"damaged"**. It isn't — the download is checksummed and ad-hoc signed, macOS just can't vouch for who built it. Clear the download flag once and it opens normally:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/CCPM.app
+```
+
+On macOS 14 and earlier, right-clicking the app and choosing **Open** works instead.
 
 **Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
 
@@ -144,6 +150,7 @@ make desktop-dev   # hot-reload dev window
 | `ccpm unset-default`          | Clear the default                                                                        |
 | `ccpm prompt`                 | Print the active profile name for a shell prompt (PS1 / starship / p10k)                 |
 | `ccpm statusline`             | Render the in-TUI status line (active profile + usage/limits); Claude Code calls it      |
+| `ccpm statusline configure`   | Choose which segments the status line shows, and on which row                            |
 | `ccpm sync`                   | Re-apply global installs into one or all profiles (`--dry-run` to preview)               |
 | `ccpm doctor`                 | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes dangling symlinks)     |
 | `ccpm consolidate`            | Audit (and optionally `--fix`) asset drift across host, share, and profile scopes        |
@@ -319,13 +326,14 @@ command = "ccpm prompt"
 
 ### Status line (which profile is running, plus usage/limits)
 
-Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — a line pinned to the bottom of the session window showing which profile is active and how much you've used:
+Where `ccpm prompt` feeds your **shell** prompt, `ccpm statusline` feeds the **Claude Code TUI** — two rows pinned to the bottom of the session window. Row 1 is the session; row 2 is the budget:
 
 ```
-⬢ work · Sonnet 4.6 · ctx 34% · 5h 58% ↺16:15 · 7d 88% · $1.23
+⬢ work · claude-code-profile-manager/ccpm · ⎇ feat/history-tab · Opus 5 · ctx 34%
+effort high · 5h 58% ↺16:15 · 7d 88% ↺Mon 8 Sep 08:25 · $1.23
 ```
 
-The `5h` / `7d` segments are the **remaining** percentage of your rolling subscription usage windows (Claude Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles, which show just `⬢ work · Opus 4.8 · $0.12`).
+The `5h` / `7d` segments are the percentage **used** of your rolling subscription usage windows, matching Claude's own `/usage` panel (Pro/Max only — Claude Code supplies them; they appear after the first response and are absent for API-key profiles). `effort` appears only for models that report a reasoning-effort level. A renewal falling on today's date shows a bare clock; one on any other date gives the day and date. Segments drop out when their data is absent and an empty row is not printed, so an API-key profile outside a git repo prints `⬢ work · myproject · Opus 4.8` and `$0.12` — no branch and no usage windows, but the directory still shows.
 
 `ccpm run` wires this in automatically: when a profile has no `statusLine` of its own, it injects `ccpm statusline` as the profile's status line. It **never** overwrites a status line you set in `~/.claude/settings.json`, a profile, or a trusted project. To opt out:
 
@@ -334,6 +342,27 @@ ccpm config set statusline false          # persistently, all profiles
 ccpm run work --no-statusline             # just this launch
 ccpm settings statusline "" --profile work  # remove one ccpm already injected
 ```
+
+#### Choosing the segments
+
+`ccpm statusline configure` picks which of the nine segments show, and on which row. It asks for row 1, then row 2 from what is left; anything unpicked is switched off. The result is printed against sample data so you can see it straight away. You are also offered it the first time you run `ccpm config set statusline true`.
+
+```bash
+ccpm statusline configure                 # global default, interactive
+ccpm statusline configure --profile work  # an override for one profile
+ccpm statusline configure --reset         # back to the built-in layout
+```
+
+A profile's override wins over the global default; `--reset --profile work` drops it again. The segment keys are `profile`, `workspace`, `branch`, `model`, `context`, `effort`, `five_hour`, `seven_day`, `cost`, and scripts can skip the prompts by naming all nine across three flags:
+
+```bash
+ccpm statusline configure --row1 profile,model --row2 five_hour,seven_day \
+                          --off workspace,branch,context,effort,cost
+```
+
+Order within a row is yours too: the desktop app has move-up/move-down controls per segment, `--row1 a,b,c` renders in the order given, and the picker keeps an order you already set rather than re-sorting it. Layouts live in `~/.ccpm/config.json` (`settings.statusline`, or `profiles.<name>.statusline`). The desktop app's **Settings** tab has the same controls with a live preview.
+
+Turning a segment on never invents data — enabling the 5h window on an API-key profile still shows nothing. Turning `branch` off also stops ccpm reading `.git/HEAD` on every assistant message.
 
 ### Settings
 
@@ -374,6 +403,7 @@ ccpm does not maintain its own global settings layer. The cross-profile baseline
 | `ccpm config set cascade_auto_adopt false`         | Disable the host-asset cascade               |
 | `ccpm config set check_default_drift true`        | Enable drift notifications on run/use        |
 | `ccpm config set statusline false`                 | Disable default status-line auto-injection   |
+| `ccpm statusline configure`                        | Pick the status line's segments and rows     |
 | `ccpm config get default_dir`                      | Print the default profile's absolute path    |
 
 ### Exit codes

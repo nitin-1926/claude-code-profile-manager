@@ -51,7 +51,9 @@ export default async function DocsPage() {
             effective host→global→profile config with provenance badges),{" "}
             <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
             <strong>Permissions</strong>, <strong>Settings</strong>,{" "}
-            <strong>Usage</strong>, and <strong>Health</strong>{" "}
+            <strong>Usage</strong>, <strong>History</strong> (browse, read and
+            search this profile&apos;s past Claude Code sessions), and{" "}
+            <strong>Health</strong>{" "}
             (<code>ccpm doctor</code>). Clone, rename,
             delete, open, and run from the toolbar; the view auto-refreshes when
             the CLI changes things underneath it. Three built-in themes
@@ -86,13 +88,17 @@ export default async function DocsPage() {
             <code>.dmg</code> and drag <strong>CCPM</strong> into{" "}
             <strong>Applications</strong>.
           </p>
-          <Callout type="warn" title="First launch: Gatekeeper">
-            The app is distributed unsigned (no Apple Developer account), so
-            macOS asks you to approve it once on first launch.{" "}
-            <strong>Right-click the app → Open</strong> (or, on Sequoia+,{" "}
-            <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>)
-            — just once. It opens normally after that, and in-app updates install
-            themselves without repeating this step.
+          <Callout type="warn" title="First launch: macOS says it can't be opened">
+            The app is not notarized yet, so on macOS 15 Sequoia and later
+            Gatekeeper blocks it on first launch and may describe it as{" "}
+            <strong>damaged</strong>. It isn&apos;t damaged: macOS just
+            can&apos;t verify who built it, and right-click, Open no longer gets
+            past that on these versions. Run this once in Terminal and it opens
+            normally:{" "}
+            <code>xattr -dr com.apple.quarantine /Applications/CCPM.app</code>.
+            On macOS 14 and earlier, right-click the app and choose{" "}
+            <strong>Open</strong> instead. In-app updates install themselves
+            without repeating this step.
           </Callout>
           <Callout type="info" title="Requires the ccpm CLI">
             The desktop app uses the <code>ccpm</code> CLI for all write
@@ -878,7 +884,10 @@ ccpm settings outputstyle Explanatory --profile work`}
             <code>outputstyle</code>) require <code>--profile</code>. The
             statusline wrapper writes the native{" "}
             <code>&#123;type: &quot;command&quot;, command: ...&#125;</code>{" "}
-            shape so it stays loadable by native claude.
+            shape so it stays loadable by native claude. It points a profile at
+            a status-line command; to choose which segments ccpm&apos;s own
+            status line shows, use <code>ccpm statusline configure</code>{" "}
+            instead.
           </p>
 
           <H2 id="mcp-auth">MCP auth model</H2>

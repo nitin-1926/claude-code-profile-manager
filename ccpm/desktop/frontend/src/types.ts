@@ -158,3 +158,142 @@ export interface UpdateProgress {
   phase: string
   percent: number
 }
+
+// --- History -------------------------------------------------------------
+// Mirrors ccpm/desktop/services/history.go and ccpm/internal/transcript.
+
+export type BlockKind = 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image' | 'unknown'
+
+export interface TurnBlock {
+  kind: BlockKind
+  /** Populated only for `unknown`, so the UI can name what it could not render. */
+  rawType?: string
+  text?: string
+  toolName?: string
+  toolUseId?: string
+  /** Truncated tool input or output; the full body is fetched on expand. */
+  preview?: string
+  fullBytes: number
+  truncated: boolean
+  isError?: boolean
+}
+
+export interface Turn {
+  index: number
+  uuid?: string
+  role: 'user' | 'assistant'
+  timestamp?: string
+  model?: string
+  isSidechain: boolean
+  isMeta: boolean
+  blocks: TurnBlock[]
+}
+
+export interface HistorySession {
+  id: string
+  title: string
+  cwd: string
+  branch: string
+  model: string
+  /** Deduped usage-bearing assistant lines — not the reader's turn count. */
+  responses: number
+  turns: number
+  tokens: number
+  cost: number
+  firstTs: string
+  lastTs: string
+  /** False when the transcript has been pruned; the row shows but cannot open. */
+  openable: boolean
+}
+
+export interface HistoryPage {
+  turns: Turn[]
+  total: number
+  offset: number
+  unknownBlocks: number
+  skippedLines: number
+  /** Index a jump-to-turn landed on, or -1. */
+  targetIndex: number
+}
+
+export interface HistoryToolBody {
+  body: string
+  fullBytes: number
+  truncated: boolean
+}
+
+export type HitSource = 'text' | 'tool_use' | 'tool_result'
+
+export interface SearchHit {
+  profile: string
+  sessionId: string
+  title?: string
+  cwd?: string
+  relPath: string
+  mtime: number
+  turnUuid?: string
+  role: string
+  timestamp?: string
+  source: HitSource
+  toolName?: string
+  /** True when the hit is in one of the session's subagent transcripts. */
+  subagent: boolean
+  /**
+   * The snippet arrives pre-split. Go offsets are byte-based and JS strings are
+   * UTF-16, so an offset crossing the bridge would mis-highlight any snippet
+   * containing a non-ASCII character.
+   */
+  before: string
+  match: string
+  after: string
+  /** Further matches in this same message beyond the one shown. */
+  more: number
+}
+
+export interface SearchResult {
+  hits: SearchHit[]
+  sessions: number
+  /** A floor, not a total: scanning stops at each session's quota. */
+  matches: number
+  truncated: boolean
+  droppedSessions: number
+  unreadable: number
+  cancelled: boolean
+}
+
+/** Where a status line segment sits. Mirrors the Go service's string form so
+ *  the frontend never has to know the enum's numbering. */
+export type StatusLineRow = 'off' | 'row1' | 'row2'
+
+/** A segment's catalog entry. Carries no position — that lives in
+ *  StatusLineBuckets, because position is ordered and a per-segment tag could
+ *  not express the order of segments within a row. */
+export interface StatusLineSegment {
+  key: string
+  label: string
+  description: string
+}
+
+/** One layout: the keys on each row in render order, plus the hidden ones.
+ *  Order is significant — it is the order the status line prints. */
+export interface StatusLineBuckets {
+  row1: string[]
+  row2: string[]
+  off: string[]
+}
+
+export interface StatusLineConfig {
+  profile: string
+  /** True when this profile has its own layout rather than following the global default. */
+  hasOverride: boolean
+  /** Whether `ccpm run` injects the status line at all — the separate
+   *  `ccpm config set statusline` switch. Segments are configurable either way. */
+  enabled: boolean
+  /** The catalog, in canonical order: every segment, with its labels. */
+  segments: StatusLineSegment[]
+  /** What this profile actually renders. */
+  layout: StatusLineBuckets
+  /** The global default it would fall back to, so the UI can switch scope
+   *  without a second round trip. */
+  global: StatusLineBuckets
+}
