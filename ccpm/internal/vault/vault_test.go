@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 )
 
@@ -119,6 +122,41 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 		if err != nil || string(got) != payload {
 			t.Fatalf("Restore = %q, %v; want %q", got, err, payload)
 		}
+	}
+}
+
+// Backup replaces the previous good backup, so it must go through
+// atomicwrite (stage + rename): a crash or full disk mid-write must not leave
+// a truncated .enc, and a symlink planted at the backup path must not be
+// followed to clobber a file outside the vault.
+func TestBackup_DoesNotWriteThroughSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	v := New(keystore.NewMemoryStore())
+	if err := v.Backup("work", []byte("seed")); err != nil {
+		t.Fatal(err)
+	}
+	vaultDir, err := config.VaultDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(home, "outside.txt")
+	if err := os.WriteFile(outside, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	encPath := filepath.Join(vaultDir, "work.enc")
+	if err := os.Remove(encPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, encPath); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	if err := v.Backup("work", []byte("new")); err == nil {
+		t.Error("Backup over a symlinked .enc succeeded, want refusal")
+	}
+	if got, _ := os.ReadFile(outside); string(got) != "untouched" {
+		t.Fatalf("Backup wrote through the symlink: outside file now %q", got)
 	}
 }
 
