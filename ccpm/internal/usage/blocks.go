@@ -1,10 +1,7 @@
 package usage
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"sort"
 	"time"
@@ -166,31 +163,23 @@ func collectEntries(profileDir string) ([]entry, error) {
 			return nil // skip unreadable (e.g. mid-write)
 		}
 		defer f.Close()
-		reader := bufio.NewReaderSize(f, 1024*1024)
-		for {
-			lineBytes, rerr := reader.ReadBytes('\n')
-			if len(lineBytes) > 0 {
-				var l transcriptLine
-				if json.Unmarshal(lineBytes, &l) == nil {
-					if key := l.dedupKey(); key != "" {
-						tok := l.tokens()
-						if prev, ok := counted[key]; !ok || tok.Total() > prev.Total() {
-							counted[key] = tok
-							ts, perr := time.Parse(time.RFC3339, l.Timestamp)
-							if perr == nil {
-								byKey[key] = &entry{ts: ts, model: l.Message.Model, tokens: tok}
-							}
-						}
+		_ = EachLine(f, func(lineBytes []byte, _ int64) bool {
+			var l transcriptLine
+			if lineBytes == nil || json.Unmarshal(lineBytes, &l) != nil {
+				return true
+			}
+			if key := l.dedupKey(); key != "" {
+				tok := l.tokens()
+				if prev, ok := counted[key]; !ok || tok.Total() > prev.Total() {
+					counted[key] = tok
+					ts, perr := time.Parse(time.RFC3339, l.Timestamp)
+					if perr == nil {
+						byKey[key] = &entry{ts: ts, model: l.Message.Model, tokens: tok}
 					}
 				}
 			}
-			if rerr != nil {
-				if errors.Is(rerr, io.EOF) {
-					break
-				}
-				return nil
-			}
-		}
+			return true
+		}) // a read error mid-file keeps what was read, as before
 		return nil
 	})
 	if err != nil {

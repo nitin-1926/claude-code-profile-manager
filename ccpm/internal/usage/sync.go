@@ -1,9 +1,7 @@
 package usage
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 
@@ -127,20 +125,12 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		}
 	}
 
-	reader := bufio.NewReaderSize(f, 1024*1024)
+	// EachLine stops before a trailing line with no '\n' (still being written),
+	// so the cursor never passes it and the next sync picks it up complete.
 	consumed := start
-	for {
-		lineBytes, rerr := reader.ReadBytes('\n')
-		if rerr != nil {
-			if errors.Is(rerr, io.EOF) {
-				// Trailing bytes without '\n' = an incomplete line still being
-				// written; stop before it and pick it up once it's complete.
-				break
-			}
-			return prev, rerr
-		}
+	rerr := EachLine(f, func(lineBytes []byte, n int64) bool {
 		var l transcriptLine
-		if jerr := json.Unmarshal(lineBytes, &l); jerr == nil {
+		if lineBytes != nil && json.Unmarshal(lineBytes, &l) == nil {
 			if foldLine(l, sess, day, counted) {
 				if k := l.dedupKey(); k != "" && !inOrder[k] {
 					inOrder[k] = true
@@ -148,8 +138,13 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 				}
 			}
 		}
-		// A complete line (even malformed JSON) is permanently consumed.
-		consumed += int64(len(lineBytes))
+		// A complete line (even malformed JSON, or skipped for exceeding
+		// MaxLineBytes) is permanently consumed.
+		consumed += n
+		return true
+	})
+	if rerr != nil {
+		return prev, rerr
 	}
 
 	// ponytail: bounded to the last recentWindow keys. Claude writes a response's
