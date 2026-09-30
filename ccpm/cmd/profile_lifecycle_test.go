@@ -59,8 +59,8 @@ func lifecycleSandbox(t *testing.T) *lifecycle {
 			newKeystore, readOAuthKeychain, writeOAuthKeychain, deleteOAuthKeychain, setSystemDefault, clearSystemDefault, selectOption, stdinIsTerminal, checkCredentials, readAnswer = a, b, c, d, e, f, g, h, i, j
 		})
 	}
-	fr, cn := forceRemove, cloneNoAuth
-	swap(func() { forceRemove, cloneNoAuth = fr, cn })
+	fr, uf, cn := forceRemove, uninstallForce, cloneNoAuth
+	swap(func() { forceRemove, uninstallForce, cloneNoAuth = fr, uf, cn })
 	t.Cleanup(func() {
 		for _, r := range saved {
 			r()
@@ -381,7 +381,7 @@ func TestUninstall_ClearsSystemDefaultOAuthEntriesAndVaultKey(t *testing.T) {
 	lc.addProfile(t, "keys", "api_key")
 	lc.setDefault(t, "work")
 	lc.oauth[oauthDir] = "payload"
-	forceRemove = true
+	uninstallForce = true
 
 	if err := runUninstall(uninstallCmd, nil); err != nil {
 		t.Fatal(err)
@@ -397,6 +397,36 @@ func TestUninstall_ClearsSystemDefaultOAuthEntriesAndVaultKey(t *testing.T) {
 	}
 	if exists(filepath.Join(lc.home, ".ccpm")) {
 		t.Error("~/.ccpm not removed")
+	}
+}
+
+// --- Finding 5: no silent "Cancelled." exit 0 without a terminal ----------
+
+func TestRemove_NonTTYWithoutForceIsAnError(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	dir := lc.addProfile(t, "old", "api_key")
+
+	err := runRemove(removeCmd, []string{"old"})
+	if err == nil {
+		t.Fatal("remove without --force on non-TTY stdin returned nil (scripts see success)")
+	}
+	if !exists(dir) {
+		t.Fatal("profile deleted without confirmation")
+	}
+}
+
+func TestUninstall_HasOwnForceFlagAndRefusesNonTTY(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProfile(t, "old", "api_key")
+
+	if uninstallCmd.Flags().Lookup("force") == nil {
+		t.Fatal("`ccpm uninstall --force` is an unknown flag")
+	}
+	if err := runUninstall(uninstallCmd, nil); err == nil {
+		t.Fatal("uninstall without --force on non-TTY stdin returned nil")
+	}
+	if !exists(filepath.Join(lc.home, ".ccpm")) {
+		t.Fatal("~/.ccpm deleted without confirmation")
 	}
 }
 

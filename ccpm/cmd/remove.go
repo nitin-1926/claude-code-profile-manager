@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -50,10 +49,11 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if !forceRemove {
+		if !stdinIsTerminal() {
+			return fmt.Errorf("refusing to remove %q without confirmation: stdin is not a terminal (re-run with --force)", name)
+		}
 		fmt.Printf("Remove profile %q? This deletes all profile data. [y/N]: ", name)
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		if strings.TrimSpace(strings.ToLower(input)) != "y" {
+		if strings.ToLower(readAnswer()) != "y" {
 			fmt.Println("Cancelled.")
 			return nil
 		}

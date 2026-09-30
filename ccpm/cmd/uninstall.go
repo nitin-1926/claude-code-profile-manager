@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -24,7 +22,10 @@ var uninstallCmd = &cobra.Command{
 	RunE: runUninstall,
 }
 
+var uninstallForce bool
+
 func init() {
+	uninstallCmd.Flags().BoolVarP(&uninstallForce, "force", "f", false, "skip confirmation")
 	rootCmd.AddCommand(uninstallCmd)
 }
 
@@ -39,11 +40,12 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	fmt.Println("  - The ccpm config directory (~/.ccpm/)")
 	fmt.Println()
 
-	if !forceRemove {
+	if !uninstallForce {
+		if !stdinIsTerminal() {
+			return fmt.Errorf("refusing to uninstall without confirmation: stdin is not a terminal (re-run with --force)")
+		}
 		fmt.Print("Are you sure? Type 'yes' to confirm: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		if strings.TrimSpace(input) != "yes" {
+		if readAnswer() != "yes" {
 			fmt.Println("Cancelled.")
 			return nil
 		}
