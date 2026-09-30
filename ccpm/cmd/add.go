@@ -250,7 +250,7 @@ func applyImportDecision(profileDir, profileName string, d wizard.Decision, cfg 
 		if !ok {
 			return fmt.Errorf("source profile %q not found", d.ProfileName)
 		}
-		if err := importFromProfile(srcProfile.Dir, profileDir, d.Targets, false, false); err != nil {
+		if err := importFromProfile(d.ProfileName, srcProfile.Dir, profileName, profileDir, d.Targets, false, true); err != nil {
 			return err
 		}
 	}

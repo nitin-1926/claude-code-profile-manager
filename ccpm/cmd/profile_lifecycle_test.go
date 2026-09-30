@@ -288,3 +288,72 @@ func TestRename_DropsOrphanFragmentsUnderNewName(t *testing.T) {
 		}
 	}
 }
+
+// --- Finding 2: clone / import from-profile carry profile-scoped state -----
+
+// seedProfileScopedSkill links share/skills/<id> into dir/skills/<id> and
+// records it as a profile-scoped install for name — the shape `ccpm skill add
+// --profile` produces.
+func seedProfileScopedSkill(t *testing.T, name, dir, id string) string {
+	t.Helper()
+	skills, _ := share.SkillsDir()
+	storeEntry := filepath.Join(skills, id)
+	writeFile(t, filepath.Join(storeEntry, "SKILL.md"), "# "+id)
+	if err := share.Link(storeEntry, filepath.Join(dir, "skills", id)); err != nil {
+		t.Fatal(err)
+	}
+	saveInstalls(t, manifest.Install{ID: id, Kind: manifest.KindSkill, Scope: manifest.ScopeProfile, Source: storeEntry, Profiles: []string{name}})
+	return storeEntry
+}
+
+func TestClone_CarriesProfileScopedSkillsFragmentsAndManifestRefs(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	srcDir := lc.addProfile(t, "old", "api_key")
+	store := seedProfileScopedSkill(t, "old", srcDir, "my-skill")
+	writeFragments(t, "old")
+	cloneNoAuth = true
+
+	if err := cloneCmd.RunE(cloneCmd, []string{"old", "c1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	c1Dir, _ := profile.GetDir("c1")
+	if target, err := os.Readlink(filepath.Join(c1Dir, "skills", "my-skill")); err != nil || target != store {
+		t.Errorf("profile-scoped skill not linked into clone: target=%q err=%v", target, err)
+	}
+	if inst := findInstall(loadInstalls(t), "my-skill"); inst == nil || !slices.Contains(inst.Profiles, "c1") {
+		t.Errorf("clone not added to profile-scoped manifest entry: %+v", inst)
+	}
+	for _, f := range fragmentFiles("c1") {
+		if !exists(f) {
+			t.Errorf("%s not copied to clone", f)
+		}
+	}
+}
+
+// Every auto-adopted profile has share/ symlinks in its asset dirs; the strict
+// copy refused them, so `import from-profile` failed in almost every setup.
+func TestImportFromProfile_AcceptsSharedSymlinksAndCopiesStores(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	srcDir := lc.addProfile(t, "work", "api_key")
+	lc.addProfile(t, "play", "api_key")
+	store := seedProfileScopedSkill(t, "work", srcDir, "my-skill")
+	writeFragments(t, "work")
+
+	state := &importFromProfileState{src: "work", target: "play", only: []string{"skills", "settings", "mcp"}}
+	if err := runImportFromProfile(state); err != nil {
+		t.Fatalf("import from-profile: %v", err)
+	}
+
+	playDir, _ := profile.GetDir("play")
+	if target, err := os.Readlink(filepath.Join(playDir, "skills", "my-skill")); err != nil || target != store {
+		t.Errorf("skill not linked: target=%q err=%v", target, err)
+	}
+	if inst := findInstall(loadInstalls(t), "my-skill"); inst == nil || !slices.Contains(inst.Profiles, "play") {
+		t.Errorf("target not added to manifest entry: %+v", inst)
+	}
+	mcpDir, _ := share.MCPDir()
+	if got := readJSONFile(t, filepath.Join(mcpDir, "play.json")); got["work-server"] == nil {
+		t.Errorf("MCP fragment not copied: %v", got)
+	}
+}
