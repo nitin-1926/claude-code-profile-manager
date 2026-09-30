@@ -78,6 +78,42 @@ export default async function DocsPage() {
             />
           </figure>
 
+          <H3 id="desktop-rail">Usage notch</H3>
+          <p>
+            An optional notch that grows out of a screen edge, with one ring per
+            profile: the big ring is your <strong>5-hour</strong> window (or your{" "}
+            <strong>weekly</strong> one, if you pick it as the main ring), the
+            thin inner ring the other, coloured by how much headroom is left, on
+            the same thresholds <code>ccpm statusline</code> uses, so the notch
+            and your terminal never disagree. On the top edge of a Mac with a
+            camera notch it joins the camera notch. Hover a ring for the
+            detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a
+            bar, and the percentage used.
+          </p>
+          <p>
+            Configure it in the <strong>Usage notch</strong> section of the{" "}
+            <strong>Settings</strong> tab: a switch to show or hide it, and while
+            it is on, whether it opens on hover or stays open, which edge it sits
+            on (Top, Left, Right or Bottom), which window is the main ring,
+            whether to show the percentage under each ring (hiding it gives the
+            rings more room, handy on the top edge with several profiles), and a
+            switch per profile. Turning it off and back on keeps your choices. In
+            hover mode it folds to a slim pill at the screen edge and opens when
+            you reach for it (Reduce Motion turns the animation into a jump).
+          </p>
+          <p>
+            <strong>Where the numbers come from.</strong> Claude Code already
+            sends your rate-limit windows to <code>ccpm statusline</code>, and
+            ccpm caches them per profile — no API call, and no credentials read.
+            The trade-off is that a profile&rsquo;s reading only refreshes when
+            you actually use Claude Code on it, so the callout always tells you
+            how old the number is and says so plainly once it goes stale. A
+            profile you have never run shows an empty ring and &ldquo;No reading
+            yet&rdquo; rather than a misleading 0%. Only subscription plans
+            (Max/Pro) report limits at all; API-key profiles say so instead of
+            pretending.
+          </p>
+
           <H3 id="desktop-download">Download (macOS)</H3>
           <p>
             The quickest install is one line in Terminal. It picks the build for

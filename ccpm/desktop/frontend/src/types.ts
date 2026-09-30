@@ -159,6 +159,48 @@ export interface UpdateProgress {
   percent: number
 }
 
+/** Why a profile has no limit reading. Empty string means it does have one. */
+export type LimitsReason = '' | 'no-data' | 'not-subscription-account'
+
+export interface LimitWindow {
+  key: string
+  label: string
+  usedPercentage: number
+  /** Unix seconds; 0 when Claude Code reported no reset clock. */
+  resetsAt: number
+}
+
+export interface ProfileLimits {
+  profile: string
+  account: string
+  plan: string
+  /** False means render the unavailable state and explain `reason` — never a 0% ring. */
+  available: boolean
+  reason: LimitsReason
+  /** Unix seconds the reading was captured. Always show this; the numbers are not live. */
+  capturedAt: number
+  windows: LimitWindow[]
+}
+
+/** How the notch reveals itself. Whether it shows at all is `railOn`. */
+export type RailMode = 'always' | 'hover'
+export type RailEdge = 'right' | 'left' | 'top' | 'bottom'
+/** Which usage window is the big ring; the values are the window keys. */
+export type RailMain = 'five_hour' | 'seven_day'
+
+export interface DesktopPrefs {
+  /** Master switch. `railMode` keeps the reveal while off, so on restores it. */
+  railOn: boolean
+  railMode: RailMode
+  railEdge: RailEdge
+  /** Draw the percentage under each ring. */
+  railPercent: boolean
+  railMain: RailMain
+  /** Explicit choices only — a profile absent from this map is enabled. */
+  railProfiles: Record<string, boolean>
+  theme: string
+}
+
 // --- History -------------------------------------------------------------
 // Mirrors ccpm/desktop/services/history.go and ccpm/internal/transcript.
 

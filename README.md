@@ -106,6 +106,14 @@ It gives you a left sidebar of profiles and, per profile, tabs for **Overview**,
   <em>MCP &amp; Plugins — manage servers and toggle plugins per profile.</em>
 </p>
 
+### Usage notch (macOS)
+
+An optional notch that grows out of a screen edge, with one ring per profile: the big ring is your **5-hour** window (or your **weekly** one, if you pick it as the main ring), the thin inner ring the other, coloured by how much headroom is left — the same thresholds `ccpm statusline` uses, so the notch and your terminal never disagree. On the top edge of a Mac with a camera notch it joins the camera notch. Hover a ring for the detail: which account and plan it belongs to, how old the reading is, and per window a reset time, a bar, and the percentage used.
+
+Configure it in the **Usage notch** section of the **Settings** tab: a switch to show or hide it, and while it is on, whether it opens on hover or stays open, which edge it sits on (Top, Left, Right or Bottom), which window is the main ring, whether to show the percentage under each ring (hiding it gives the rings more room, handy on the top edge with several profiles), and a switch per profile. Turning it off and back on keeps your choices. In hover mode it folds to a slim pill at the screen edge and opens when you reach for it (Reduce Motion turns the animation into a jump).
+
+> **Where the numbers come from.** Claude Code already sends your rate-limit windows to `ccpm statusline`, and ccpm caches them per profile. **No API call, no credentials read.** The trade-off is that a profile's reading only refreshes when you actually use Claude Code on it — so the callout always tells you how old the number is, and says so plainly once it goes stale. A profile you've never run shows an empty ring and "No reading yet" rather than a misleading 0%, and so does a profile with its own custom `statusLine`, because only ccpm's status line records the readings. Only subscription plans (Max/Pro) report limits at all; API-key profiles say so instead of pretending.
+
 ### Download (macOS)
 
 The quickest install is one line in Terminal. It picks the build for your chip, verifies its checksum and puts **CCPM** in **Applications**, ready to open with no Gatekeeper prompt:

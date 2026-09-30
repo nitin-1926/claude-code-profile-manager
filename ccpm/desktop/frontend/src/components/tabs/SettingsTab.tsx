@@ -6,6 +6,7 @@ import { useToast } from '@/components/ui/Toast'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { StatusLineSection } from '@/components/settings/StatusLineSection'
+import { NotchSection } from '@/components/settings/NotchSection'
 import { Plus, Save } from 'lucide-react'
 
 export function SettingsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
@@ -46,6 +47,10 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   // hid an editor that would have loaded fine — and a useLive refetch failure
   // unmounted it, discarding an unsaved draft.
   const statusLine = <StatusLineSection profile={profile} />
+  // The notch section reads its own service and is app-wide, so it renders in
+  // the error and loading branches too: a profile's broken settings.json has
+  // no bearing on it.
+  const notch = <NotchSection />
 
   // Surface the failure instead of an indefinite "Loading…" — useLive
   // reports fetch errors and every consumer must render them.
@@ -53,6 +58,7 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
     return (
       <div className="px-6 py-5">
         {statusLine}
+        {notch}
         <div className="text-sm text-destructive">Could not load settings: {error}</div>
       </div>
     )
@@ -60,6 +66,7 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
     return (
       <div className="px-6 py-5">
         {statusLine}
+        {notch}
         <div className="text-sm text-muted-foreground">Loading settings…</div>
       </div>
     )
@@ -68,6 +75,7 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   return (
     <div className="px-6 py-5">
       {statusLine}
+      {notch}
 
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

@@ -5,6 +5,8 @@ import { List as ProfilesList, Get as ProfileGet } from '../../wailsjs/go/servic
 import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
+import { All as LimitsAll, Get as LimitsGet } from '../../wailsjs/go/services/LimitsService'
+import { Get as PrefsGet, Set as PrefsSet, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
 import {
   Clone as MClone,
   Rename as MRename,
@@ -51,12 +53,14 @@ import type {
   Block,
   Cascade,
   CmdResult,
+  DesktopPrefs,
   Details,
   HealthResult,
   HistoryPage,
   HistorySession,
   HistoryToolBody,
   Profile,
+  ProfileLimits,
   SearchResult,
   SettingKV,
   StatusLineConfig,
@@ -76,6 +80,17 @@ export const api = {
   usage: {
     get: (name: string, window: string) => UsageGet(name, window) as unknown as Promise<Usage>,
     blocks: (name: string) => UsageBlocks(name) as unknown as Promise<Block[]>,
+  },
+  limits: {
+    all: () => LimitsAll() as unknown as Promise<ProfileLimits[]>,
+    get: (name: string) => LimitsGet(name) as unknown as Promise<ProfileLimits>,
+  },
+  prefs: {
+    get: () => PrefsGet() as unknown as Promise<DesktopPrefs>,
+    set: (p: DesktopPrefs) => PrefsSet(p as never) as unknown as Promise<DesktopPrefs>,
+    setNotch: (p: DesktopPrefs) => SetNotch(p as never) as unknown as Promise<DesktopPrefs>,
+    setRailProfile: (name: string, enabled: boolean) =>
+      SetRailProfile(name, enabled) as unknown as Promise<DesktopPrefs>,
   },
   health: {
     doctor: () => Doctor() as unknown as Promise<HealthResult>,

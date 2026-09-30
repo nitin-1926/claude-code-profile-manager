@@ -14,6 +14,7 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/statusline"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
 // statusLineInput is the subset of the JSON Claude Code pipes to a statusLine
@@ -118,13 +119,78 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 	// and an empty profile name, which still renders something useful.
 	cfg, _ := config.Load()
 	profile := statusLineProfileName(cfg)
+	now := time.Now()
 
 	// Claude Code renders each printed line as its own row.
 	layout := statusline.Resolve(cfg, profile)
-	for _, row := range renderStatusLine(in, profile, time.Now(), statusLineColorEnabled(), layout) {
+	for _, row := range renderStatusLine(in, profile, now, statusLineColorEnabled(), layout) {
 		fmt.Fprintln(cmd.OutOrStdout(), row)
 	}
+
+	// After printing, never before: caching is a side effect and must not be
+	// able to delay or suppress the line the TUI is waiting on.
+	persistRateLimits(in, profile, now)
 	return nil
+}
+
+// persistRateLimits caches the rate-limit windows Claude Code just handed us,
+// so the desktop app can show real limits and reset clocks for a profile that
+// has no session running.
+//
+// Best-effort throughout: this sits on the status line's hot path and the whole
+// file's contract is that nothing here disturbs the rendered line. Every
+// failure is swallowed deliberately — a missed usage reading is not worth a
+// polluted TUI, and the next render will try again.
+func persistRateLimits(in statusLineInput, profileName string, now time.Time) {
+	if in.RateLimits == nil {
+		return
+	}
+	windows := make([]usage.LimitWindow, 0, 2)
+	add := func(key string, w *rateWindow) {
+		if w == nil {
+			return
+		}
+		windows = append(windows, usage.LimitWindow{
+			Key:            key,
+			Label:          usage.LabelFor(key),
+			UsedPercentage: w.UsedPercentage,
+			ResetsAt:       w.ResetsAt,
+		})
+	}
+	add(usage.KeyFiveHour, in.RateLimits.FiveHour)
+	add(usage.KeySevenDay, in.RateLimits.SevenDay)
+	if len(windows) == 0 {
+		return
+	}
+	dir := statusLineProfileDir(profileName)
+	if dir == "" {
+		return
+	}
+	_ = usage.SaveLimits(dir, usage.Limits{
+		CapturedAt: now.Unix(),
+		Source:     usage.SourceStatusLine,
+		Windows:    windows,
+	})
+}
+
+// statusLineProfileDir resolves the on-disk directory for a profile name.
+//
+// Deliberately goes through the registry rather than trusting CLAUDE_CONFIG_DIR
+// directly: that variable can point anywhere, and the cache must only ever be
+// written inside a directory ccpm actually owns.
+func statusLineProfileDir(name string) string {
+	if name == "" {
+		return ""
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	p, ok := cfg.Profiles[name]
+	if !ok {
+		return ""
+	}
+	return p.Dir
 }
 
 // ANSI colors for the status line. Claude Code renders the statusLine command's
