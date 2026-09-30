@@ -325,20 +325,6 @@ func TestSlotsTileTheBody(t *testing.T) {
 	}
 }
 
-func TestHitIndexAgreesWithTheRings(t *testing.T) {
-	for _, s := range specs() {
-		cells := Cells(PanelRect(screen16, s), s)
-		for i, c := range cells {
-			if got := HitIndex(cells, c.Ring.X+c.Ring.W/2, c.Ring.Y+c.Ring.H/2); got != i {
-				t.Errorf("%+v: ring %d's centre hit-tests as %d", s, i, got)
-			}
-		}
-		if got := HitIndex(cells, -50, -50); got != -1 {
-			t.Errorf("%+v: a point outside the shape hit-tests as %d", s, got)
-		}
-	}
-}
-
 // TestCardsStayInsideThePanel is why the panel reserves slack at each end: the
 // card is drawn in this one panel rather than a second NSPanel, so a card that
 // fell outside would simply be clipped away.
@@ -483,32 +469,10 @@ func TestRingsStayInsideAShortEdge(t *testing.T) {
 func TestFoldedLiveRegionDoesNotCoverThePanel(t *testing.T) {
 	for _, s := range specs() {
 		p := PanelRect(screen16, s)
-		rects := LiveRects(p, s, false, -1)
-		if len(rects) != 1 {
-			t.Fatalf("%+v: folded should expose only the wake band, got %d rects", s, len(rects))
-		}
-		if a := rects[0].W * rects[0].H; a >= p.W*p.H*0.25 {
+		wake := WakeRect(p, s)
+		if a := wake.W * wake.H; a >= p.W*p.H*0.25 {
 			t.Errorf("%+v: folded live region is %.0f%% of the panel", s, 100*a/(p.W*p.H))
 		}
-	}
-}
-
-// TestOpenLiveRegionsIncludeTheHoveredCard — without the card the panel goes
-// click-through the instant the pointer leaves the ring, so the card can never
-// be reached.
-func TestOpenLiveRegionsIncludeTheHoveredCard(t *testing.T) {
-	s := Spec{Edge: EdgeRight, Profiles: 3}
-	p := PanelRect(screen16, s)
-	if got := len(LiveRects(p, s, true, -1)); got != 1 {
-		t.Errorf("nothing hovered: want only the shape, got %d rects", got)
-	}
-	rects := LiveRects(p, s, true, 1)
-	card := Cells(p, s)[1].Card
-	if len(rects) != 2 || !InAny(rects, card.X+card.W/2, card.Y+card.H/2) {
-		t.Error("the hovered ring's card does not take the mouse")
-	}
-	if got := len(LiveRects(p, s, true, 9)); got != 1 {
-		t.Errorf("out-of-range hover index produced %d rects", got)
 	}
 }
 

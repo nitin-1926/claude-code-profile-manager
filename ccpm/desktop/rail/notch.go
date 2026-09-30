@@ -597,45 +597,6 @@ func Cells(panel Rect, s Spec) []Cell {
 	return out
 }
 
-// LiveRects are the regions that take the mouse right now. Everything else must
-// fall through to whatever is underneath: the panel spans a large, mostly
-// transparent area of the screen edge, and a window that swallowed all of it
-// would be unusable.
-func LiveRects(panel Rect, s Spec, expanded bool, hovered int) []Rect {
-	if !expanded {
-		return []Rect{WakeRect(panel, s)}
-	}
-	out := []Rect{NotchRect(panel, s, true)}
-	if hovered >= 0 && hovered < s.n() {
-		out = append(out, Cells(panel, s)[hovered].Card)
-	}
-	return out
-}
-
-// HitIndex maps a panel-local point to a profile, or -1.
-func HitIndex(cells []Cell, x, y float64) int {
-	for i, c := range cells {
-		if contains(c.Slot, x, y) {
-			return i
-		}
-	}
-	return -1
-}
-
-// InAny reports whether a panel-local point falls in any live rect.
-func InAny(rects []Rect, x, y float64) bool {
-	for _, r := range rects {
-		if contains(r, x, y) {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(r Rect, x, y float64) bool {
-	return x >= r.X && x <= r.X+r.W && y >= r.Y && y <= r.Y+r.H
-}
-
 func intersect(a, b Rect) Rect {
 	x0, y0 := max(a.X, b.X), max(a.Y, b.Y)
 	x1, y1 := min(a.X+a.W, b.X+b.W), min(a.Y+a.H, b.Y+b.H)
