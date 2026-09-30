@@ -3,13 +3,17 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
@@ -61,7 +65,7 @@ Examples:
   ccpm settings set permissions.allow '["Bash(git:*)"]' --profile work`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSettingsSet(state, args)
+			return withConfigLock(func() error { return runSettingsSet(state, args) })
 		},
 	}
 	requireProfileFlag(setCmd, &state.profile, "profile to modify (required)")
@@ -89,7 +93,7 @@ rejected by default; pass --i-know-what-this-does to override, which
 acknowledges that the JSON grants shell access or can bypass safety rails.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSettingsApply(state, args, applyAllowDangerous)
+			return withConfigLock(func() error { return runSettingsApply(state, args, applyAllowDangerous) })
 		},
 	}
 	requireProfileFlag(applyCmd, &state.profile, "profile to apply to (required)")
@@ -124,7 +128,7 @@ Examples:
   ccpm settings statusline "" --profile work       # remove`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSettingsStatusLine(state, args)
+			return withConfigLock(func() error { return runSettingsStatusLine(state, args) })
 		},
 	}
 	requireProfileFlag(statusLineCmd, &state.profile, "profile to modify (required)")
@@ -138,7 +142,7 @@ Known values: ` + strings.Join(knownOutputStyles, ", ") + `. Unknown values are
 allowed with a warning so ccpm doesn't block newer styles native claude adds.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSettingsOutputStyle(state, cmd, args)
+			return withConfigLock(func() error { return runSettingsOutputStyle(state, cmd, args) })
 		},
 	}
 	requireProfileFlag(outputStyleCmd, &state.profile, "profile to modify (required)")
@@ -173,8 +177,8 @@ func runSettingsStatusLine(state *settingsState, args []string) error {
 	green := color.New(color.FgGreen, color.Bold)
 	if strings.TrimSpace(command) == "" {
 		delete(frag, "statusLine")
-		if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
-			return fmt.Errorf("writing fragment: %w", err)
+		if err := saveFragment(fragPath, frag); err != nil {
+			return err
 		}
 		green.Printf("✓ statusLine cleared (profile %q)\n", state.profile)
 		return nil
@@ -184,11 +188,8 @@ func runSettingsStatusLine(state *settingsState, args []string) error {
 		"type":    "command",
 		"command": command,
 	}
-	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
-		return fmt.Errorf("writing fragment: %w", err)
-	}
-	if err := settingsmerge.MarkOwned(fragPath, "statusLine"); err != nil {
-		return fmt.Errorf("recording owned key: %w", err)
+	if err := saveFragment(fragPath, frag, "statusLine"); err != nil {
+		return err
 	}
 	green.Printf("✓ statusLine = %q (profile %q)\n", command, state.profile)
 	return nil
@@ -216,11 +217,8 @@ func runSettingsOutputStyle(state *settingsState, cmd *cobra.Command, args []str
 		return fmt.Errorf("loading fragment: %w", err)
 	}
 	frag["outputStyle"] = style
-	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
-		return fmt.Errorf("writing fragment: %w", err)
-	}
-	if err := settingsmerge.MarkOwned(fragPath, "outputStyle"); err != nil {
-		return fmt.Errorf("recording owned key: %w", err)
+	if err := saveFragment(fragPath, frag, "outputStyle"); err != nil {
+		return err
 	}
 	color.New(color.FgGreen, color.Bold).Printf("✓ outputStyle = %q (profile %q)\n", style, state.profile)
 	return nil
@@ -235,6 +233,40 @@ func settingsFragmentPath(profileName string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(settingsDir, profileName+".json"), nil
+}
+
+// saveFragment writes a profile fragment and marks ownedKeys in its
+// owned-keys sidecar as ONE atomicwrite transaction (AGENTS.md invariant 9):
+// two separate writes let a crash leave a value the merge would not
+// re-assert over settings.json. Callers hold the config lock around the whole
+// load→mutate→save so parallel edits can't drop each other's keys.
+func saveFragment(fragPath string, frag map[string]interface{}, ownedKeys ...string) error {
+	data, err := json.MarshalIndent(frag, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling fragment: %w", err)
+	}
+	changes := []atomicwrite.FileChange{atomicwrite.WriteFile(fragPath, append(data, '\n'), config.FilePerm)}
+	if len(ownedKeys) > 0 {
+		owned, err := settingsmerge.LoadOwnedKeys(fragPath)
+		if err != nil {
+			return fmt.Errorf("recording owned key: %w", err)
+		}
+		for _, k := range ownedKeys {
+			owned[k] = struct{}{}
+		}
+		sidecar, err := json.MarshalIndent(settingsmerge.OwnedKeysFile{Keys: slices.Sorted(maps.Keys(owned))}, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshaling owned keys: %w", err)
+		}
+		// Same "<fragment>.owned.json" naming settingsmerge reads back; the
+		// round-trip is covered by the fragment concurrency tests.
+		ownedPath := strings.TrimSuffix(fragPath, ".json") + ".owned.json"
+		changes = append(changes, atomicwrite.WriteFile(ownedPath, append(sidecar, '\n'), config.FilePerm))
+	}
+	if err := atomicwrite.Apply(changes); err != nil {
+		return fmt.Errorf("writing fragment: %w", err)
+	}
+	return nil
 }
 
 func ensureProfileExists(profileName string) error {
@@ -270,12 +302,8 @@ func runSettingsSet(state *settingsState, args []string) error {
 
 	setNestedKey(frag, key, value)
 
-	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
-		return fmt.Errorf("writing fragment: %w", err)
-	}
-
-	if err := settingsmerge.MarkOwned(fragPath, key); err != nil {
-		return fmt.Errorf("recording owned key: %w", err)
+	if err := saveFragment(fragPath, frag, key); err != nil {
+		return err
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Set %s = %s (profile %q)\n", key, rawValue, state.profile)
