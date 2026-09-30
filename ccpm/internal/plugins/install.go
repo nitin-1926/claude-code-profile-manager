@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -433,10 +434,16 @@ func UnlinkFromProfile(profileDir, marketplace, pluginName string) error {
 		return err
 	}
 
-	// Capture the cache symlink path from the entry so we know what to remove.
-	var cacheSymlink string
-	if entries, ok := installedDoc.Plugins[id]; ok && len(entries) > 0 {
-		cacheSymlink = entries[len(entries)-1].InstallPath
+	// Never trust the recorded installPath: installed_plugins.json can arrive
+	// from a shared bundle, and deleting whatever path it names would let a
+	// bundle remove arbitrary files. Rebuild the path LinkIntoProfile would
+	// have created from validated segments, and only remove it if it is
+	// actually a symlink.
+	var cacheSymlinks []string
+	for _, e := range installedDoc.Plugins[id] {
+		if p := profileCacheSymlinkPath(profileDir, marketplace, pluginName, e.Version); p != "" && !slices.Contains(cacheSymlinks, p) {
+			cacheSymlinks = append(cacheSymlinks, p)
+		}
 	}
 	delete(installedDoc.Plugins, id)
 
@@ -464,14 +471,31 @@ func UnlinkFromProfile(profileDir, marketplace, pluginName string) error {
 		atomicwrite.WriteFile(installedPath, installedBytes, config.FilePerm),
 		atomicwrite.WriteFile(knownPath, knownBytes, config.FilePerm),
 	}
-	if cacheSymlink != "" {
-		changes = append(changes, atomicwrite.DeleteFile(cacheSymlink))
+	for _, p := range cacheSymlinks {
+		changes = append(changes, atomicwrite.DeleteFile(p))
 	}
 	if !stillUsed {
 		profileMktSymlink := filepath.Join(profileDir, "plugins", "marketplaces", marketplace)
 		changes = append(changes, atomicwrite.DeleteFile(profileMktSymlink))
 	}
 	return atomicwrite.Apply(changes)
+}
+
+// profileCacheSymlinkPath returns <profile>/plugins/cache/<mkt>/<plugin>/<version>
+// when every segment validates and that path is a symlink; "" otherwise.
+// A versionless entry maps to "0.0.0", matching the host-adoption layout.
+func profileCacheSymlinkPath(profileDir, marketplace, pluginName, version string) string {
+	if version == "" {
+		version = "0.0.0"
+	}
+	if ValidateName(marketplace) != nil || ValidateName(pluginName) != nil || ValidateVersion(version) != nil {
+		return ""
+	}
+	p := filepath.Join(profileDir, "plugins", "cache", marketplace, pluginName, version)
+	if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return ""
+	}
+	return p
 }
 
 // ----- on-disk helper types -----

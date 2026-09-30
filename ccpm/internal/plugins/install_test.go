@@ -228,3 +228,48 @@ func TestUnlinkKeepsMarketplaceWhileOtherPluginsRemain(t *testing.T) {
 		t.Errorf("marketplace entry must survive while plug-b@mkt is installed: %+v", known)
 	}
 }
+
+// A hostile installed_plugins.json (e.g. restored from a shared bundle) can
+// point installPath at any file. Unlink must only ever remove the cache
+// symlink it would itself have created, never the recorded path.
+func TestUnlinkIgnoresHostileInstallPath(t *testing.T) {
+	home := isolateHome(t)
+	seedMarketplace(t, "mkt", "testplug", "1.2.3")
+
+	mktDir, _ := MarketplaceCloneDir("mkt")
+	manifest, _ := LoadMarketplaceManifest(mktDir)
+	spec := manifest.FindPlugin("testplug")
+	version, sha, err := FetchPluginIntoCache("mkt", *spec, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileDir := filepath.Join(home, ".ccpm", "profiles", "victim")
+	if err := LinkIntoProfile(profileDir, "mkt", "testplug", version, sha); err != nil {
+		t.Fatal(err)
+	}
+
+	victim := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(victim, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedPath := filepath.Join(profileDir, "plugins", "installed_plugins.json")
+	doc, _ := loadV2Installed(installedPath)
+	entries := doc.Plugins["testplug@mkt"]
+	entries[0].InstallPath = victim
+	doc.Plugins["testplug@mkt"] = entries
+	data, _ := marshalIndent(doc)
+	if err := os.WriteFile(installedPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UnlinkFromProfile(profileDir, "mkt", "testplug"); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("UnlinkFromProfile deleted the file named by installPath (%s): %v", victim, err)
+	}
+	link := filepath.Join(profileDir, "plugins", "cache", "mkt", "testplug", version)
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Errorf("profile cache symlink %s should be removed on unlink (err=%v)", link, err)
+	}
+}
