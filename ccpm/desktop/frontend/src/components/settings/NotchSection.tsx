@@ -35,7 +35,7 @@ const MAINS: { value: RailMain; label: string }[] = [
 export function NotchSection() {
   const [prefs, setPrefs] = useState<DesktopPrefs | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [limits] = useLive<ProfileLimits[]>(() => api.limits.all(), [])
+  const [limits, , limitsError] = useLive<ProfileLimits[]>(() => api.limits.all(), [])
   const toast = useToast()
   // Writes are queued so each one merges onto what the previous one stored,
   // and two quick clicks cannot race each other back to a stale file.
@@ -142,8 +142,14 @@ export function NotchSection() {
             <div className="border-b border-border bg-muted/40 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Profiles
             </div>
-            {profiles.length === 0 && (
-              <div className="px-4 py-2.5 text-[11px] text-muted-foreground">No profiles yet.</div>
+            {limitsError ? (
+              <div className="px-4 py-2.5 text-[11px] text-destructive">Could not load profiles: {limitsError}</div>
+            ) : limits === null ? (
+              <div className="px-4 py-2.5 text-[11px] text-muted-foreground">Loading profiles…</div>
+            ) : (
+              profiles.length === 0 && (
+                <div className="px-4 py-2.5 text-[11px] text-muted-foreground">No profiles yet.</div>
+              )
             )}
             {profiles.map((p) => (
               <Row
