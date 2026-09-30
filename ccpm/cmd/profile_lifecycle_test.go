@@ -524,6 +524,33 @@ func TestSyncOAuthIdentityToDefault_PreservesDotfilesSymlink(t *testing.T) {
 	}
 }
 
+// --- Finding 8: add's OAuth check accepts a Keychain login ----------------
+
+// macOS stores the login in the Keychain, not .credentials.json, so a stat of
+// the file warned "no credentials file found" after every successful add.
+func TestAdd_OAuthLoginVerifiedViaCredentialChecker(t *testing.T) {
+	lifecycleSandbox(t)
+	dir, err := profile.Create("work") // no .credentials.json on disk
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := true
+	checkCredentials = func(d, name, method string) credentials.CredStatus {
+		if d != dir || name != "work" || method != "oauth" {
+			t.Fatalf("checker called with (%s, %s, %s)", d, name, method)
+		}
+		return credentials.CredStatus{Valid: valid, Method: "oauth", Detail: "me@work"}
+	}
+
+	if !reportOAuthLogin(dir, "work") {
+		t.Fatal("Keychain-backed OAuth login reported as missing credentials")
+	}
+	valid = false
+	if reportOAuthLogin(dir, "work") {
+		t.Fatal("absent login reported as success")
+	}
+}
+
 // --- Finding 2: clone / import from-profile carry profile-scoped state -----
 
 // seedProfileScopedSkill links share/skills/<id> into dir/skills/<id> and

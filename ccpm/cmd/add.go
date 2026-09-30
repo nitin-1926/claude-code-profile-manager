@@ -18,6 +18,7 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profilelife"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	profilesync "github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/sync"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/wizard"
@@ -67,7 +68,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	// rollback undoes completed steps in reverse when a later step fails, so
 	// an aborted add never leaves an orphan profile dir or a ghost keychain
 	// entry behind. Cleared once config.Save commits the profile.
-	rollback := []func(){func() { _ = profile.Remove(name) }}
+	// profilelife.Remove drops anything the import wizard wrote under this
+	// name (settings/MCP fragments, manifest refs), so a later profile with
+	// the same name does not inherit it.
+	rollback := []func(){func() { _ = profile.Remove(name) }, func() { _ = profilelife.Remove(name) }}
 	runRollback := func() {
 		for i := len(rollback) - 1; i >= 0; i-- {
 			rollback[i]()
@@ -106,14 +110,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: claude exited with error: %v\n", err)
 		}
 
-		// Verify credentials landed
-		credFile := dir + "/.credentials.json"
-		if _, err := os.Stat(credFile); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: no credentials file found at %s\n", credFile)
-			fmt.Fprintln(os.Stderr, "You may need to run: ccpm auth refresh", name)
-		} else {
-			green.Printf("✓ Profile %q authenticated via OAuth\n", name)
-		}
+		reportOAuthLogin(dir, name)
 		// claude's login may have written a dir-namespaced keychain entry; if
 		// the add later aborts, clean it up alongside the dir (best-effort).
 		rollback = append(rollback, func() { _ = credentials.DeleteMacKeychainOAuth(dir) })
@@ -194,6 +191,21 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nRun claude with this profile:\n  ccpm run %s\n", name)
 	return nil
+}
+
+// reportOAuthLogin verifies the login `claude /login` just performed and
+// reports it. It asks the credential checker (as `ccpm auth refresh` does)
+// rather than stat-ing .credentials.json: on macOS the login lives in the
+// Keychain and that file never exists.
+func reportOAuthLogin(dir, name string) bool {
+	status := checkCredentials(dir, name, "oauth")
+	if !status.Valid {
+		fmt.Fprintf(os.Stderr, "Warning: could not verify the OAuth login for %q: %s\n", name, status.Detail)
+		fmt.Fprintln(os.Stderr, "You may need to run: ccpm auth refresh", name)
+		return false
+	}
+	color.New(color.FgGreen, color.Bold).Printf("✓ Profile %q authenticated via OAuth (%s)\n", name, status.Detail)
+	return true
 }
 
 // pickAuthMethod asks the user to choose OAuth vs API key. Uses the interactive
