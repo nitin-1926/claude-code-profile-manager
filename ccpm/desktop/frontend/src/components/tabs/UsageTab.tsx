@@ -26,7 +26,17 @@ export function UsageTab({ profile }: { profile: string }) {
       .get(profile, win)
       .then((u) => alive && setData(u))
       .catch((e) => alive && setError(String(e)))
-    // active 5-hour block (burn/projection) — independent of the window filter
+    return () => {
+      alive = false
+    }
+  }, [profile, win])
+
+  // Active 5-hour block (burn/projection). Independent of the window filter,
+  // so its own effect: it reads transcripts, and re-reading them on every
+  // window click was pure waste.
+  useEffect(() => {
+    let alive = true
+    setActive(null)
     api.usage
       .blocks(profile)
       .then((bs) => alive && setActive(bs.find((b) => b.isActive) ?? null))
@@ -34,7 +44,7 @@ export function UsageTab({ profile }: { profile: string }) {
     return () => {
       alive = false
     }
-  }, [profile, win])
+  }, [profile])
 
   return (
     <div className="px-6 py-5">
