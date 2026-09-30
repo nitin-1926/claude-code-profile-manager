@@ -221,4 +221,3 @@ func reportAdoption(profileName string, entries []hostEntry) {
 		len(entries), profileName, strings.Join(parts, " "),
 	)
 }
-
