@@ -117,7 +117,7 @@ func (a *App) watchLoop() {
 				// The notch is native, so the frontend event does not reach it.
 				// Without this its rings kept the usage they launched with:
 				// the status line rewrites limits.json and nothing redrew.
-				a.ApplyRailPrefs()
+				a.applyRailPrefs()
 				if a.ctx != nil {
 					runtime.EventsEmit(a.ctx, changeEvent)
 				}

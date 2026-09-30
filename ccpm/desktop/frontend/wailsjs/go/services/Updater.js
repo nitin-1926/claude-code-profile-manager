@@ -10,10 +10,6 @@ export function Install() {
   return window['go']['services']['Updater']['Install']();
 }
 
-export function SetContext(arg1) {
-  return window['go']['services']['Updater']['SetContext'](arg1);
-}
-
 export function Version() {
   return window['go']['services']['Updater']['Version']();
 }

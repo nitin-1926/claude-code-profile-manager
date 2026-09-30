@@ -43,7 +43,9 @@ const (
 // downloads it and swaps the running .app in place. Self-downloaded builds are
 // not Gatekeeper-quarantined, so the update installs without a re-prompt.
 type Updater struct {
-	ctx        context.Context
+	// Ctx is the Wails runtime context, set once from the App's startup. A
+	// field rather than a setter: Wails binds every exported method to JS.
+	Ctx        context.Context
 	http       *http.Client
 	installing atomic.Bool // guards against concurrent Install() calls
 }
@@ -92,9 +94,6 @@ func trustedReleaseURL(raw string) bool {
 	}
 	return releaseHosts[u.Hostname()]
 }
-
-// SetContext is called once from the App's startup with the Wails runtime ctx.
-func (u *Updater) SetContext(ctx context.Context) { u.ctx = ctx }
 
 // Version is the running build's version, read without touching the network —
 // for showing it, where Check would spend the GitHub API quota Install needs.
@@ -276,8 +275,8 @@ func (u *Updater) Install() error {
 	// Give the helper a beat to start waiting on our PID, then quit so it can swap.
 	go func() {
 		time.Sleep(400 * time.Millisecond)
-		if u.ctx != nil {
-			wr.Quit(u.ctx)
+		if u.Ctx != nil {
+			wr.Quit(u.Ctx)
 		} else {
 			os.Exit(0)
 		}
@@ -423,8 +422,8 @@ func (u *Updater) spawnSwap(oldBundle, newApp, tmp string) error {
 }
 
 func (u *Updater) emit(phase string, pct int) {
-	if u.ctx != nil {
-		wr.EventsEmit(u.ctx, "updater:progress", map[string]any{"phase": phase, "percent": pct})
+	if u.Ctx != nil {
+		wr.EventsEmit(u.Ctx, "updater:progress", map[string]any{"phase": phase, "percent": pct})
 	}
 }
 
