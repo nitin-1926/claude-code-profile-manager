@@ -15,7 +15,7 @@ func TestGroupBlocksSplitsOn5hGap(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-06-27T20:00:00Z")
 	entries := []entry{
 		mkEntry("2026-06-27T09:05:00Z", "opus", 100),
-		mkEntry("2026-06-27T09:40:00Z", "opus", 200), // same block (within 5h)
+		mkEntry("2026-06-27T09:40:00Z", "opus", 200),   // same block (within 5h)
 		mkEntry("2026-06-27T18:30:00Z", "sonnet", 300), // >5h after last → new block
 	}
 	blocks := groupBlocks(entries, now)
