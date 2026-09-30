@@ -11,8 +11,8 @@ import (
 
 func TestAssetSpecPluralAndSubdir(t *testing.T) {
 	cases := []struct {
-		spec      AssetSpec
-		wantPlur  string
+		spec       AssetSpec
+		wantPlur   string
 		wantSubdir string
 	}{
 		{AssetSpec{Name: "agent"}, "agents", "agents"},

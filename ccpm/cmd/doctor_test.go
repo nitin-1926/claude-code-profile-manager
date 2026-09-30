@@ -15,7 +15,7 @@ func TestCompareSemver(t *testing.T) {
 		{"2.1.56 (claude-code)", "2.1.56", 0},
 		{"2.0.0", "2.1.0", -1},
 		{"2.10.0", "2.9.0", 1},
-		{"", "2.1.0", -1},    // empty parses as 0; 0 < 2
+		{"", "2.1.0", -1}, // empty parses as 0; 0 < 2
 		{"2.1.0", "", 1},
 	}
 	for _, c := range cases {
