@@ -430,6 +430,52 @@ func TestPanelStaysOnScreen(t *testing.T) {
 	}
 }
 
+// TestRingsStayInsideAShortEdge — more profiles than an edge holds. The panel
+// is clamped to the screen, but the rings kept their pitch: ten profiles down
+// the side of a 956pt screen spanned [-76, 891], half of them off the panel.
+// What does not fit is not drawn; what is drawn is inside the panel and the
+// open shape.
+func TestRingsStayInsideAShortEdge(t *testing.T) {
+	small := Rect{W: 1470, H: 956}
+	for _, hide := range []bool{false, true} {
+		for _, s := range []Spec{
+			{Edge: EdgeRight, Profiles: 10}, {Edge: EdgeLeft, Profiles: 10},
+			{Edge: EdgeRight, Profiles: 40}, {Edge: EdgeBottom, Profiles: 40},
+			{Edge: EdgeTop, Profiles: 40}, {Edge: EdgeTop, Profiles: 40, Hardware: notch16},
+		} {
+			s.HidePercent = hide
+			p := PanelRect(small, s)
+			open := NotchRect(p, s, true)
+			cells := Cells(p, s)
+			overflows := s.span() > alongSpan(p, s.Edge)
+			if len(cells) < 1 || len(cells) > s.Profiles || overflows != (len(cells) < s.Profiles) {
+				t.Errorf("%+v: %d cells of %d (body overflows the panel: %v)", s, len(cells), s.Profiles, overflows)
+			}
+			for i, c := range cells {
+				if !containsRect(bounds(p), c.Ring) || !containsRect(open, c.Ring) {
+					t.Errorf("%+v: ring %d %+v is outside the %.0fx%.0f panel or the open shape %+v", s, i, c.Ring, p.W, p.H, open)
+				}
+				if !containsRect(open, c.Slot) {
+					t.Errorf("%+v: band %d escapes the open shape", s, i)
+				}
+			}
+			// The open shape hugs the rings it draws — the bands tile its
+			// body, one shoulder beyond each end — rather than running the
+			// panel's length with black past the last ring.
+			if !s.Flush() && len(cells) > 0 {
+				first, last := cells[0].Slot, cells[len(cells)-1].Slot
+				body, openLen := last.X+last.W-first.X, open.W
+				if s.Edge.Vertical() {
+					body, openLen = first.Y+first.H-last.Y, open.H
+				}
+				if !near(openLen-body, 2*CurlRadius) {
+					t.Errorf("%+v: open shape %.1f long around a %.1f body, want one shoulder each end", s, openLen, body)
+				}
+			}
+		}
+	}
+}
+
 // TestFoldedLiveRegionDoesNotCoverThePanel is the click-through guarantee: the
 // panel spans a large, mostly transparent strip of the screen edge, and a
 // folded live region that covered it would swallow every click meant for the

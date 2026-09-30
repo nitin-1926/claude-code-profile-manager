@@ -324,6 +324,21 @@ func (s Spec) span() float64 {
 	return s.ExpandedLength()
 }
 
+// fit caps Profiles at the most rings whose shape fits in a panel span long,
+// never fewer than one. PanelRect clamps the panel to the screen, but the
+// rings kept their pitch: ten profiles down a 956pt edge ran half off the
+// panel. The renderer draws min(slots, cells), so the rings that do not fit
+// are simply not drawn.
+//
+// ponytail: capping hides the profiles past the fit; shrink the pitch first if
+// a short edge with many profiles turns out to be common.
+func (s Spec) fit(span float64) Spec {
+	for s.Profiles > 1 && s.span() > span {
+		s.Profiles--
+	}
+	return s
+}
+
 // ShapeParams is the resolved corner and shoulder for one state of the shape.
 type ShapeParams struct {
 	Corner float64 `json:"corner"`
@@ -427,6 +442,7 @@ func alongSpan(panel Rect, e Edge) float64 {
 // hardware notch they share the hole instead: each side is pinned to its own
 // wall and folds back into it.
 func NotchRect(panel Rect, s Spec, expanded bool) Rect {
+	s = s.fit(alongSpan(panel, s.Edge))
 	length, depth := s.CollapsedLength(), s.CollapsedDepth()
 	if expanded {
 		length, depth = s.ExpandedLength(), s.ExpandedDepth()
@@ -499,6 +515,7 @@ type Cell struct {
 // Cells lays out every profile. i=0 is the first in reading order: top on a
 // side edge, left on a horizontal one.
 func Cells(panel Rect, s Spec) []Cell {
+	s = s.fit(alongSpan(panel, s.Edge))
 	n := s.n()
 	span := alongSpan(panel, s.Edge)
 	// Everything laid along or across the body is drawn at the joined scale
