@@ -59,6 +59,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Drop settings/MCP fragments and manifest refs left under this name by a
+	// profile removed with an older ccpm, which never cleaned them up:
+	// otherwise the new profile silently inherits that profile's MCP servers
+	// (tokens included) and settings.
+	if err := profilelife.Remove(name); err != nil {
+		return fmt.Errorf("clearing leftover state for %q: %w", name, err)
+	}
+
 	// Create profile directory
 	dir, err := profile.Create(name)
 	if err != nil {
