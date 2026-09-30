@@ -22,6 +22,7 @@ import (
 	"time"
 
 	wr "github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/mod/semver"
 	"golang.org/x/sys/unix"
 )
 
@@ -474,36 +475,17 @@ func findDotApp(dir string) (string, error) {
 	return "", fmt.Errorf("no .app found in downloaded update")
 }
 
-// semverNewer reports whether a is a newer X.Y.Z than b. Non-numeric or "dev"
-// versions are treated as oldest.
+// semverNewer reports whether a is a newer version than b, with semver's
+// precedence — 1.2.0 is newer than 1.2.0-rc1. A leading "v" is optional.
+// Anything that is not a valid version ("dev") is treated as oldest.
 func semverNewer(a, b string) bool {
-	return cmpSemver(a, b) > 0
+	return semver.Compare(canonicalVersion(a), canonicalVersion(b)) > 0
 }
 
-func cmpSemver(a, b string) int {
-	pa, pb := parseSemver(a), parseSemver(b)
-	for i := 0; i < 3; i++ {
-		if pa[i] != pb[i] {
-			if pa[i] > pb[i] {
-				return 1
-			}
-			return -1
-		}
+func canonicalVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
 	}
-	return 0
-}
-
-func parseSemver(v string) [3]int {
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
-		v = v[:i] // drop pre-release / build metadata
-	}
-	var out [3]int
-	for i, part := range strings.SplitN(v, ".", 3) {
-		if i > 2 {
-			break
-		}
-		out[i], _ = strconv.Atoi(part)
-	}
-	return out
+	return v
 }

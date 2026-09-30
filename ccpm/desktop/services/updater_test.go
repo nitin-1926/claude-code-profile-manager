@@ -102,3 +102,25 @@ func TestUpdaterHasNoWholeRequestTimeout(t *testing.T) {
 		t.Error("no ResponseHeaderTimeout: a server that never answers would hang the check")
 	}
 }
+
+func TestSemverNewer(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"1.2.0", "1.1.9", true},
+		{"1.10.0", "1.9.0", true},
+		{"1.2.0", "1.2.0-rc1", true}, // a release is newer than its candidate
+		{"1.2.0-rc1", "1.2.0", false},
+		{"1.2.0-rc2", "1.2.0-rc1", true},
+		{"1.2.0", "1.2.0", false},
+		{"1.2.0", "dev", true}, // non-numeric is oldest
+		{"dev", "1.2.0", false},
+		{"v1.2.0", "1.1.0", true},
+	}
+	for _, c := range cases {
+		if got := semverNewer(c.a, c.b); got != c.want {
+			t.Errorf("semverNewer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
