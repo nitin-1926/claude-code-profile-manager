@@ -54,7 +54,7 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 		}
 
 		visited := make(map[string]bool, len(st.Files))
-		walkErr := WalkTranscripts(profileDir, "", func(abs, rel string) error {
+		walkErr := WalkTranscripts(profileDir, func(abs, rel string) error {
 			visited[rel] = true
 			ns, ferr := ingestFile(abs, st.Files[rel], sess, day)
 			if ferr != nil {

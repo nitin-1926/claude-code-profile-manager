@@ -159,7 +159,7 @@ func TestWalkTranscriptsSkipsNonRegularFiles(t *testing.T) {
 	}
 
 	var got []string
-	if err := WalkTranscripts(dir, "", func(abs, rel string) error {
+	if err := WalkTranscripts(dir, func(abs, rel string) error {
 		got = append(got, filepath.Base(rel))
 		return nil
 	}); err != nil {

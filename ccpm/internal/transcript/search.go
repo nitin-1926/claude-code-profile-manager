@@ -273,7 +273,7 @@ func collectCandidates(scopes []Scope) ([]candidate, int) {
 	var out []candidate
 	unreadable := 0
 	for _, s := range scopes {
-		err := usage.WalkTranscripts(s.Dir, "", func(abs, rel string) error {
+		err := usage.WalkTranscripts(s.Dir, func(abs, rel string) error {
 			if isSymlink(abs) {
 				return nil
 			}

@@ -165,7 +165,7 @@ func collectEntries(profileDir string, since time.Time) ([]entry, error) {
 	counted := map[string]Tokens{}
 	byKey := map[string]*entry{}
 
-	err := WalkTranscripts(profileDir, "", func(abs, rel string) error {
+	err := WalkTranscripts(profileDir, func(abs, rel string) error {
 		if fi, serr := os.Stat(abs); serr != nil || fi.ModTime().Before(since) {
 			return nil
 		}
