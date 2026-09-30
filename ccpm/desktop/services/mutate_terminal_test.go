@@ -154,9 +154,9 @@ func TestResumeUnknownProfileAndSession(t *testing.T) {
 	if r := h.Resume("definitely-not-a-real-profile-xyz", "4245147b-6298-4288-9207-146fb29288b4"); r.OK {
 		t.Error("Resume succeeded for an unknown profile")
 	}
-	name := firstProfile(t)
-	if r := h.Resume(name, "00000000-0000-0000-0000-000000000000"); r.OK {
-		t.Error("Resume succeeded for a session with no transcript")
+	name, _, _, _ := historyFixture(t)
+	if r := h.Resume(name, "00000000-0000-0000-0000-000000000000"); r.OK || !strings.Contains(r.Error, "no transcript on disk") {
+		t.Errorf("Resume of a session with no transcript: %+v, want the session lookup to refuse it", r)
 	}
 }
 
