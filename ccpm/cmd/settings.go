@@ -33,8 +33,14 @@ var knownOutputStyles = []string{"default", "Build", "Explanatory", "Learning", 
 // dangerousSettingsKeys are top-level keys that, when supplied by a third
 // party, could grant shell access or bypass safety rails. `ccpm settings
 // apply` requires --i-know-what-this-does to write them so users don't
-// paste-run a malicious fragment.
-var dangerousSettingsKeys = []string{"permissions", "hooks", "env", "statusLine", "mcpServers", "enabledPlugins"}
+// paste-run a malicious fragment. The second group are Claude Code settings
+// whose value is a command Claude Code executes (credential helpers, auth
+// refresh, OTEL headers, file suggestion, status lines, process wrapper).
+var dangerousSettingsKeys = []string{
+	"permissions", "hooks", "env", "statusLine", "mcpServers", "enabledPlugins",
+	"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh",
+	"otelHeadersHelper", "fileSuggestion", "subagentStatusLine", "processWrapper",
+}
 
 func newSettingsCmd() *cobra.Command {
 	state := &settingsState{}
@@ -88,16 +94,19 @@ Examples:
 
 The fragment is deep-merged into the profile's ccpm fragment, so existing
 keys are preserved unless overridden. Dangerous top-level keys —
-permissions, hooks, env, statusLine, mcpServers, enabledPlugins — are
-rejected by default; pass --i-know-what-this-does to override, which
-acknowledges that the JSON grants shell access or can bypass safety rails.`,
+permissions, hooks, env, statusLine, mcpServers, enabledPlugins, and the
+command-running apiKeyHelper, awsAuthRefresh, awsCredentialExport,
+gcpAuthRefresh, otelHeadersHelper, fileSuggestion, subagentStatusLine,
+processWrapper — are rejected by default; pass --i-know-what-this-does to
+override, which acknowledges that the JSON grants shell access or can bypass
+safety rails.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withConfigLock(func() error { return runSettingsApply(state, args, applyAllowDangerous) })
 		},
 	}
 	requireProfileFlag(applyCmd, &state.profile, "profile to apply to (required)")
-	applyCmd.Flags().BoolVar(&applyAllowDangerous, "i-know-what-this-does", false, "allow the patch to touch permissions/hooks/env/statusLine/mcpServers/enabledPlugins")
+	applyCmd.Flags().BoolVar(&applyAllowDangerous, "i-know-what-this-does", false, "allow the patch to touch security-sensitive keys (permissions, hooks, env, command helpers — see --help)")
 
 	showCmd := &cobra.Command{
 		Use:   "show",
