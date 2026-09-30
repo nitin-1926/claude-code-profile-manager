@@ -3,11 +3,14 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -30,21 +33,48 @@ type MutateService struct{}
 
 func NewMutate() *MutateService { return &MutateService{} }
 
+// runCCPM is a mutating shell-out, bounded at 60s.
 func runCCPM(args ...string) CmdResult {
+	r, _ := execCCPM(60*time.Second, args...)
+	return r
+}
+
+// lockedBuffer lets stdout and stderr share one buffer, in the order ccpm wrote
+// them, while stdout is also captured on its own.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+// execCCPM is the one skeleton every ccpm shell-out goes through: find the
+// binary, bound the call so a stuck ccpm can't wedge the UI, strip color, and
+// explain an outdated CLI. r.Output is stdout and stderr interleaved, for
+// showing to a person; stdout alone is returned for callers that parse it,
+// since ccpm logs to stderr.
+func execCCPM(timeout time.Duration, args ...string) (r CmdResult, stdout []byte) {
 	bin := findCCPM()
 	if bin == "" {
-		return CmdResult{Error: "ccpm CLI not found on PATH"}
+		return CmdResult{Error: "ccpm CLI not found on PATH"}, nil
 	}
-	// Bound every mutating shell-out so a stuck ccpm can't wedge the UI.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
-	out, err := cmd.CombinedOutput()
-	r := CmdResult{OK: err == nil, Output: ansiRE.ReplaceAllString(string(out), ""), CCPMPath: bin}
+	var out bytes.Buffer
+	var combined lockedBuffer
+	cmd.Stdout = io.MultiWriter(&out, &combined)
+	cmd.Stderr = &combined
+	err := cmd.Run()
+	r = CmdResult{OK: err == nil, Output: ansiRE.ReplaceAllString(combined.b.String(), ""), CCPMPath: bin}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			r.Error = "ccpm timed out after 60s"
+			r.Error = fmt.Sprintf("ccpm %s timed out after %ds", args[0], int(timeout.Seconds()))
 		} else {
 			r.Error = strings.TrimSpace(err.Error())
 		}
@@ -56,7 +86,7 @@ func runCCPM(args ...string) CmdResult {
 				strings.TrimSpace(r.Output) + ")"
 		}
 	}
-	return r
+	return r, out.Bytes()
 }
 
 // outdatedCLI reports whether ccpm's output is cobra refusing a flag or

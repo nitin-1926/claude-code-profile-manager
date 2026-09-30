@@ -3,9 +3,7 @@
 package services
 
 import (
-	"context"
 	"encoding/json"
-	"os/exec"
 	"sort"
 	"time"
 
@@ -104,16 +102,8 @@ func (s *DetailsService) Get(profile string) (*Details, error) {
 
 // readMCP shells `ccpm mcp list --json` (read of a write-tool) and parses it.
 func readMCP() []McpView {
-	bin := findCCPM()
-	if bin == "" {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "mcp", "list", "--json")
-	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
-	out, err := cmd.Output()
-	if err != nil {
+	r, out := execCCPM(20*time.Second, "mcp", "list", "--json")
+	if !r.OK {
 		return nil
 	}
 	var list []McpView
