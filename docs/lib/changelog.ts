@@ -32,9 +32,9 @@ export type ChangelogSeries = {
 
 export const CHANGELOG: ChangelogSeries[] = [
   {
-    series: "0.5.x",
+    series: "0.7.x",
     summary:
-      "Session history with transcript reading and search, profile backup & cloning, shell completions, prompt and status-line integration, and concurrency-safe credential handling.",
+      "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
     releases: [
       {
         date: "2026-09-29",
@@ -123,6 +123,13 @@ export const CHANGELOG: ChangelogSeries[] = [
           "Profiles that cannot report limits say so: an unused profile shows an empty ring and \"No reading yet\" instead of a misleading 0%, and non-subscription profiles explain that their plan never reports limits.",
         ],
       },
+    ],
+  },
+  {
+    series: "0.6.x",
+    summary:
+      "Per-profile token usage with a contribution heatmap and cost estimates, and the optional macOS desktop app.",
+    releases: [
       {
         date: "2026-07-08",
         title: "CCPM Desktop: download for macOS",
@@ -174,6 +181,13 @@ export const CHANGELOG: ChangelogSeries[] = [
           "Data is maintained incrementally in a local per-profile store (`<profileDir>/usage/`) — each run reads only new transcript bytes. Opt in to `ccpm config set usage_tracking true` to keep it warm via a SessionEnd hook; `ccpm usage` works without it.",
         ],
       },
+    ],
+  },
+  {
+    series: "0.5.x",
+    summary:
+      "Profile backup & cloning, shell completions, prompt and in-TUI status-line integration, and concurrency-safe credential handling.",
+    releases: [
       {
         date: "2026-06-25",
         title: "Status line now matches /usage and is colour-coded",
