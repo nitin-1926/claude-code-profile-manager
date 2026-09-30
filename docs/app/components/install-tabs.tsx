@@ -5,6 +5,9 @@ import { DESKTOP_DMG, DESKTOP_RELEASES_URL } from "@/lib/version";
 const CURL_CMD =
   "curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh";
 
+const DESKTOP_CMD =
+  "curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh";
+
 const SOURCE_CMD = `git clone https://github.com/nitin-1926/claude-code-profile-manager.git
 cd claude-code-profile-manager/ccpm
 go build -o ccpm .
@@ -41,13 +44,18 @@ export function InstallTabs() {
         },
         {
           id: "desktop",
-          label: "Desktop (.dmg)",
+          label: "desktop",
           content: (
-            <div className="text-[0.875rem] text-fg-muted leading-relaxed [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2">
-              Native macOS GUI —{" "}
-              <a href={DESKTOP_DMG.appleSilicon}>Apple Silicon</a> or{" "}
-              <a href={DESKTOP_DMG.intel}>Intel</a> .dmg (
-              <a href={DESKTOP_RELEASES_URL} target="_blank" rel="noopener noreferrer">all releases</a>). Requires the ccpm CLI for writes.
+            <div className="space-y-2">
+              <CodeBlock code={DESKTOP_CMD} lang="bash" />
+              <div className="text-[0.875rem] text-fg-muted leading-relaxed [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2">
+                Native macOS GUI, opens with no Gatekeeper prompt. Or grab the{" "}
+                <a href={DESKTOP_DMG.appleSilicon}>Apple Silicon</a> or{" "}
+                <a href={DESKTOP_DMG.intel}>Intel</a> .dmg (
+                <a href={DESKTOP_RELEASES_URL} target="_blank" rel="noopener noreferrer">all releases</a>)
+                and run <code>xattr -dr com.apple.quarantine /Applications/CCPM.app</code>{" "}
+                once before the first launch. Requires the ccpm CLI for writes.
+              </div>
             </div>
           ),
         },

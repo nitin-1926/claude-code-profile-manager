@@ -34,7 +34,7 @@ export const docsQuickLinks: QuickLink[] = [
   {
     icon: Monitor,
     title: "Desktop app",
-    desc: "Native macOS GUI over the CLI. Download the .dmg, auto-updates.",
+    desc: "Native macOS GUI over the CLI. One-line install or .dmg, auto-updates.",
     href: "#desktop",
   },
   {
@@ -52,7 +52,7 @@ export const docsQuickLinks: QuickLink[] = [
   {
     icon: BookOpen,
     title: "Reference",
-    desc: "Shell hook, IDE integration, platform notes, limitations.",
+    desc: "Shell hook, status line, token usage, IDE, platforms, limitations.",
     href: "#shell",
   },
   {

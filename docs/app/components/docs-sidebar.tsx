@@ -60,6 +60,8 @@ const groups: Group[] = [
       { id: "shell", label: "Shell integration" },
       { id: "completion", label: "Shell completion" },
       { id: "prompt", label: "Shell prompt" },
+      { id: "statusline", label: "Status line" },
+      { id: "usage", label: "Token usage" },
       { id: "ide", label: "IDE / VS Code" },
       { id: "privacy", label: "Privacy & security" },
       { id: "platforms", label: "Platform support" },

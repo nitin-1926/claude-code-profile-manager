@@ -676,9 +676,10 @@ function Privacy() {
           100% local. 100% private.
         </h2>
         <p className="mt-2 text-fg-muted leading-relaxed mb-10 text-[0.9375rem]">
-          The ccpm CLI never makes network requests — your credentials, config,
-          and data stay on your machine. The optional desktop app only reaches
-          out to check GitHub for its own updates.
+          Your credentials, config, and data stay on your machine. The ccpm CLI
+          makes no network requests unless you ask it to check for a newer
+          release with <code>ccpm version --check-latest</code>. The optional
+          desktop app only reaches out to check GitHub for its own updates.
         </p>
 
         <div className="relative p-[1px] rounded-2xl bg-gradient-to-br from-[var(--c-accent-light)] via-[var(--c-accent)] to-[var(--c-accent-dark)] opacity-95">
@@ -851,8 +852,10 @@ function DesktopShowcase() {
           </h2>
           <p className="mt-2 text-fg-muted leading-relaxed text-[0.9375rem]">
             CCPM Desktop is a native macOS app over the same engine — every
-            profile&apos;s assets, cascade, MCP servers, permissions, usage, and
-            health in one place. Free, local-first, and it auto-updates.
+            profile&apos;s assets, cascade, MCP servers, permissions, usage,
+            session history, and health in one place, plus an optional usage
+            notch at the edge of your screen. Free, local-first, and it
+            auto-updates.
           </p>
         </div>
 

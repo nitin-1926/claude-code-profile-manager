@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-mana
 go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
 ```
 
-**Prefer a GUI?** Download the native macOS **desktop app** from the [desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true) — Apple Silicon or Intel `.dmg`. See [Desktop app](#desktop-app-optional) below. (The desktop app still uses the `ccpm` CLI for write actions, so install one of the above too.)
+**Prefer a GUI?** Install the native macOS **desktop app** with one line, `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`, or grab the Apple Silicon or Intel `.dmg` from the [desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true). See [Desktop app](#desktop-app-optional) below. (The desktop app still uses the `ccpm` CLI for write actions, so install one of the above too.)
 
 ## Quick start
 
@@ -86,7 +86,7 @@ Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/cha
 
 A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
 
-It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings**, **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings** (settings JSON, the status line layout, and the usage notch), **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
 
 <p align="center">
   <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
@@ -173,7 +173,8 @@ make desktop-dev   # hot-reload dev window
 | `ccpm shell-init`             | Print the shell hook (auto-detects zsh / bash / fish / powershell)                       |
 | `ccpm completion <shell>`     | Generate a shell completion script (bash / zsh / fish / powershell)                      |
 | `ccpm uninstall`              | Remove all profiles, keychain entries, vault backups, and `~/.ccpm/`                     |
-| `ccpm version`                | Print the version; `--check-latest` checks GitHub for a newer release (opt-in, 24h cache)|
+| `ccpm version`                | Print the version; `--check-latest` checks GitHub for a newer CLI release (opt-in, 24h cache)|
+| `ccpm usage [name]`           | Token usage from a profile's transcripts (see [Usage](#usage))                           |
 | `ccpm diff <a> <b>`           | Compare two profiles (assets, settings keys, env names, MCP servers, plugins)           |
 
 Every command also accepts the global `--log-level debug|info|warn|error` flag (default `warn`); `debug` traces cascade adoption and lock activity to stderr.
@@ -281,6 +282,20 @@ A new repo's `.claude/settings.json` (hooks, permissions, MCP) is ignored until 
 | ------------------------------------ | -------------------------------------------------------------------------- |
 | `ccpm sessions list <profile>`       | Sessions scoped to the current working directory (`--limit N`, `--json`)    |
 | `ccpm sessions list <profile> --all` | Sessions from every project the profile has worked on                      |
+
+### Usage
+
+`ccpm usage [profile]` reports token usage read from the profile's Claude Code transcripts: raw input, output, cache-write and cache-read counts, no dollar cost. On a terminal it opens an interactive dashboard (Overview / Days / Models / Projects / Sessions tabs; `[` / `]` switch profile, `w` cycles the time window, `q` quits). With no name it uses the active profile, then the default.
+
+| Command                                                  | Description                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `ccpm usage [profile] --plain`                           | Static report: totals, a contribution heatmap, and a per-model breakdown |
+| `ccpm usage --by-model` / `--by-project` / `--sessions`  | Swap the report body                                                     |
+| `ccpm usage --since 30d`                                 | Limit to a window: duration (`168h`), days (`30d`), or date (`2026-06-01`) |
+| `ccpm usage --all`                                       | Aggregate every profile                                                  |
+| `ccpm usage --json`                                      | Machine-readable output                                                  |
+
+Any of those flags prints a static report instead of the dashboard. Each run reads only the transcript bytes added since the last one. To keep the store warm between runs, `ccpm config set usage_tracking true` injects a `SessionEnd` hook (`ccpm usage sync`) into launched profiles; `ccpm usage` is accurate without it.
 
 ### Import
 
@@ -418,13 +433,14 @@ ccpm does not maintain its own global settings layer. The cross-profile baseline
 | `ccpm config set check_default_drift true`        | Enable drift notifications on run/use        |
 | `ccpm config set statusline false`                 | Disable default status-line auto-injection   |
 | `ccpm statusline configure`                        | Pick the status line's segments and rows     |
+| `ccpm config set usage_tracking true`              | Keep the usage store warm via a SessionEnd hook |
 | `ccpm config get default_dir`                      | Print the default profile's absolute path    |
 
 ### Exit codes
 
 For scripting: `0` success (warnings may print to stderr but never change the
-exit code), `1` command failed, `3` partial failure (`ccpm import` landed some
-targets but at least one step failed), `4` `ccpm doctor` found health issues.
+exit code), `1` command failed, `3` partial failure (`ccpm import` or `ccpm sync`
+did some of its work but at least one step failed), `4` `ccpm doctor` found health issues.
 
 ## How it works
 
@@ -455,7 +471,7 @@ Objects merge key-by-key; arrays and scalars from a higher-precedence source rep
 
 ```
 ~/.ccpm/
-├── config.json          # profile registry; cascade_auto_adopt, check_default_drift
+├── config.json          # profile registry, config keys, status line layouts
 ├── installs.json        # manifest of installed assets (skill/agent/command/rule/hook/mcp/plugin)
 │                          # entries carry scope: global | profile | host
 ├── share/
@@ -471,7 +487,7 @@ Objects merge key-by-key; arrays and scalars from a higher-precedence source rep
 
 ## Privacy and security
 
-ccpm is 100% local. It never makes network requests, collects data, or phones home.
+ccpm is 100% local. It never collects data or phones home, and the CLI makes no network requests except the opt-in `ccpm version --check-latest` release check. The optional desktop app only contacts GitHub to check for its own updates.
 
 - API keys live in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager).
 - Vault backups use AES-256-GCM with a master key in your OS keychain.
