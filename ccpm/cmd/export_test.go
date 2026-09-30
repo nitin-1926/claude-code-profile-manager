@@ -4,10 +4,15 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
 // writeBundle builds a gzipped tar at path from the given name→content entries.
@@ -151,5 +156,169 @@ func TestExtractBundleRejectsAbsolutePath(t *testing.T) {
 	if _, err := os.Stat("/tmp/ccpm-abs-escape"); err == nil {
 		os.Remove("/tmp/ccpm-abs-escape")
 		t.Fatal("absolute-path entry escaped the destination directory!")
+	}
+}
+
+// bundleSandbox isolates HOME and returns it plus a helper that writes a file
+// (creating parents) under it.
+func bundleSandbox(t *testing.T) (string, func(rel, content string) string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CCPM_NO_TTY", "1")
+	write := func(rel, content string) string {
+		t.Helper()
+		p := filepath.Join(home, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	return home, write
+}
+
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+}
+
+func registerProfile(t *testing.T, name, dir string) {
+	t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AddProfile(name, dir, "oauth")
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func bundleEntries(t *testing.T, path string) map[string]string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gz)
+	out := map[string]string{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return out
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(tr)
+		out[hdr.Name] = string(data)
+	}
+}
+
+func setFlag(t *testing.T, cmd *cobra.Command, name, value string) {
+	t.Helper()
+	f := cmd.Flags().Lookup(name)
+	old := f.Value.String()
+	if err := f.Value.Set(value); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Value.Set(old) })
+}
+
+// Export must carry what makes the profile work elsewhere (share-store
+// assets behind the profile's symlinks, its settings/MCP fragments) and
+// leave out session history, which can hold pasted secrets.
+func TestExportImportBundleRoundTrip(t *testing.T) {
+	home, write := bundleSandbox(t)
+	src := filepath.Join(home, ".ccpm", "profiles", "src")
+	write(".ccpm/profiles/src/settings.json", `{"model":"opus"}`)
+	write(".ccpm/profiles/src/projects/-repo/session.jsonl", `{"pasted":"sk-secret"}`)
+	write(".ccpm/profiles/src/todos/t.json", `[]`)
+	write(".ccpm/share/skills/foo/SKILL.md", "skill body")
+	write(".ccpm/share/agents/bar.md", "agent body")
+	write("private/id_rsa", "KEY")
+	write(".ccpm/share/settings/src.json", `{"model":"opus"}`)
+	write(".ccpm/share/settings/src.owned.json", `["model"]`)
+	write(".ccpm/share/mcp/src.json", `{"srv":{"command":"srv-bin"}}`)
+	symlinkOrSkip(t, filepath.Join(home, ".ccpm", "share", "skills", "foo"), filepath.Join(src, "skills", "foo"))
+	symlinkOrSkip(t, filepath.Join(home, ".ccpm", "share", "agents", "bar.md"), filepath.Join(src, "agents", "bar.md"))
+	symlinkOrSkip(t, filepath.Join(home, "private"), filepath.Join(src, "skills", "escape"))
+	registerProfile(t, "src", src)
+
+	bundle := filepath.Join(home, "src.ccpm.tar.gz")
+	oldOut := exportOut
+	exportOut = bundle
+	t.Cleanup(func() { exportOut = oldOut })
+	if err := runExport(exportCmd, []string{"src"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	got := bundleEntries(t, bundle)
+	for name, want := range map[string]string{
+		"skills/foo/SKILL.md":              "skill body",
+		"agents/bar.md":                    "agent body",
+		".ccpm-bundle/settings.json":       `{"model":"opus"}`,
+		".ccpm-bundle/settings.owned.json": `["model"]`,
+		".ccpm-bundle/mcp.json":            `{"srv":{"command":"srv-bin"}}`,
+	} {
+		if got[name] != want {
+			t.Errorf("bundle %s = %q, want %q", name, got[name], want)
+		}
+	}
+	for name := range got {
+		if strings.HasPrefix(name, "projects") || strings.HasPrefix(name, "todos") {
+			t.Errorf("bundle carries session data %s", name)
+		}
+		if strings.HasPrefix(name, "skills/escape") {
+			t.Errorf("bundle followed a symlink outside the share store: %s", name)
+		}
+	}
+
+	setFlag(t, importBundleCmd, "profile", "dst")
+	if err := runImportBundle(importBundleCmd, []string{bundle}); err != nil {
+		t.Fatalf("import-bundle: %v", err)
+	}
+	dst := filepath.Join(home, ".ccpm", "profiles", "dst")
+	for rel, want := range map[string]string{
+		".ccpm/share/settings/dst.json":          `{"model":"opus"}`,
+		".ccpm/share/settings/dst.owned.json":    `["model"]`,
+		".ccpm/share/mcp/dst.json":               `{"srv":{"command":"srv-bin"}}`,
+		".ccpm/profiles/dst/skills/foo/SKILL.md": "skill body",
+	} {
+		if b, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(rel))); err != nil || string(b) != want {
+			t.Errorf("restored %s = %q, %v; want %q", rel, b, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".ccpm-bundle")); !os.IsNotExist(err) {
+		t.Errorf("fragment staging dir left in the restored profile (err=%v)", err)
+	}
+}
+
+// Bundles written before fragments were carried must still import.
+func TestImportBundleOldFormat(t *testing.T) {
+	home, _ := bundleSandbox(t)
+	bundle := filepath.Join(home, "old.ccpm.tar.gz")
+	writeBundle(t, bundle, map[string]string{"settings.json": `{"model":"opus"}`, "skills/foo/SKILL.md": "x"})
+	setFlag(t, importBundleCmd, "profile", "old")
+	if err := runImportBundle(importBundleCmd, []string{bundle}); err != nil {
+		t.Fatalf("import-bundle old format: %v", err)
+	}
+	cfg, _ := config.Load()
+	if _, ok := cfg.Profiles["old"]; !ok {
+		t.Error("old-format bundle did not register the profile")
 	}
 }
