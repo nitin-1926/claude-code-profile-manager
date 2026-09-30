@@ -50,7 +50,9 @@ export default async function DocsPage() {
             profile: <strong>Overview</strong>, <strong>Cascade</strong> (the
             effective host→global→profile config with provenance badges),{" "}
             <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
-            <strong>Permissions</strong>, <strong>Settings</strong>,{" "}
+            <strong>Permissions</strong>, <strong>Settings</strong> (settings
+            JSON, the <a href="#statusline">status line</a> layout, and the
+            usage notch),{" "}
             <strong>Usage</strong>, <strong>History</strong> (browse, read and
             search this profile&apos;s past Claude Code sessions), and{" "}
             <strong>Health</strong>{" "}
@@ -109,7 +111,9 @@ export default async function DocsPage() {
             you actually use Claude Code on it, so the callout always tells you
             how old the number is and says so plainly once it goes stale. A
             profile you have never run shows an empty ring and &ldquo;No reading
-            yet&rdquo; rather than a misleading 0%. Only subscription plans
+            yet&rdquo; rather than a misleading 0%, and so does a profile with
+            its own custom <code>statusLine</code>, because only ccpm&apos;s
+            status line records the readings. Only subscription plans
             (Max/Pro) report limits at all; API-key profiles say so instead of
             pretending.
           </p>
@@ -287,6 +291,22 @@ ccpm rm work --force`}
             profiles and their auth health.
           </p>
 
+          <H3 id="profiles-rename">ccpm rename &lt;old&gt; &lt;new&gt;</H3>
+          <p>
+            Rename a profile. Keychain entries and plugin paths move with it.
+            Already-running Claude Code sessions are not affected; restart them
+            to pick up the change.
+          </p>
+
+          <H3 id="profiles-diff">ccpm diff &lt;a&gt; &lt;b&gt;</H3>
+          <p>
+            Show what differs between two profiles: managed assets (skills,
+            agents, commands, rules, hooks), settings-fragment keys, env var
+            names (values are never printed), MCP servers, and installed
+            plugins. Useful when one profile behaves differently from another.
+          </p>
+          <CodeBlock code={`ccpm diff personal work`} lang="bash" />
+
           <H2 id="running">Running Claude</H2>
 
           <H3 id="running-run">ccpm run &lt;name&gt;</H3>
@@ -299,10 +319,12 @@ ccpm rm work --force`}
           <p>
             Unknown flags after the profile name flow through to{" "}
             <code>claude</code> directly, with no <code>--</code> separator
-            needed for the common cases. Four flags are intercepted by ccpm:{" "}
+            needed for the common cases. Five flags are intercepted by ccpm:{" "}
             <code>--ccpm-env KEY=VALUE</code> (repeatable, one-shot env
             override), <code>--no-auto-adopt</code> (skip the host-asset
-            cascade scan for this launch), <code>--help</code>, and{" "}
+            cascade scan for this launch), <code>--no-statusline</code> (skip
+            injecting the default <a href="#statusline">status line</a> for
+            this launch), <code>--help</code>, and{" "}
             <code>--version</code>. Use <code>--</code> to forward{" "}
             <code>--help</code> or <code>--version</code> to claude.
           </p>
@@ -529,7 +551,7 @@ ccpm sync`}
                     ~/.ccpm/share/mcp/&#123;global,&lt;profile&gt;&#125;.json
                   </td>
                   <td className="py-2.5 px-4">
-                    &lt;profile&gt;/settings.json#mcpServers
+                    &lt;profile&gt;/.claude.json#mcpServers
                   </td>
                   <td className="py-2.5 px-4">Merge at launch</td>
                 </tr>
@@ -1031,9 +1053,10 @@ ccpm settings outputstyle Explanatory --profile work`}
 
           <H2 id="doctor">Doctor</H2>
           <p>
-            <code>ccpm doctor</code> is your one-stop health check. It never
-            fails builds (warnings are informational), but it will tell you
-            when something is actually broken so you don&apos;t chase ghosts.
+            <code>ccpm doctor</code> is your one-stop health check. Warnings
+            are informational and never change the exit code, but it will tell
+            you when something is actually broken so you don&apos;t chase
+            ghosts.
           </p>
           <p>It reports on, in order:</p>
           <ul>
@@ -1085,8 +1108,9 @@ ccpm settings outputstyle Explanatory --profile work`}
             </li>
           </ul>
           <p className="text-sm text-fg-muted">
-            Exit code is 0 on success or when only warnings are present, and 1
-            when real issues are detected.
+            Exit code is 0 on success or when only warnings are present, and 4
+            when real issues are detected (1 means the command itself
+            failed).
           </p>
           <p>
             <code>ccpm doctor</code> is read-only by default. Pass{" "}
@@ -1157,6 +1181,15 @@ ccpm config set check_default_drift false
 ccpm config get check_default_drift`}
             lang="bash"
           />
+          <p className="text-sm text-fg-muted">
+            Other keys: <code>cascade_auto_adopt</code> (auto-link{" "}
+            <code>~/.claude</code> assets into every profile at launch, default
+            on), <code>statusline</code> (inject ccpm&apos;s{" "}
+            <a href="#statusline">status line</a> into profiles that have
+            none, default on), <code>usage_tracking</code> (a SessionEnd hook
+            that keeps the <a href="#usage">usage</a> store warm, default off),
+            and the read-only <code>default_dir</code>.
+          </p>
 
           <H2 id="vault">Vault backup</H2>
           <p>
@@ -1318,6 +1351,96 @@ ccpm prompt --show-default`}
             lang="bash"
           />
 
+          <H2 id="statusline">Status line</H2>
+          <p>
+            Where <code>ccpm prompt</code> feeds your shell prompt,{" "}
+            <code>ccpm statusline</code> feeds the Claude Code window: two rows
+            at the bottom of the session. By default row 1 is the profile, repo
+            (with the subdirectory you are in), git branch, model, and context
+            used; row 2 is reasoning effort, the 5-hour and weekly usage windows
+            (percentage used and when each renews, Pro/Max only), and session
+            cost. Segments with no data drop out, and an empty row is not
+            printed.
+          </p>
+          <CodeBlock
+            code={`⬢ work · claude-code-profile-manager/ccpm · ⎇ main · Opus 5 · ctx 34%
+effort high · 5h 58% ↺16:15 · 7d 88% ↺Mon 8 Sep 08:25 · $1.23`}
+            lang="bash"
+          />
+          <p>
+            <code>ccpm run</code> wires it in automatically for profiles that
+            have no <code>statusLine</code> of their own, and never overwrites
+            one you set.
+          </p>
+          <CodeBlock
+            code={`# turn the auto-injection off everywhere, or for one launch
+ccpm config set statusline false
+ccpm run work --no-statusline
+
+# remove one ccpm already injected
+ccpm settings statusline "" --profile work`}
+            lang="bash"
+          />
+
+          <H3 id="statusline-configure">ccpm statusline configure</H3>
+          <p>
+            Choose which of the nine segments show, and on which row. With no
+            flags it prompts for row 1, then row 2 from what is left; anything
+            unpicked is switched off, and the result is printed against sample
+            data. Without <code>--profile</code> it sets the global default;
+            with <code>--profile</code> it sets an override for that profile,
+            which wins over the global. You are also offered the picker the
+            first time you run <code>ccpm config set statusline true</code>.
+          </p>
+          <CodeBlock
+            code={`ccpm statusline configure                  # global default, interactive
+ccpm statusline configure --profile work   # override for one profile
+ccpm statusline configure --reset          # back to the built-in layout
+ccpm statusline configure --reset --profile work   # drop the override
+
+# non-interactive: name all nine segments across the three flags
+ccpm statusline configure --row1 profile,model --row2 five_hour,seven_day \\
+                          --off workspace,branch,context,effort,cost`}
+            lang="bash"
+          />
+          <p className="text-sm text-fg-muted">
+            Segment keys: <code>profile</code>, <code>workspace</code>,{" "}
+            <code>branch</code>, <code>model</code>, <code>context</code>,{" "}
+            <code>effort</code>, <code>five_hour</code>,{" "}
+            <code>seven_day</code>, <code>cost</code>. Order within a row is
+            the order given. Turning a segment on never invents data: the 5h
+            window on an API-key profile still shows nothing. The desktop
+            app&apos;s <strong>Settings</strong> tab has the same controls with
+            a live preview.
+          </p>
+
+          <H2 id="usage">Token usage</H2>
+          <p>
+            <code>ccpm usage [profile]</code> reports token usage read from the
+            profile&apos;s Claude Code transcripts: raw input, output,
+            cache-write and cache-read counts, with no dollar cost. On a
+            terminal it opens an interactive dashboard (Overview, Days, Models,
+            Projects and Sessions tabs; <code>[</code> / <code>]</code> switch
+            profile, <code>w</code> cycles the time window, <code>q</code>{" "}
+            quits). With no name it uses the active profile, then the default.
+          </p>
+          <CodeBlock
+            code={`ccpm usage                     # interactive dashboard
+ccpm usage work --plain        # static report
+ccpm usage --by-model          # or --by-project, --sessions
+ccpm usage --since 30d         # 168h, 30d, or a date like 2026-06-01
+ccpm usage --all               # every profile
+ccpm usage --json              # machine-readable`}
+            lang="bash"
+          />
+          <p className="text-sm text-fg-muted">
+            Each run reads only the transcript bytes added since the last one.{" "}
+            <code>ccpm config set usage_tracking true</code> also injects a{" "}
+            <code>SessionEnd</code> hook (<code>ccpm usage sync</code>) that
+            keeps the store warm; <code>ccpm usage</code> is accurate without
+            it.
+          </p>
+
           <H2 id="ide">IDE default profile</H2>
           <p>
             IDE extensions (VS Code, Cursor, Antigravity) launch the{" "}
@@ -1355,7 +1478,9 @@ ccpm unset-default`}
           <Callout type="tip" title="100% local">
             ccpm is fully local.{" "}
             <strong>Your data never leaves your machine.</strong> No telemetry,
-            analytics, or tracking of any kind.
+            analytics, or tracking of any kind. The only network request the
+            CLI can make is the opt-in <code>ccpm version --check-latest</code>,
+            which asks GitHub for the newest CLI release.
           </Callout>
 
           <H3 id="privacy-credentials">Credential storage</H3>
