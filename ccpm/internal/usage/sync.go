@@ -2,8 +2,11 @@ package usage
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/lock"
@@ -50,7 +53,9 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 			newFiles[k] = v
 		}
 
+		visited := make(map[string]bool, len(st.Files))
 		walkErr := WalkTranscripts(profileDir, "", func(abs, rel string) error {
+			visited[rel] = true
 			ns, ferr := ingestFile(abs, st.Files[rel], sess, day)
 			if ferr != nil {
 				// Unreadable right now (e.g. native claude mid-write); leave the
@@ -62,6 +67,20 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 		})
 		if walkErr != nil {
 			return walkErr
+		}
+		// Drop cursors for transcripts Claude Code has pruned, or state.json
+		// grows with dead entries forever and is rewritten whole every sync.
+		// Only a confirmed not-exist counts: a file the walk could not reach
+		// this time (an unreadable dir) keeps its cursor, since losing it
+		// would re-count the whole file once it is readable again.
+		projects := filepath.Join(profileDir, "projects")
+		for rel := range newFiles {
+			if visited[rel] {
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(projects, rel)); errors.Is(err, fs.ErrNotExist) {
+				delete(newFiles, rel)
+			}
 		}
 		st.Files = newFiles
 

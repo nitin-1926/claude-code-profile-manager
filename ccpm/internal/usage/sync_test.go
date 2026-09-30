@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -207,6 +208,55 @@ func TestSyncStraddleAdoptsLargerSnapshot(t *testing.T) {
 	}
 	if got := sess.Records["s1"].Messages; got != 1 {
 		t.Fatalf("messages = %d, want 1 (a revision is not a new message)", got)
+	}
+}
+
+// Claude Code prunes transcripts; their cursors used to stay in state.json
+// forever (79 dead entries on a real profile), rewritten on every sync. A
+// cursor is dropped only once its file is really gone — one the walk merely
+// could not reach this time keeps its cursor, or the next sync would re-count
+// the whole file.
+func TestSyncPrunesCursorsForDeletedTranscripts(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions enforced")
+	}
+	dir := t.TempDir()
+	line := func(sess string) []byte {
+		return []byte(realAsstLine(t, sess+"-u1", "msg_"+sess, "req_"+sess, sess, "/repo", "2026-06-27T10:00:00.000Z", "opus", 10, 0, "a"))
+	}
+	keep := writeTranscript(t, dir, "/repo", "keep", line("keep"))
+	gone := writeTranscript(t, dir, "/repo", "gone", line("gone"))
+	hidden := writeTranscript(t, dir, "/other", "hidden", line("hidden"))
+	if _, _, err := Sync(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	// Unreadable, not deleted: the walk cannot enter it this time.
+	hiddenDir := filepath.Dir(hidden)
+	if err := os.Chmod(hiddenDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hiddenDir, 0o755) })
+	if _, _, err := Sync(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := loadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := func(p string) string { r, _ := filepath.Rel(filepath.Join(dir, "projects"), p); return r }
+	if _, ok := st.Files[rel(gone)]; ok {
+		t.Errorf("cursor for a deleted transcript survived: %v", st.Files)
+	}
+	if _, ok := st.Files[rel(keep)]; !ok {
+		t.Errorf("cursor for a live transcript was dropped")
+	}
+	if _, ok := st.Files[rel(hidden)]; !ok {
+		t.Errorf("cursor for a transiently unreachable transcript was dropped")
 	}
 }
 
