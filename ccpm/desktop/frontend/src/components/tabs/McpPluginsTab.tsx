@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
 import { useCommand } from '@/lib/useCommand'
@@ -180,6 +180,11 @@ function OneFieldModal({
   onConfirm: (v: string) => void
 }) {
   const [v, setV] = useState('')
+  // Start empty on every open: the component stays mounted while closed, and
+  // the last value pre-filled would invite a duplicate add.
+  useEffect(() => {
+    if (open) setV('')
+  }, [open])
   const ok = v.trim().length > 0
   return (
     <Modal open={open} onClose={onCancel} title={title}>
@@ -215,6 +220,12 @@ function TwoFieldModal({
 }) {
   const [a, setA] = useState('')
   const [b, setB] = useState('')
+  useEffect(() => {
+    if (open) {
+      setA('')
+      setB('')
+    }
+  }, [open])
   const ok = a.trim() && b.trim()
   return (
     <Modal open={open} onClose={onCancel} title={title}>

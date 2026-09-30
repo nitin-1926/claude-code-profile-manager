@@ -156,6 +156,13 @@ function NewKeyModal({
 }) {
   const [key, setKey] = useState('')
   const [value, setValue] = useState('')
+  // Start empty on every open (the modal stays mounted while closed).
+  useEffect(() => {
+    if (open) {
+      setKey('')
+      setValue('')
+    }
+  }, [open])
   const valid = key.trim() && isJSON(value)
   return (
     <Modal open={open} onClose={onCancel} title="New setting">
