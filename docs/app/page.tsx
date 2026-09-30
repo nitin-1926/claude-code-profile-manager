@@ -212,8 +212,8 @@ function Hero() {
           </div>
 
           <p className="mt-3 max-w-md text-fg-muted leading-relaxed text-[0.8125rem]">
-            Desktop app is macOS-only and not yet notarized. On macOS 15 and
-            later, run{" "}
+            Desktop app is macOS-only and not yet notarized. Install it with the
+            one-line installer in the docs, or after installing the .dmg run{" "}
             <code>xattr -dr com.apple.quarantine /Applications/CCPM.app</code>{" "}
             once before the first launch, or macOS will refuse to open it.
             Profile changes run through the CLI, so keep it installed.

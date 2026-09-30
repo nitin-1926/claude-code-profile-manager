@@ -80,7 +80,17 @@ export default async function DocsPage() {
 
           <H3 id="desktop-download">Download (macOS)</H3>
           <p>
-            Grab the <code>.dmg</code> for your Mac (~3–4 MB each):{" "}
+            The quickest install is one line in Terminal. It picks the build for
+            your chip, verifies its checksum and puts <strong>CCPM</strong> in{" "}
+            <strong>Applications</strong>, ready to open with no Gatekeeper
+            prompt:
+          </p>
+          <CodeBlock
+            code={`curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`}
+            lang="bash"
+          />
+          <p>
+            Or grab the <code>.dmg</code> for your Mac (~3–4 MB each):{" "}
             <a href={DESKTOP_DMG.appleSilicon}>Apple Silicon</a> (
             <code>arm64</code>) or <a href={DESKTOP_DMG.intel}>Intel</a> (
             <code>amd64</code>). Older versions and checksums live on the{" "}
@@ -88,8 +98,10 @@ export default async function DocsPage() {
             <code>.dmg</code> and drag <strong>CCPM</strong> into{" "}
             <strong>Applications</strong>.
           </p>
-          <Callout type="warn" title="First launch: macOS says it can't be opened">
-            The app is not notarized yet, so on macOS 15 Sequoia and later
+          <Callout type="warn" title="Installed from the .dmg? macOS says it can't be opened">
+            The app is not notarized yet (other apps open after a confirmation
+            because their developers pay Apple to notarize them), so on macOS 15
+            Sequoia and later
             Gatekeeper blocks it on first launch and may describe it as{" "}
             <strong>damaged</strong>. It isn&apos;t damaged: macOS just
             can&apos;t verify who built it, and right-click, Open no longer gets

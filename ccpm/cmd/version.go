@@ -78,7 +78,7 @@ func latestReleaseTag() (string, error) {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/nitin-1926/claude-code-profile-manager/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/nitin-1926/claude-code-profile-manager/releases?per_page=50", nil)
 	if err != nil {
 		return "", err
 	}
@@ -95,22 +95,40 @@ func latestReleaseTag() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.Unmarshal(body, &release); err != nil {
+	tag, err := newestCLITag(body)
+	if err != nil {
 		return "", err
-	}
-	if release.TagName == "" {
-		return "", fmt.Errorf("no tag_name in latest-release response")
 	}
 
 	if cacheErr == nil {
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err == nil {
-			if data, err := json.Marshal(latestVersionCache{Tag: release.TagName, CheckedAt: time.Now()}); err == nil {
+			if data, err := json.Marshal(latestVersionCache{Tag: tag, CheckedAt: time.Now()}); err == nil {
 				_ = os.WriteFile(cachePath, data, 0o600)
 			}
 		}
 	}
-	return release.TagName, nil
+	return tag, nil
+}
+
+// newestCLITag picks the newest stable CLI release from a /releases listing.
+//
+// Not /releases/latest: that is whichever release was published last, and the
+// desktop app's desktop-v* releases share the list. When one of those was
+// newest, the check compared against "desktop-v0.1.1", which is not semver, and
+// reported every install as up to date. The listing is newest first.
+func newestCLITag(body []byte) (string, error) {
+	var releases []struct {
+		TagName    string `json:"tag_name"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+	}
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return "", err
+	}
+	for _, r := range releases {
+		if semver.IsValid(r.TagName) && semver.Prerelease(r.TagName) == "" && !r.Draft && !r.Prerelease {
+			return r.TagName, nil
+		}
+	}
+	return "", fmt.Errorf("no CLI release in the releases listing")
 }
