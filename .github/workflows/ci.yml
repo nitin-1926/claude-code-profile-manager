@@ -112,6 +112,36 @@ jobs:
           version: latest
           working-directory: ccpm
 
+  # Every file under ccpm/desktop is //go:build darwin, so the Linux job above
+  # never type-checks or lints any of it — unused code in desktop/rail survived
+  # for exactly that reason. Same linters, on macOS.
+  lint-macos:
+    name: Lint (macOS)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ccpm
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25.13'
+          cache-dependency-path: ccpm/go.sum
+
+      # Package desktop go:embeds all:frontend/dist, which is gitignored and
+      # built only at release. Linting needs the package to compile, not the
+      # real bundle, so a placeholder file satisfies the embed.
+      - name: Placeholder frontend bundle
+        run: mkdir -p desktop/frontend/dist && touch desktop/frontend/dist/index.html
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: latest
+          working-directory: ccpm
+
   govulncheck:
     name: Vulnerability scan
     runs-on: ubuntu-latest
