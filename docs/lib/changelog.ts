@@ -38,6 +38,14 @@ export const CHANGELOG: ChangelogSeries[] = [
     releases: [
       {
         date: "2026-09-30",
+        title: "Update check right after upgrading",
+        categories: ["Fixed"],
+        bullets: [
+          "Right after upgrading from an older version, `ccpm version --check-latest` could report \"Up to date (latest release: desktop-v0.1.1)\" for up to a day, because it trusted a result the older version had cached. A cached result is now used only if it is a CLI release; anything else is checked again.",
+        ],
+      },
+      {
+        date: "2026-09-30",
         title: "Quieter, safer one-line installers",
         categories: ["Fixed"],
         bullets: [

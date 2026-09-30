@@ -70,9 +70,8 @@ func latestReleaseTag() (string, error) {
 	cachePath, cacheErr := versionCachePath()
 	if cacheErr == nil {
 		if data, err := os.ReadFile(cachePath); err == nil {
-			var c latestVersionCache
-			if json.Unmarshal(data, &c) == nil && c.Tag != "" && time.Since(c.CheckedAt) < 24*time.Hour {
-				return c.Tag, nil
+			if tag, ok := freshCachedTag(data, time.Now()); ok {
+				return tag, nil
 			}
 		}
 	}
@@ -108,6 +107,21 @@ func latestReleaseTag() (string, error) {
 		}
 	}
 	return tag, nil
+}
+
+// freshCachedTag returns the cached tag if it is under 24h old AND is a stable
+// CLI release tag. Binaries before 0.7.0 read /releases/latest and could cache
+// "desktop-v0.1.1"; trusting that made a freshly upgraded CLI report "Up to
+// date (latest release: desktop-v0.1.1)" until the entry expired.
+func freshCachedTag(data []byte, now time.Time) (string, bool) {
+	var c latestVersionCache
+	if json.Unmarshal(data, &c) != nil || now.Sub(c.CheckedAt) >= 24*time.Hour {
+		return "", false
+	}
+	if !semver.IsValid(c.Tag) || semver.Prerelease(c.Tag) != "" {
+		return "", false
+	}
+	return c.Tag, true
 }
 
 // newestCLITag picks the newest stable CLI release from a /releases listing.
