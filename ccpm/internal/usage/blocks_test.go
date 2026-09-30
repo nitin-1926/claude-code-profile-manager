@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,36 @@ func TestLoadBlocksSkipsOversizeLine(t *testing.T) {
 	}
 	if got := sumBlocks(blocks); got != 150 {
 		t.Fatalf("blocks total = %d, want 150 (over-cap line skipped)", got)
+	}
+}
+
+// Blocks are read only for the recent lookback: every transcript used to be
+// re-read in full on each call (2.96s on a real profile) to find the one active
+// block. A transcript untouched since before the lookback cannot hold an entry
+// inside it, so it is not opened; older entries in a live transcript are
+// dropped too, so the result never shows a partial historical block.
+func TestLoadBlocksReadsOnlyTheRecentLookback(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	live := realAsstLine(t, "u1", "msg_old", "req_old", "s1", "/repo", tsAgo(now, 20*time.Hour), "opus", 7, 0, "a") +
+		realAsstLine(t, "u2", "msg_new", "req_new", "s1", "/repo", tsAgo(now, 10*time.Minute), "opus", 100, 0, "b")
+	writeTranscript(t, dir, "/repo", "s1", []byte(live))
+
+	// Stale by mtime. Its timestamp is deliberately recent: if the file were
+	// opened, its tokens would land in the active block and show up.
+	stale := writeTranscript(t, dir, "/repo", "s2",
+		[]byte(realAsstLine(t, "u3", "msg_stale", "req_stale", "s2", "/repo", tsAgo(now, 5*time.Minute), "opus", 1000, 0, "c")))
+	old := now.Add(-blockLookback - time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks, err := LoadBlocks(dir, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || !blocks[0].IsActive || blocks[0].Total != 100 {
+		t.Fatalf("blocks = %+v, want exactly one active block of 100 tokens", blocks)
 	}
 }
 
