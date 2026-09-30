@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './lib/api'
 import type { Profile } from './types'
 import { Sidebar } from './components/Sidebar'
@@ -19,20 +19,26 @@ export default function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [selected, setSelected] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const refreshSeq = useRef(0)
 
+  // Only the latest refresh applies: the watcher and a mutation can overlap,
+  // and an older list resolving last would drop a just-cloned profile and
+  // reset the selection to profiles[0].
   async function refresh() {
+    const seq = ++refreshSeq.current
     setRefreshing(true)
     try {
       const profiles = await api.profiles.list()
+      if (seq !== refreshSeq.current) return
       setState({ status: 'ready', profiles })
       setSelected((cur) => {
         if (cur && profiles.some((p) => p.name === cur)) return cur
         return profiles[0]?.name ?? null
       })
     } catch (e) {
-      setState({ status: 'error', message: String(e) })
+      if (seq === refreshSeq.current) setState({ status: 'error', message: String(e) })
     } finally {
-      setRefreshing(false)
+      if (seq === refreshSeq.current) setRefreshing(false)
     }
   }
 
@@ -92,7 +98,7 @@ export default function App() {
           <ProfileView
             profile={active}
             names={names}
-            onMutated={() => void refresh()}
+            onMutated={refresh}
             onSelect={setSelected}
           />
         </main>
