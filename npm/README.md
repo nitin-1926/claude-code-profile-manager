@@ -25,6 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-mana
 go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
 ```
 
+**Prefer a GUI?** There is also a native macOS desktop app; see the [desktop app docs](https://ccpm.dev/docs#desktop). It uses this CLI for write actions, so keep it installed.
+
 ## Quick start
 
 ```bash
@@ -76,6 +78,9 @@ Release highlights and fixes: **[ccpm.dev/changelog](https://ccpm.dev/changelog)
 | `ccpm clone <src> <new>`                                  | Duplicate a profile (assets + settings + auth; `--no-auth` available) |
 | `ccpm set-default [name]` / `ccpm unset-default`          | Pin or clear the default profile for direct `claude` launches        |
 | `ccpm prompt`                                             | Print the active profile name for a shell prompt (PS1 / starship)    |
+| `ccpm statusline configure`                               | Choose which status line segments show, and on which of its two rows |
+| `ccpm usage [name]`                                       | Token usage from a profile's transcripts (dashboard; `--plain`, `--json`) |
+| `ccpm diff <a> <b>`                                       | Compare two profiles (assets, settings keys, env names, MCP, plugins) |
 | `ccpm sync`                                               | Re-apply global installs into one or all profiles                    |
 | `ccpm doctor`                                             | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes symlinks) |
 | `ccpm export / import-bundle`                             | Export a profile to a portable `.tar.gz` and restore it elsewhere    |
@@ -89,17 +94,18 @@ Release highlights and fixes: **[ccpm.dev/changelog](https://ccpm.dev/changelog)
 | `ccpm mcp add / remove / list / import / auth`            | Manage MCP servers (stdio, http, sse) at global/profile/project scope |
 | `ccpm env set / unset / list`                             | Persist env vars per profile (injected at `ccpm run`)                |
 | `ccpm permissions allow / ask / deny / remove / list / mode` | Manage `permissions.*` rules and defaultMode                       |
-| `ccpm sessions list <profile>`                            | List Claude Code sessions stored in a profile                        |
+| `ccpm sessions list <profile>`                            | List a profile's sessions for the current directory (`--all` for every project) |
 | `ccpm settings set / get / apply / show / statusline / outputstyle` | Manage Claude Code settings per profile                    |
 | `ccpm auth status / refresh / backup / restore`           | Manage authentication and the encrypted vault                        |
-| `ccpm config set / get`                                   | `cascade_auto_adopt`, `check_default_drift`, `default_dir` (get-only) |
+| `ccpm config set / get`                                   | `cascade_auto_adopt`, `check_default_drift`, `statusline`, `usage_tracking`, `default_dir` (get-only) |
 | `ccpm shell-init`                                         | Print the shell hook (zsh / bash / fish / powershell)                |
 | `ccpm completion <shell>`                                 | Generate a shell completion script (bash / zsh / fish / powershell)  |
 | `ccpm uninstall`                                          | Remove all profiles, keychain entries, vault, and `~/.ccpm/`         |
+| `ccpm version`                                            | Print the version; `--check-latest` checks GitHub for a newer CLI release (opt-in) |
 
 Full command reference and guides: **[ccpm.dev/docs](https://ccpm.dev/docs)**.
 
-`ccpm run` intercepts four flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
+`ccpm run` intercepts five flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan), `--no-statusline` (skip injecting the default status line for this launch), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
 
 ## How it works
 
@@ -113,7 +119,7 @@ No daemons. No patches. No magic.
 
 ## Privacy and security
 
-ccpm is 100% local. It never makes network requests, collects data, or phones home.
+ccpm is 100% local. It never collects data or phones home, and it makes no network requests except the opt-in `ccpm version --check-latest` release check.
 
 - API keys live in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager).
 - Vault backups use AES-256-GCM with a master key in your OS keychain.
