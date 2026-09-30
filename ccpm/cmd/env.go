@@ -53,7 +53,7 @@ Examples:
   ccpm env set CLAUDE_CODE_MAX_OUTPUT_TOKENS=32768 HTTPS_PROXY=http://localhost:8888 --profile work`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvSet(state, args)
+			return withConfigLock(func() error { return runEnvSet(state, args) })
 		},
 	}
 	requireProfileFlag(setCmd, &state.profile, "target profile (required)")
@@ -63,7 +63,7 @@ Examples:
 		Short: "Remove one or more env vars from a profile",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvUnset(state, args)
+			return withConfigLock(func() error { return runEnvUnset(state, args) })
 		},
 	}
 	requireProfileFlag(unsetCmd, &state.profile, "target profile (required)")

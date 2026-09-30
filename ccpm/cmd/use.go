@@ -82,9 +82,11 @@ func runUse(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: could not materialize profile settings: %v\n", err)
 	}
 
-	// Update last used
-	cfg.UpdateLastUsed(name)
-	_ = config.Save(cfg)
+	// Best-effort, like `ccpm run`: on lock timeout skip the stamp rather than
+	// block activation or save unlocked.
+	if err := withConfigLock(func() error { stampLastUsed(name); return nil }); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping last-used stamp (lock unavailable): %v\n", err)
+	}
 
 	s := shell.DetectShell()
 
