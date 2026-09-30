@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -144,6 +145,68 @@ func TestWriteJSONAtomic(t *testing.T) {
 		if filepath.Ext(e.Name()) == ".tmp" {
 			t.Errorf("temp file left behind: %s", e.Name())
 		}
+	}
+}
+
+// TestWriteJSONIgnoresPlantedTempPath: with a fixed "<path>.tmp" staging
+// name, a symlink planted there is followed by O_CREATE|O_TRUNC — the write
+// lands in (and truncates) whatever it points at — and two concurrent writers
+// clobber each other's staging file. The staging file must be unique and
+// created exclusively.
+func TestWriteJSONIgnoresPlantedTempPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "settings.json")
+	victim := filepath.Join(tmp, "victim")
+	if err := os.WriteFile(victim, []byte("precious\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, path+".tmp"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := WriteJSON(path, map[string]interface{}{"model": "opus"}); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+
+	if got, _ := os.ReadFile(victim); string(got) != "precious\n" {
+		t.Errorf("write followed the planted %s.tmp symlink; victim now %q", filepath.Base(path), got)
+	}
+	if loaded, err := LoadJSON(path); err != nil || loaded["model"] != "opus" {
+		t.Errorf("settings.json = %v (err %v), want model=opus", loaded, err)
+	}
+}
+
+// TestSaveOwnedKeysIsAtomic: the owned-keys sidecar is read on every
+// materialize and a parse error fails it, so a torn write (plain
+// os.WriteFile truncates first) must never be possible. Routing through
+// atomicwrite gives temp+rename, and atomicwrite's refusal to write through a
+// symlink is the observable proof the write took that path.
+func TestSaveOwnedKeysIsAtomic(t *testing.T) {
+	tmp := t.TempDir()
+	frag := filepath.Join(tmp, "work.json")
+	victim := filepath.Join(tmp, "victim")
+	if err := os.WriteFile(victim, []byte("precious\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, ownedKeysPath(frag)); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_ = SaveOwnedKeys(frag, map[string]struct{}{"model": {}})
+	if got, _ := os.ReadFile(victim); string(got) != "precious\n" {
+		t.Errorf("owned-keys write followed a symlink (not atomic); victim now %q", got)
+	}
+
+	// Regular path: round-trips, 0600, no staging files left behind.
+	frag2 := filepath.Join(tmp, "personal.json")
+	if err := SaveOwnedKeys(frag2, map[string]struct{}{"model": {}}); err != nil {
+		t.Fatalf("SaveOwnedKeys: %v", err)
+	}
+	got, err := LoadOwnedKeys(frag2)
+	if _, ok := got["model"]; err != nil || !ok {
+		t.Fatalf("LoadOwnedKeys = %v, %v", got, err)
+	}
+	if fi, err := os.Stat(ownedKeysPath(frag2)); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0600) {
+		t.Errorf("sidecar mode = %v (err %v), want 0600", fi.Mode().Perm(), err)
 	}
 }
 

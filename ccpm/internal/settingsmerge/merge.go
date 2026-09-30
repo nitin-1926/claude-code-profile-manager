@@ -169,11 +169,14 @@ func WriteJSON(path string, data map[string]interface{}) error {
 		}
 		dest = resolved
 	}
-	tmp := dest + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, config.FilePerm)
+	// Unique, exclusively-created staging file (CreateTemp uses O_EXCL and
+	// 0600 == config.FilePerm): a fixed "<dest>.tmp" would follow a symlink
+	// planted there and let two concurrent writers clobber each other.
+	f, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("writing %s: %w", tmp, err)
+		return fmt.Errorf("staging %s: %w", dest, err)
 	}
+	tmp := f.Name()
 	if _, err := f.Write(bytes); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
