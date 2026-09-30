@@ -162,7 +162,10 @@ export default async function DocsPage() {
             <strong>Updates are automatic.</strong> When a new build ships, the
             app shows an in-app <strong>Update now</strong> prompt, downloads it,
             verifies the SHA-256, and swaps itself in place — no re-downloading,
-            no re-dragging, and no repeat of the Gatekeeper step. The desktop app
+            no re-dragging, and no repeat of the Gatekeeper step. If it can&apos;t
+            replace itself (its folder isn&apos;t writable by you, or macOS is
+            running it from a temporary location because it was never moved to
+            Applications), it tells you instead of quitting. The desktop app
             versions independently of the CLI (on <code>desktop-v*</code> tags;
             current: <code>desktop-v{DESKTOP_VERSION}</code>).
           </p>
@@ -815,10 +818,11 @@ ccpm mcp import ./mcp-servers.json --scope global`}
 
           <H3 id="env-commands">Env var commands</H3>
           <p>
-            Persist environment variables on a profile; they&apos;re layered
-            into the process env at every <code>ccpm run</code>, sitting below
-            the parent process env and above <code>ccpm run --ccpm-env</code>{" "}
-            overrides. <code>CLAUDE_CONFIG_DIR</code> and{" "}
+            Persist environment variables on a profile; they&apos;re added to
+            the process env at every <code>ccpm run</code>. A profile entry
+            replaces the same variable inherited from your shell, and{" "}
+            <code>ccpm run --ccpm-env</code> replaces both.{" "}
+            <code>CLAUDE_CONFIG_DIR</code> and{" "}
             <code>ANTHROPIC_API_KEY</code> are reserved. ccpm always computes
             them.
           </p>
@@ -864,11 +868,13 @@ ccpm permissions list --profile work`}
 
           <H3 id="trust-commands">Trusted project directories</H3>
           <p>
-            <code>ccpm trust</code> manages which project directories are
-            allowed to contribute hooks, permissions, and MCP servers via{" "}
-            <code>./.claude/settings.json</code> and{" "}
-            <code>./.claude/settings.local.json</code>. A new repo&apos;s
-            project settings are ignored until you grant trust. Aliases:{" "}
+            <code>ccpm trust</code> decides what ccpm&apos;s own view (
+            <code>ccpm settings show</code>, the desktop app) takes from a
+            repo&apos;s <code>./.claude/settings.json</code> and{" "}
+            <code>./.claude/settings.local.json</code>. For an untrusted repo it
+            keeps only inert display, editor and model keys. ccpm never writes
+            project settings or MCP servers into a profile: Claude Code reads
+            them from the repo itself, behind its own trust prompt. Aliases:{" "}
             <code>add</code> / <code>grant</code>, <code>remove</code> /{" "}
             <code>rm</code> / <code>forget</code> / <code>revoke</code>,{" "}
             <code>list</code> / <code>ls</code>.
@@ -893,7 +899,10 @@ ccpm trust remove ~/code/internal-tooling`}
             <code>&lt;profileDir&gt;/projects/&lt;encoded-cwd&gt;/*.jsonl</code>
             . By default it scopes to the current working directory (matching{" "}
             <code>claude --resume</code>); pass <code>--all</code> to list every
-            project.
+            project. Sessions are sorted by the LAST ACTIVE column, most recent
+            first, and subagent transcripts are not listed. <code>--json</code>{" "}
+            gives <code>started</code> (the first timestamp) and{" "}
+            <code>last_active</code>.
           </p>
           <CodeBlock
             code={`# sessions for the current project in profile "work"
@@ -998,13 +1007,17 @@ ccpm settings outputstyle Explanatory --profile work`}
           <H2 id="settings-precedence">Settings precedence</H2>
           <p>
             At launch, ccpm materializes <code>settings.json</code> for a
-            profile by merging in this order (lowest → highest, higher wins):
+            profile by merging in this order (lowest → highest, higher wins).
+            ccpm writes layers 1 to 4 into the profile. Layers 5 to 7 are
+            applied by Claude Code itself from the project and system
+            directories; ccpm shows them in <code>ccpm settings show</code> but
+            never writes them into the profile.
           </p>
           <ol>
             <li>
-              The profile&apos;s existing{" "}
-              <code>&lt;profile&gt;/settings.json</code>. Preserves keys Claude
-              Code auto-wrote that nothing else redefines.
+              Keys already in <code>&lt;profile&gt;/settings.json</code> that
+              ccpm didn&apos;t write: what Claude Code or you set in a session,
+              such as <code>/model</code>.
             </li>
             <li>
               <code>~/.claude/settings.json</code>. The host file native Claude
@@ -1040,7 +1053,7 @@ ccpm settings outputstyle Explanatory --profile work`}
               </code>{" "}
               on macOS, <code>/etc/claude-code/managed-settings.json</code> on
               Linux, and{" "}
-              <code>C:\ProgramData\ClaudeCode\managed-settings.json</code> on
+              <code>C:\Program Files\ClaudeCode\managed-settings.json</code> on
               Windows, plus sibling <code>managed-settings.d/*.json</code>{" "}
               drop-ins merged in alphabetical order. Highest precedence so
               org-level policy always wins, matching native Claude Code.
@@ -1048,7 +1061,12 @@ ccpm settings outputstyle Explanatory --profile work`}
           </ol>
           <p>
             Objects merge key-by-key; arrays and scalars from a
-            higher-precedence source replace the lower one.
+            higher-precedence source replace the lower one. Removing a setting
+            or MCP server at its source (<code>ccpm mcp remove</code>,{" "}
+            <code>ccpm settings unset</code>, deleting it from{" "}
+            <code>~/.claude/settings.json</code>) removes it from the profile on
+            the next launch; values you or Claude Code changed in the profile
+            are kept.
           </p>
 
           <H2 id="doctor">Doctor</H2>
@@ -1208,12 +1226,22 @@ ccpm auth restore personal`}
 
           <H2 id="backup-migrate">Backup &amp; migrate profiles</H2>
           <p>
-            <code>ccpm export</code> bundles a profile&apos;s directory — skills,
-            agents, commands, rules, hooks, MCP fragments, plugin metadata, and
-            settings — into a single <code>.tar.gz</code> you can copy to another
-            machine and restore with <code>ccpm import-bundle</code>. Use{" "}
+            <code>ccpm export</code> bundles a profile (its skills, agents,
+            commands, rules and hooks, its settings and MCP fragments, and plugin
+            metadata) into a single <code>.tar.gz</code> you can copy to another
+            machine and restore with <code>ccpm import-bundle</code>. Session
+            history (transcripts, todos, shell snapshots) is left out unless you
+            pass <code>--include-history</code>, since it can hold secrets you
+            pasted into a session. Use{" "}
             <a href="#profiles-clone">ccpm clone</a> instead when you just want a
             second copy on the same machine.
+          </p>
+          <p>
+            Treat a bundle from someone else as untrusted code. Before
+            restoring, <code>ccpm import-bundle</code> lists every hook, MCP
+            server, command-running setting and env key in it and asks you to
+            confirm. Without a terminal it refuses unless you pass{" "}
+            <code>--trust-bundle</code>.
           </p>
           <Callout type="warn" title="Credentials are excluded by default">
             OS-keychain tokens are machine-bound, and{" "}
@@ -1231,8 +1259,8 @@ ccpm auth restore personal`}
 ccpm export work
 ccpm export work -o ~/backups/work.ccpm.tar.gz
 
-# include credentials for a trusted same-user move
-ccpm export work --include-credentials
+# include session history and credentials for a trusted same-user move
+ccpm export work --include-history --include-credentials
 
 # restore on another machine (path-traversal-safe)
 ccpm import-bundle ~/backups/work.ccpm.tar.gz
@@ -1246,8 +1274,10 @@ ccpm auth refresh work-restored`}
           <H2 id="uninstall">Uninstall</H2>
           <p>
             <code>ccpm uninstall</code> removes every profile, deletes API keys
-            from the OS keychain, wipes vault backups, and deletes{" "}
-            <code>~/.ccpm/</code>. It does <strong>not</strong> remove the{" "}
+            and OAuth logins from the OS keychain, wipes vault backups and the
+            vault key, clears the system default set by{" "}
+            <code>ccpm set-default</code>, and deletes <code>~/.ccpm/</code>.
+            Without a terminal it needs <code>--force</code>. It does <strong>not</strong> remove the{" "}
             <code>ccpm</code> binary itself or the shell hook you added to{" "}
             <code>~/.zshrc</code> / <code>~/.bashrc</code>. The command prints
             those cleanup steps so you can run them by hand. If you installed the{" "}
