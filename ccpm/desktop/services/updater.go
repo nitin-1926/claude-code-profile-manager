@@ -96,6 +96,10 @@ func trustedReleaseURL(raw string) bool {
 // SetContext is called once from the App's startup with the Wails runtime ctx.
 func (u *Updater) SetContext(ctx context.Context) { u.ctx = ctx }
 
+// Version is the running build's version, read without touching the network —
+// for showing it, where Check would spend the GitHub API quota Install needs.
+func (u *Updater) Version() string { return CurrentVersion }
+
 // UpdateInfo is the result of a check, returned to the frontend.
 type UpdateInfo struct {
 	Available bool   `json:"available"`

@@ -103,6 +103,26 @@ func TestUpdaterHasNoWholeRequestTimeout(t *testing.T) {
 	}
 }
 
+// The Settings tab reads the running version on every mount. It used Check,
+// a GitHub API call: offline or rate-limited the version line vanished, and
+// each mount spent the 60/h quota Install needs. Version is local.
+func TestVersionIsLocal(t *testing.T) {
+	defer func(v string) { CurrentVersion = v }(CurrentVersion)
+	CurrentVersion = "1.2.3"
+	u := NewUpdater()
+	u.http.Transport = failingTransport{t}
+	if got := u.Version(); got != "1.2.3" {
+		t.Errorf("Version() = %q, want 1.2.3", got)
+	}
+}
+
+type failingTransport struct{ t *testing.T }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	f.t.Error("Version made a network request")
+	return nil, http.ErrHandlerTimeout
+}
+
 func TestSemverNewer(t *testing.T) {
 	cases := []struct {
 		a, b string

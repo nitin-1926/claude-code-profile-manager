@@ -46,7 +46,7 @@ import {
 } from '../../wailsjs/go/services/StatusLineService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
-import { Check as UpdaterCheck, Install as UpdaterInstall } from '../../wailsjs/go/services/Updater'
+import { Check as UpdaterCheck, Install as UpdaterInstall, Version as UpdaterVersion } from '../../wailsjs/go/services/Updater'
 import { PickDirectory } from '../../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 import type {
@@ -164,6 +164,8 @@ export const api = {
   updater: {
     check: () => UpdaterCheck() as unknown as Promise<UpdateInfo>,
     install: () => UpdaterInstall() as unknown as Promise<void>,
+    // The running version, local — no GitHub request, unlike check().
+    version: () => UpdaterVersion() as unknown as Promise<string>,
   },
   // Subscribe to the Go watcher's debounced change signal. Returns an unsubscribe fn.
   onChanged: (cb: () => void): (() => void) => EventsOn('ccpm:changed', cb),

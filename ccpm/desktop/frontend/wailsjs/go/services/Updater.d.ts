@@ -8,3 +8,5 @@ export function Check():Promise<services.UpdateInfo>;
 export function Install():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function Version():Promise<string>;
