@@ -66,7 +66,7 @@ func ccpmNotchScreensChanged() {
 		go func() {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.applyLocked()
+			c.relayoutLocked()
 		}()
 	}
 }
@@ -263,8 +263,17 @@ func (c *Controller) retryLocked() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.retrying = false
-		c.applyLocked()
+		c.relayoutLocked()
 	})
+}
+
+// relayoutLocked re-sends everything derived from the screen: the panel frame
+// and, separately, the panel-local cell and card rects. CCPMNotchSetGeometry
+// keeps the existing cell layers, so a new screen that changes the panel size
+// or the camera notch's size needs both. Caller holds mu.
+func (c *Controller) relayoutLocked() {
+	c.applyLocked()
+	c.pushModelLocked()
 }
 
 // edgeCode is the C-side edge enum. Kept in step with kEdge* in
