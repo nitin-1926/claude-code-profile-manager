@@ -289,6 +289,24 @@ func TestRename_DropsOrphanFragmentsUnderNewName(t *testing.T) {
 	}
 }
 
+// --- Finding 3: remove deletes the path-namespaced OAuth keychain entry ---
+
+// `ccpm add <same name>` recreates the same dir → same keychain hash, so a
+// surviving entry would log the new profile in as the old account.
+func TestRemove_DeletesOAuthKeychainEntry(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	dir := lc.addProfile(t, "old", "oauth")
+	lc.oauth[dir] = `{"claudeAiOauth":{"accessToken":"old-account"}}`
+	forceRemove = true
+
+	if err := runRemove(removeCmd, []string{"old"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lc.oauth[dir]; ok || !slices.Contains(lc.oauthDeleted, dir) {
+		t.Fatalf("OAuth keychain entry for %s survived remove (deleted: %v)", dir, lc.oauthDeleted)
+	}
+}
+
 // --- Finding 2: clone / import from-profile carry profile-scoped state -----
 
 // seedProfileScopedSkill links share/skills/<id> into dir/skills/<id> and

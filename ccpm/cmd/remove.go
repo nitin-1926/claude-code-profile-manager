@@ -41,8 +41,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	p, exists := cfg.Profiles[name]
-	if !exists {
+	if _, exists := cfg.Profiles[name]; !exists {
 		return fmt.Errorf("profile %q not found", name)
 	}
 
@@ -65,6 +64,15 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	// commands. Re-load config inside the lock so we delete from the freshest
 	// state instead of clobbering a concurrent profile add/rename.
 	return withConfigLock(func() error {
+		freshCfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("reloading config: %w", err)
+		}
+		p, exists := freshCfg.Profiles[name]
+		if !exists {
+			return fmt.Errorf("profile %q not found", name)
+		}
+
 		// Name-keyed stores first (settings/MCP fragments, manifest refs): if
 		// this transaction fails nothing has been deleted yet. Left behind,
 		// they would be inherited by the next profile created with this name.
@@ -85,17 +93,21 @@ func runRemove(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Remove the OAuth login Claude Code keyed to this dir's path. A
+		// re-added profile with the same name gets the same dir → the same
+		// keychain slot, and would silently be logged in as this account.
+		// Deleted for api_key profiles too: `claude /login` run inside one
+		// writes the same slot, and nothing else can ever use it.
+		if err := deleteOAuthKeychain(p.Dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove OAuth keychain entry: %v\n", err)
+		}
+
 		// Remove vault backup
 		v := vault.New(newKeystore())
 		if err := v.Remove(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove vault backup: %v\n", err)
 		}
 
-		// Update config (re-loaded under lock)
-		freshCfg, err := config.Load()
-		if err != nil {
-			return fmt.Errorf("reloading config: %w", err)
-		}
 		freshCfg.RemoveProfile(name)
 		if err := config.Save(freshCfg); err != nil {
 			return fmt.Errorf("saving config: %w", err)
