@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -51,9 +52,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("profile %q already exists", name)
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
+	// One buffered reader for every prompt: a second reader over os.Stdin
+	// would miss whatever the first had already buffered from a piped script.
+	// The wizard's own bufio.NewReader returns this same reader.
+	stdin := bufio.NewReader(os.Stdin)
 
-	authMethod, err := pickAuthMethod(scanner)
+	authMethod, err := pickAuthMethod(stdin)
 	if err != nil {
 		return err
 	}
@@ -84,7 +88,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	existing := config.ProfileNames(cfg)
 	if defaultclaude.Exists() || len(existing) > 0 {
 		fmt.Println()
-		decision, err := wizard.PromptImportSource(os.Stdin, os.Stdout, existing, defaultclaude.Exists())
+		decision, err := wizard.PromptImportSource(stdin, os.Stdout, existing, defaultclaude.Exists())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: import wizard failed: %v\n", err)
 		} else if decision.Source != wizard.SourceScratch {
@@ -133,9 +137,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 			key = strings.TrimSpace(string(keyBytes))
 		} else {
-			if scanner.Scan() {
-				key = strings.TrimSpace(scanner.Text())
-			} else if err := scanner.Err(); err != nil {
+			line, err := stdin.ReadString('\n')
+			key = strings.TrimSpace(line)
+			if err != nil && !errors.Is(err, io.EOF) {
 				// Surface real I/O errors (broken pipe, EOF mid-read) instead
 				// of collapsing them into the generic "API key cannot be
 				// empty" path below.
@@ -199,7 +203,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 // pickAuthMethod asks the user to choose OAuth vs API key. Uses the interactive
 // picker in a TTY; falls back to the legacy 1/2 numeric prompt when not, so CI
 // and piped-stdin callers keep working.
-func pickAuthMethod(scanner *bufio.Scanner) (string, error) {
+func pickAuthMethod(stdin *bufio.Reader) (string, error) {
 	choice, err := picker.Select("Choose authentication method", []picker.Option{
 		{Value: "oauth", Label: "OAuth", Description: "browser login via `claude /login`"},
 		{Value: "api_key", Label: "API Key", Description: "paste an Anthropic API key"},
@@ -215,10 +219,11 @@ func pickAuthMethod(scanner *bufio.Scanner) (string, error) {
 	fmt.Println("  1) OAuth (browser login via claude /login)")
 	fmt.Println("  2) API Key (enter your Anthropic API key)")
 	fmt.Print("Enter choice [1/2]: ")
-	if !scanner.Scan() {
+	line, err := stdin.ReadString('\n')
+	if line == "" && err != nil {
 		return "", fmt.Errorf("no input received")
 	}
-	raw := strings.TrimSpace(scanner.Text())
+	raw := strings.TrimSpace(line)
 	switch raw {
 	case "1", "oauth", "":
 		return "oauth", nil
