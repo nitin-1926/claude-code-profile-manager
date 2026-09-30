@@ -3,10 +3,13 @@ package cmd
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/fatih/color"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
@@ -126,6 +130,13 @@ var importBundleCmd = &cobra.Command{
 	Long: `Creates a new profile from a .tar.gz produced by 'ccpm export'. By default the
 new profile takes the bundle's original name; override with --profile.
 
+Treat a bundle from someone else as untrusted code. Before anything is
+restored, ccpm lists every hook command, MCP server (command/args/url),
+command-valued setting (statusLine, apiKeyHelper, ...) and settings env key
+in the bundle and asks for confirmation, because each runs or takes effect on
+every 'ccpm run' of the profile. Without a TTY the import refuses unless
+--trust-bundle is passed.
+
 If the bundle did not include credentials (the default), authenticate the
 restored profile afterwards with 'ccpm auth refresh <name>'.`,
 	Args: cobra.ExactArgs(1),
@@ -139,6 +150,7 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 
 	importBundleCmd.Flags().String("profile", "", "name for the restored profile (default: the bundle's original name)")
+	importBundleCmd.Flags().Bool("trust-bundle", false, "restore hooks, MCP servers, statusLine and env from the bundle without prompting (required when not on a TTY)")
 	rootCmd.AddCommand(importBundleCmd)
 }
 
@@ -358,6 +370,137 @@ func restoreBundleFragments(profileDir, profileName string) ([]string, error) {
 	return written, nil
 }
 
+// commandSettings are settings keys whose value Claude Code executes as a
+// shell command.
+var commandSettings = []string{"statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper"}
+
+// bundleRunnables lists every item in an extracted bundle that runs a
+// command or can redirect Claude Code's traffic on the next `ccpm run`:
+// hook commands, command-valued settings (statusLine, apiKeyHelper, ...),
+// settings env keys, and MCP servers. Malformed JSON is an error, so an
+// unparseable file can't hide what it holds.
+func bundleRunnables(profileDir string) ([]string, error) {
+	load := func(rel string) (map[string]interface{}, error) {
+		return settingsmerge.LoadJSON(filepath.Join(profileDir, filepath.FromSlash(rel)))
+	}
+	var out []string
+	for _, rel := range []string{"settings.json", bundleFragmentsDir + "/settings.json"} {
+		doc, err := load(rel)
+		if err != nil {
+			return nil, err
+		}
+		hooks, _ := doc["hooks"].(map[string]interface{})
+		for _, event := range slices.Sorted(maps.Keys(hooks)) {
+			matchers, _ := hooks[event].([]interface{})
+			for _, m := range matchers {
+				mm, _ := m.(map[string]interface{})
+				matcher, _ := mm["matcher"].(string)
+				list, _ := mm["hooks"].([]interface{})
+				for _, h := range list {
+					hm, _ := h.(map[string]interface{})
+					body, _ := hm["command"].(string)
+					if body == "" {
+						body, _ = hm["prompt"].(string)
+					}
+					out = append(out, fmt.Sprintf("hook        %s %s[%s]: %s", rel, event, matcher, body))
+				}
+			}
+		}
+		for _, key := range commandSettings {
+			v, ok := doc[key]
+			if !ok {
+				continue
+			}
+			body, _ := v.(string)
+			if obj, isObj := v.(map[string]interface{}); isObj {
+				body, _ = obj["command"].(string)
+			}
+			out = append(out, fmt.Sprintf("command     %s %s: %s", rel, key, body))
+		}
+		if env, _ := doc["env"].(map[string]interface{}); len(env) > 0 {
+			out = append(out, fmt.Sprintf("env         %s: %s", rel, strings.Join(slices.Sorted(maps.Keys(env)), ", ")))
+		}
+		servers, _ := doc["mcpServers"].(map[string]interface{})
+		out = append(out, mcpRunnables(rel, servers)...)
+	}
+
+	frag, err := load(bundleFragmentsDir + "/mcp.json")
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, mcpRunnables(bundleFragmentsDir+"/mcp.json", frag)...)
+
+	claudeJSON, err := load(".claude.json")
+	if err != nil {
+		return nil, err
+	}
+	servers, _ := claudeJSON["mcpServers"].(map[string]interface{})
+	out = append(out, mcpRunnables(".claude.json", servers)...)
+	projects, _ := claudeJSON["projects"].(map[string]interface{})
+	for _, proj := range slices.Sorted(maps.Keys(projects)) {
+		pm, _ := projects[proj].(map[string]interface{})
+		servers, _ := pm["mcpServers"].(map[string]interface{})
+		out = append(out, mcpRunnables(".claude.json project "+proj, servers)...)
+	}
+	return out, nil
+}
+
+func mcpRunnables(src string, servers map[string]interface{}) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(servers)) {
+		def, _ := servers[name].(map[string]interface{})
+		var parts []string
+		if c, _ := def["command"].(string); c != "" {
+			parts = append(parts, "cmd="+c)
+		}
+		if args, _ := def["args"].([]interface{}); len(args) > 0 {
+			parts = append(parts, fmt.Sprintf("args=%v", args))
+		}
+		if u, _ := def["url"].(string); u != "" {
+			parts = append(parts, "url="+u)
+		}
+		if env, _ := def["env"].(map[string]interface{}); len(env) > 0 {
+			parts = append(parts, "env="+strings.Join(slices.Sorted(maps.Keys(env)), ","))
+		}
+		out = append(out, fmt.Sprintf("mcp server  %s %s: %s", src, name, strings.Join(parts, " ")))
+	}
+	return out
+}
+
+// confirmBundleRunnables shows every runnable item in the extracted bundle
+// and requires consent before it is restored, mirroring `ccpm import
+// default`'s gate on hooks/MCP: prompt on a TTY, and without one refuse
+// unless --trust-bundle, so piping `yes` or CI can't grant shell access.
+func confirmBundleRunnables(cmd *cobra.Command, profileDir string) error {
+	items, err := bundleRunnables(profileDir)
+	if err != nil {
+		return fmt.Errorf("inspecting bundle: %w", err)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	w := cmd.ErrOrStderr()
+	fmt.Fprintln(w, "This bundle contains items that run commands or change where Claude Code connects, every time the restored profile runs:")
+	for _, it := range items {
+		fmt.Fprintln(w, "  "+it)
+	}
+	if trust, _ := cmd.Flags().GetBool("trust-bundle"); trust {
+		fmt.Fprintln(w, "--trust-bundle: restoring them without prompting.")
+		return nil
+	}
+	if !picker.IsInteractive() {
+		return errors.New("refusing to restore a bundle with hooks, MCP servers, commands or env without a TTY; re-run with --trust-bundle only if you trust whoever made it")
+	}
+	ok, err := picker.Confirm("Restore these? Only say yes if you trust whoever made this bundle.", false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("import cancelled: bundle not trusted (nothing was restored)")
+	}
+	return nil
+}
+
 func runImportBundle(cmd *cobra.Command, args []string) error {
 	bundlePath := args[0]
 
@@ -391,6 +534,11 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := extractBundle(bundlePath, dstDir); err != nil {
+		_ = profile.Remove(name)
+		return err
+	}
+	// Gate before anything lands outside the profile dir or gets registered.
+	if err := confirmBundleRunnables(cmd, dstDir); err != nil {
 		_ = profile.Remove(name)
 		return err
 	}
