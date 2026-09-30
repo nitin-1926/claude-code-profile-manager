@@ -164,29 +164,33 @@ func (s *MutateService) ImportInTerminal() CmdResult {
 	return s.terminal("", "add")
 }
 
+// Every call below that passes a value typed in the UI puts flags first and
+// `--` before those positionals: a value starting with "-" (a setting of -1)
+// is otherwise parsed as a flag, and the failure reads as an outdated CLI.
+
 // --- asset-level writes (profile-scoped) ---
 
 // AddAsset installs an asset of kind (skill/agent/command/rule/hook) from a
 // filesystem path into a profile.
 func (s *MutateService) AddAsset(kind, path, profile string) CmdResult {
-	return runCCPM(kind, "add", path, "--profile", profile)
+	return runCCPM(kind, "add", "--profile", profile, "--", path)
 }
 
 // RemoveAsset removes a named asset of kind from a profile.
 func (s *MutateService) RemoveAsset(kind, name, profile string) CmdResult {
-	return runCCPM(kind, "remove", name, "--profile", profile)
+	return runCCPM(kind, "remove", "--profile", profile, "--", name)
 }
 
 // --- MCP + plugins ---
 
 // AddStdioMCP adds a stdio MCP server to a profile.
 func (s *MutateService) AddStdioMCP(name, command, profile string) CmdResult {
-	return runCCPM("mcp", "add", name, "--scope", "profile", "--profile", profile, "--command", command)
+	return runCCPM("mcp", "add", "--scope", "profile", "--profile", profile, "--command", command, "--", name)
 }
 
 // AddHTTPMCP adds an http/sse MCP server to a profile.
 func (s *MutateService) AddHTTPMCP(name, url, profile string) CmdResult {
-	return runCCPM("mcp", "add", name, "--scope", "profile", "--profile", profile, "--transport", "http", "--url", url)
+	return runCCPM("mcp", "add", "--scope", "profile", "--profile", profile, "--transport", "http", "--url", url, "--", name)
 }
 
 // RemoveMCP removes a profile-scoped MCP server. It refuses, before asking the
@@ -200,7 +204,7 @@ func (s *MutateService) RemoveMCP(name, profile string) CmdResult {
 	if !slices.ContainsFunc(list, func(m McpView) bool { return m.Name == name && m.Removable }) {
 		return CmdResult{Error: fmt.Sprintf("MCP server %q is not installed in profile %q — it comes from another scope", name, profile)}
 	}
-	return runCCPM("mcp", "remove", name, "--scope", "profile", "--profile", profile)
+	return runCCPM("mcp", "remove", "--scope", "profile", "--profile", profile, "--", name)
 }
 
 // TogglePlugin enables or disables a plugin (<name>@<marketplace>) for a profile.
@@ -209,49 +213,49 @@ func (s *MutateService) TogglePlugin(plugin string, enable bool, profile string)
 	if enable {
 		verb = "enable"
 	}
-	return runCCPM("plugin", verb, plugin, "--profile", profile)
+	return runCCPM("plugin", verb, "--profile", profile, "--", plugin)
 }
 
 // InstallPlugin installs a plugin (<name>@<marketplace>) into a profile.
 func (s *MutateService) InstallPlugin(plugin, profile string) CmdResult {
-	return runCCPM("plugin", "install", plugin, "--profile", profile)
+	return runCCPM("plugin", "install", "--profile", profile, "--", plugin)
 }
 
 // RemovePlugin uninstalls a plugin (<name>@<marketplace>) from a profile.
 func (s *MutateService) RemovePlugin(plugin, profile string) CmdResult {
-	return runCCPM("plugin", "remove", plugin, "--profile", profile)
+	return runCCPM("plugin", "remove", "--profile", profile, "--", plugin)
 }
 
 // SetSetting sets a settings key (dot notation) to a JSON value for a profile.
 func (s *MutateService) SetSetting(key, value, profile string) CmdResult {
-	return runCCPM("settings", "set", key, value, "--profile", profile)
+	return runCCPM("settings", "set", "--profile", profile, "--", key, value)
 }
 
 // --- permissions + env ---
 
 // AddPermission adds a rule to a bucket (allow/ask/deny) for a profile.
 func (s *MutateService) AddPermission(bucket, rule, profile string) CmdResult {
-	return runCCPM("permissions", bucket, rule, "--profile", profile)
+	return runCCPM("permissions", bucket, "--profile", profile, "--", rule)
 }
 
 // RemovePermission strips a rule from all permission buckets for a profile.
 func (s *MutateService) RemovePermission(rule, profile string) CmdResult {
-	return runCCPM("permissions", "remove", rule, "--profile", profile)
+	return runCCPM("permissions", "remove", "--profile", profile, "--", rule)
 }
 
 // SetPermissionMode sets the default permission mode for a profile.
 func (s *MutateService) SetPermissionMode(mode, profile string) CmdResult {
-	return runCCPM("permissions", "mode", mode, "--profile", profile)
+	return runCCPM("permissions", "mode", "--profile", profile, "--", mode)
 }
 
 // SetEnv sets a KEY=VALUE env var on a profile.
 func (s *MutateService) SetEnv(kv, profile string) CmdResult {
-	return runCCPM("env", "set", kv, "--profile", profile)
+	return runCCPM("env", "set", "--profile", profile, "--", kv)
 }
 
 // UnsetEnv removes an env var from a profile.
 func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
-	return runCCPM("env", "unset", key, "--profile", profile)
+	return runCCPM("env", "unset", "--profile", profile, "--", key)
 }
 
 // terminal launches a new Terminal window running `<ccpm> <args...>`, optionally
