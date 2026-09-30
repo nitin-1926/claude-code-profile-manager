@@ -24,7 +24,9 @@ export function useCommand(after?: () => void) {
     try {
       const r = await call()
       if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-      else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
+      // The whole error, not its first line: the CLI's actionable hint is
+      // usually on a later line.
+      else toast({ kind: 'error', title: `${action} failed`, desc: r.error || r.output })
       return r.ok
     } catch (e) {
       // A rejected Wails bridge call (backend down, Go panic) must not become
