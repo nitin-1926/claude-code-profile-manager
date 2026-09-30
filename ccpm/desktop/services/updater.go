@@ -22,6 +22,7 @@ import (
 	"time"
 
 	wr "github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sys/unix"
 )
 
 // CurrentVersion is the running app's version, injected at build time via
@@ -47,8 +48,14 @@ type Updater struct {
 }
 
 func NewUpdater() *Updater {
+	// No Client.Timeout: it also bounds reading the body, and 60s failed the
+	// 4.5MB download on any link under ~75KB/s. A server that never answers
+	// is caught by ResponseHeaderTimeout; each request carries its own
+	// deadline sized for what it fetches.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.ResponseHeaderTimeout = 30 * time.Second
 	return &Updater{http: &http.Client{
-		Timeout: 60 * time.Second,
+		Transport: tr,
 		// Follow GitHub's asset redirects, but never onto a foreign host or
 		// down to plaintext http — the redirect target is attacker-chosen if
 		// the release JSON is ever tampered with.
@@ -122,7 +129,9 @@ func (u *Updater) Check() (UpdateInfo, error) {
 		return info, nil // untagged local build — nothing to update to
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, releasesURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := u.http.Do(req)
@@ -209,6 +218,9 @@ func (u *Updater) Install() error {
 	if err != nil {
 		return err
 	}
+	if err := checkInstallable(bundle); err != nil {
+		return err
+	}
 
 	tmp, err := os.MkdirTemp("", "ccpm-update-")
 	if err != nil {
@@ -271,7 +283,10 @@ func (u *Updater) Install() error {
 // download streams url to dst, emitting progress (0..85%), and returns the file's
 // lowercase hex SHA-256.
 func (u *Updater) download(url, dst string) (string, error) {
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	// Generous: a stalled transfer still ends, a slow one gets to finish.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := u.http.Do(req)
 	if err != nil {
@@ -323,7 +338,9 @@ func (u *Updater) verifyChecksum(info UpdateInfo, gotSum string) error {
 	if !trustedReleaseURL(sumURL) {
 		return fmt.Errorf("checksums URL %q is not a trusted GitHub release URL", sumURL)
 	}
-	req, _ := http.NewRequest(http.MethodGet, sumURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, sumURL, nil)
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := u.http.Do(req)
 	if err != nil {
@@ -351,30 +368,36 @@ func (u *Updater) verifyChecksum(info UpdateInfo, gotSum string) error {
 	return fmt.Errorf("no checksum for %s — refusing unverified update", info.AssetName)
 }
 
-// spawnSwap writes and launches a detached helper that waits for this process to
-// exit, replaces the bundle with the new one, and relaunches it.
-func (u *Updater) spawnSwap(oldBundle, newApp, tmp string) error {
-	// Paths are passed as positional args and never interpolated into the script
-	// body, so shell metacharacters ($, backticks) in them can't be expanded.
-	const script = `#!/bin/sh
-set -e
-PID="$1"; OLD="$2"; NEW="$3"; TMP="$4"
+// swapScript waits for the app to exit, replaces the bundle, and relaunches.
+// Paths are positional args, never interpolated into the body, so shell
+// metacharacters in them can't be expanded. $5 is the opener (/usr/bin/open;
+// a stub under test).
+//
+// No set -e: the app has already quit when this runs, so every path must end
+// in the reopen and the cleanup. A failed mv (a parent the user cannot write)
+// leaves the old bundle where it was and reopens it.
+const swapScript = `#!/bin/sh
+PID="$1"; OLD="$2"; NEW="$3"; TMP="$4"; OPEN="$5"
 # wait for the running app to fully exit
 while kill -0 "$PID" 2>/dev/null; do sleep 0.3; done
 BAK="$OLD.bak-$$"
-mv "$OLD" "$BAK"
-if /usr/bin/ditto "$NEW" "$OLD"; then
-  xattr -dr com.apple.quarantine "$OLD" 2>/dev/null || true
-  rm -rf "$BAK"
-else
-  # restore on failure
-  rm -rf "$OLD"
-  mv "$BAK" "$OLD"
+if mv "$OLD" "$BAK"; then
+  if /usr/bin/ditto "$NEW" "$OLD"; then
+    xattr -dr com.apple.quarantine "$OLD" 2>/dev/null || true
+    rm -rf "$BAK"
+  else
+    # restore on failure
+    rm -rf "$OLD"
+    mv "$BAK" "$OLD"
+  fi
 fi
 rm -rf "$TMP"
-/usr/bin/open "$OLD"
+"$OPEN" "$OLD"
 rm -rf "$(dirname "$0")"
 `
+
+// spawnSwap writes and launches a detached helper running swapScript.
+func (u *Updater) spawnSwap(oldBundle, newApp, tmp string) error {
 	// MkdirTemp, not a predictable name under os.TempDir(): when TMPDIR is
 	// unset Go falls back to the world-writable /tmp, where a local attacker
 	// could pre-create the path as a symlink or swap the file between the
@@ -385,11 +408,11 @@ rm -rf "$(dirname "$0")"
 		return err
 	}
 	sh := filepath.Join(shDir, "swap.sh")
-	if err := os.WriteFile(sh, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(sh, []byte(swapScript), 0o700); err != nil {
 		_ = os.RemoveAll(shDir)
 		return err
 	}
-	cmd := exec.Command("/bin/sh", sh, strconv.Itoa(os.Getpid()), oldBundle, newApp, tmp)
+	cmd := exec.Command("/bin/sh", sh, strconv.Itoa(os.Getpid()), oldBundle, newApp, tmp, "/usr/bin/open")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // survive our exit
 	return cmd.Start()
 }
@@ -416,6 +439,25 @@ func appBundlePath() (string, error) {
 		return "", fmt.Errorf("not running from a .app bundle (%s) — install to /Applications first", exe)
 	}
 	return bundle, nil
+}
+
+// checkInstallable refuses a bundle the swap helper could not replace. The
+// helper runs after the app has quit, so finding out there means the app is
+// gone; finding out here means a toast saying why.
+//
+// Gatekeeper's App Translocation runs a quarantined download from a random
+// read-only mount, and replacing the bundle means renaming it inside its
+// parent, which needs write access there — a root-owned /Applications refuses
+// a non-admin user.
+func checkInstallable(bundle string) error {
+	if strings.Contains(bundle, "/AppTranslocation/") {
+		return fmt.Errorf("CCPM is running from a temporary read-only location — move it to /Applications, open it from there, and update again")
+	}
+	parent := filepath.Dir(bundle)
+	if err := unix.Access(parent, unix.W_OK); err != nil {
+		return fmt.Errorf("cannot write to %s to replace CCPM (%v) — update as a user who can, or download the new version from the release page", parent, err)
+	}
+	return nil
 }
 
 // findDotApp returns the single *.app directory directly inside dir.
