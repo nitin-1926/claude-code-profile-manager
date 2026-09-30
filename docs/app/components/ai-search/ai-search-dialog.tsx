@@ -14,6 +14,7 @@ import {
 import { useAiSearch } from "./ai-search-context";
 import { Markdown } from "./markdown";
 import { MAX_QUESTION_CHARS } from "@/lib/ai/config";
+import { lockBodyScroll } from "../scroll-lock";
 
 const EXAMPLES = [
   "Run two profiles at once",
@@ -117,12 +118,11 @@ export function AiSearchDialog() {
     }
 
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlockScroll = lockBodyScroll();
 
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlockScroll();
     };
   }, [open, closeDialog]);
 

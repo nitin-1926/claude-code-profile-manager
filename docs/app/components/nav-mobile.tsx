@@ -6,6 +6,7 @@ import { Menu, Sparkles, X } from "lucide-react";
 import { GithubIcon } from "./brand-icons";
 import { navLinks } from "./nav-links";
 import { useAiSearch } from "./ai-search/ai-search-context";
+import { lockBodyScroll } from "./scroll-lock";
 
 export function NavMobile() {
   const [open, setOpen] = useState(false);
@@ -59,14 +60,14 @@ export function NavMobile() {
     }
 
     document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
+    const unlockScroll = lockBodyScroll();
 
     // Focus first link inside panel
     focusables()[0]?.focus();
 
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
+      unlockScroll();
     };
   }, [open, close]);
 
