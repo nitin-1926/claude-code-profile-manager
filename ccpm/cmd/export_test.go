@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,6 +92,39 @@ func TestExtractBundleRejectsTraversal(t *testing.T) {
 		}
 		os.RemoveAll(dest)
 		os.Remove(bundle)
+	}
+}
+
+// A decompression bomb must be refused, not written until the disk fills.
+func TestExtractBundleCapsEntryAndTotalSize(t *testing.T) {
+	oldFile, oldTotal := maxBundleFileBytes, maxBundleTotalBytes
+	t.Cleanup(func() { maxBundleFileBytes, maxBundleTotalBytes = oldFile, oldTotal })
+	maxBundleFileBytes, maxBundleTotalBytes = 10, 15
+	tmp := t.TempDir()
+
+	cases := map[string]map[string]string{
+		"per-file": {"big.txt": strings.Repeat("x", 11)},
+		"total":    {"a.txt": strings.Repeat("x", 8), "b.txt": strings.Repeat("y", 8)},
+	}
+	for name, entries := range cases {
+		bundle := filepath.Join(tmp, name+".tar.gz")
+		writeBundle(t, bundle, entries)
+		dest := filepath.Join(tmp, name)
+		if err := os.MkdirAll(dest, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		err := extractBundle(bundle, dest)
+		if err == nil || !strings.Contains(err.Error(), "limit") {
+			t.Errorf("%s: extractBundle error = %v, want a size-limit error", name, err)
+		}
+	}
+
+	ok := filepath.Join(tmp, "ok.tar.gz")
+	writeBundle(t, ok, map[string]string{"a.txt": strings.Repeat("x", 10)})
+	dest := filepath.Join(tmp, "okdest")
+	_ = os.MkdirAll(dest, 0o700)
+	if err := extractBundle(ok, dest); err != nil {
+		t.Errorf("entry exactly at the limit rejected: %v", err)
 	}
 }
 

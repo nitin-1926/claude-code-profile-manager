@@ -31,6 +31,14 @@ var (
 	exportIncludeCredentials bool
 )
 
+// Extraction limits: a bundle is untrusted input and gzip compresses runs of
+// zeros ~1000:1, so a small file could otherwise fill the disk. Vars so
+// tests can lower them.
+var (
+	maxBundleFileBytes  int64 = 512 << 20 // 512 MiB per entry
+	maxBundleTotalBytes int64 = 4 << 30   // 4 GiB per bundle
+)
+
 var exportCmd = &cobra.Command{
 	Use:   "export <profile>",
 	Short: "Export a profile (assets + settings) to a portable .tar.gz bundle",
@@ -203,18 +211,15 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not materialize settings: %v\n", err)
 	}
 
-	// Detect auth method from what restored on disk; default to oauth.
-	authMethod := "oauth"
-	if _, err := os.Stat(filepath.Join(dstDir, ".credentials.json")); err == nil {
-		authMethod = "oauth"
-	}
-
+	// Always oauth: an API key lives in the OS keychain, which never travels
+	// in a bundle, so a restored profile can only be re-authed via OAuth or
+	// switched with `ccpm auth refresh`.
 	if err := withConfigLock(func() error {
 		freshCfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("reloading config: %w", err)
 		}
-		freshCfg.AddProfile(name, dstDir, authMethod)
+		freshCfg.AddProfile(name, dstDir, "oauth")
 		return config.Save(freshCfg)
 	}); err != nil {
 		_ = profile.Remove(name)
@@ -245,6 +250,7 @@ func extractBundle(bundlePath, destDir string) error {
 
 	cleanDest := filepath.Clean(destDir)
 	tr := tar.NewReader(gz)
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -282,12 +288,19 @@ func extractBundle(bundlePath, destDir string) error {
 			if err != nil {
 				return fmt.Errorf("creating %q: %w", target, err)
 			}
-			// Cap the copy to guard against a maliciously huge bundle entry.
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
+			// Copy at most one byte past the limit so an oversize entry is
+			// detected without writing it all.
+			n, err := io.CopyN(out, tr, maxBundleFileBytes+1)
+			out.Close()
+			if err != nil && err != io.EOF {
 				return fmt.Errorf("writing %q: %w", target, err)
 			}
-			out.Close()
+			if n > maxBundleFileBytes {
+				return fmt.Errorf("bundle entry %q exceeds the %d MiB per-file limit", hdr.Name, maxBundleFileBytes>>20)
+			}
+			if total += n; total > maxBundleTotalBytes {
+				return fmt.Errorf("bundle exceeds the %d MiB total extraction limit", maxBundleTotalBytes>>20)
+			}
 		default:
 			// Skip symlinks, devices, etc. — bundles only carry files/dirs.
 			continue
