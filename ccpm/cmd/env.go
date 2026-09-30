@@ -34,7 +34,8 @@ func newEnvCmd() *cobra.Command {
 		Long: `Manage the env map persisted on a profile.
 
 Entries set here are added to the environment whenever ` + "`ccpm run <profile>`" + `
-launches claude, sitting below parent-process env and below any one-shot
+launches claude. A profile entry replaces the same key inherited from the
+parent shell, and is itself replaced by any one-shot
 ` + "`ccpm run --ccpm-env KEY=VAL`" + ` override. Use it for per-profile base URLs,
 proxy settings, or CLAUDE_CODE_* knobs.
 
