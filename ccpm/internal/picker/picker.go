@@ -85,6 +85,22 @@ func MultiSelect(title string, options []Option, defaults []string) ([]string, e
 	return chosen, nil
 }
 
+// Confirm presents a yes/no prompt with the given default.
+func Confirm(prompt string, def bool) (bool, error) {
+	if !IsInteractive() {
+		return def, ErrNonInteractive
+	}
+	v := def
+	err := huh.NewConfirm().
+		Title(prompt).
+		Value(&v).
+		Run()
+	if err != nil {
+		return def, err
+	}
+	return v, nil
+}
+
 // IsInteractive reports whether prompts should be shown. Honors CCPM_NO_TTY
 // as a test / scripting override.
 func IsInteractive() bool {
