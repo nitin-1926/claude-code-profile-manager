@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Rocket,
@@ -9,6 +8,7 @@ import {
   Wrench,
   BookOpen,
 } from "lucide-react";
+import { useScrollspy } from "./use-scrollspy";
 
 type Section = { id: string; label: string };
 type Group = { title: string; icon: LucideIcon; items: Section[] };
@@ -73,35 +73,7 @@ const groups: Group[] = [
 const allIds = groups.flatMap((g) => g.items.map((i) => i.id));
 
 export function DocsSidebar() {
-  const [active, setActive] = useState<string>(allIds[0]);
-
-  useEffect(() => {
-    const observers: IntersectionObserver[] = [];
-    const visible = new Set<string>();
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            visible.add(entry.target.id);
-          } else {
-            visible.delete(entry.target.id);
-          }
-        }
-        const firstVisible = allIds.find((id) => visible.has(id));
-        if (firstVisible) setActive(firstVisible);
-      },
-      { rootMargin: "-72px 0px -70% 0px", threshold: 0 },
-    );
-
-    for (const id of allIds) {
-      const el = document.getElementById(id);
-      if (el) observer.observe(el);
-    }
-    observers.push(observer);
-
-    return () => observers.forEach((o) => o.disconnect());
-  }, []);
+  const active = useScrollspy(allIds, "-72px 0px -70% 0px") || allIds[0];
 
   return (
     <aside className="hidden lg:block w-60 shrink-0">
