@@ -92,7 +92,7 @@ func collectAssets(profileDir, hostRoot, globalRoot, home string) []CascadeAsset
 		}
 		for _, e := range entries {
 			name := e.Name()
-			if name == "" || name[0] == '.' || name[0] == '_' {
+			if !visibleAsset(name) {
 				continue
 			}
 			full := filepath.Join(dir, name)
