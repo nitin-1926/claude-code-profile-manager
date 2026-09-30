@@ -38,12 +38,15 @@ export function ProfileView({
   names,
   onMutated,
   onSelect,
+  refreshKey,
 }: {
   profile: Profile
   names: string[]
   /** Resolves once the profile list has been re-read. */
   onMutated: () => Promise<void>
   onSelect: (name: string) => void
+  /** Changes when the user hits the title-bar refresh. */
+  refreshKey: number
 }) {
   const [tab, setTab] = useState<string>('Overview')
   const [dialog, setDialog] = useState<Dialog>(null)
@@ -142,7 +145,7 @@ export function ProfileView({
 
             The per-fetch generation guards inside the tabs stay: they cover
             overlapping loads WITHIN one profile, which a key cannot. */}
-        <ErrorBoundary key={profile.name} resetKey={`${profile.name}:${tab}`}>
+        <ErrorBoundary key={profile.name} resetKey={`${profile.name}:${tab}:${refreshKey}`}>
           {tab === 'Overview' && <OverviewTab profile={profile} />}
           {tab === 'Cascade' && <CascadeTab profile={profile.name} />}
           {tab === 'Assets' && <AssetsTab profile={profile.name} onMutated={onMutated} />}

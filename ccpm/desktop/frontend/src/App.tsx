@@ -19,6 +19,9 @@ export default function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [selected, setSelected] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // Bumped only by the title-bar button: it resets a tab's error boundary, so
+  // the "hit refresh" advice on the error card actually does something.
+  const [refreshCount, setRefreshCount] = useState(0)
   const refreshSeq = useRef(0)
 
   // Only the latest refresh applies: the watcher and a mutation can overlap,
@@ -51,7 +54,10 @@ export default function App() {
 
   const refreshButton = (
     <button
-      onClick={() => void refresh()}
+      onClick={() => {
+        setRefreshCount((n) => n + 1)
+        void refresh()
+      }}
       title="Refresh"
       className="flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
@@ -100,6 +106,7 @@ export default function App() {
             names={names}
             onMutated={refresh}
             onSelect={setSelected}
+            refreshKey={refreshCount}
           />
         </main>
       </>
