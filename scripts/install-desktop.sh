@@ -37,7 +37,8 @@ main() {
     TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=50" |
         tr ',' '\n' |
         awk -F'"' '/"tag_name":/ { tag = $4 }
-            /"prerelease": *false/ { if (tag ~ /^desktop-v[0-9][0-9.]*$/) { print tag; exit } }')
+            /"prerelease": *false/ { if (!found && tag ~ /^desktop-v[0-9][0-9.]*$/) found = tag }
+            END { if (found) print found }')
     if [ -z "$TAG" ]; then
         echo "Error: could not find a desktop release. See https://github.com/${REPO}/releases?q=desktop-v" >&2
         exit 1
@@ -66,14 +67,24 @@ main() {
     /usr/bin/ditto -x -k "${TMP_DIR}/${ZIP}" "$TMP_DIR"
     /usr/bin/codesign --verify --deep --strict "${TMP_DIR}/${APP}"
 
-    if pgrep -x CCPM >/dev/null 2>&1; then
-        echo "  quitting the running CCPM"
-        osascript -e 'tell application "CCPM" to quit' >/dev/null 2>&1 || true
-        sleep 1
-    fi
-
     SUDO=""
     mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+
+    # Only the copy being replaced: an install into another folder must not
+    # quit a CCPM the user is running from /Applications. Compared as a plain
+    # string against each running CCPM's executable path (pgrep -f would treat
+    # a folder like "CCPM (Test)" as a regex), after resolving symlinks the way
+    # ps reports them (/tmp is /private/tmp).
+    TARGET="$(cd "$INSTALL_DIR" 2>/dev/null && pwd -P)/${APP}/Contents/MacOS/CCPM"
+    for pid in $(pgrep -x CCPM 2>/dev/null); do
+        if [ "$(/bin/ps -o comm= -p "$pid" 2>/dev/null)" = "$TARGET" ]; then
+            echo "  quitting the running CCPM"
+            osascript -e 'tell application "CCPM" to quit' >/dev/null 2>&1 || true
+            sleep 1
+            break
+        fi
+    done
+
     if [ ! -w "$INSTALL_DIR" ]; then
         SUDO="sudo"
     fi

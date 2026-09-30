@@ -37,6 +37,15 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
     releases: [
       {
+        date: "2026-09-30",
+        title: "Quieter, safer one-line installers",
+        categories: ["Fixed"],
+        bullets: [
+          "Both one-line installers printed \"curl: (56) Failure writing output to destination\" before installing. The install itself succeeded; the message came from the script stopping its read of the release list early. They now read the whole list and print nothing alarming.",
+          "The desktop installer quit any running CCPM, even when installing into a different folder. It now quits only the copy it is about to replace.",
+        ],
+      },
+      {
         date: "2026-09-29",
         title: "CCPM Desktop: the usage notch",
         categories: ["Added", "Improved"],
