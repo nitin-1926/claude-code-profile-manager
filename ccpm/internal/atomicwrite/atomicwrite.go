@@ -32,9 +32,11 @@
 // Directory fsync is skipped on Windows, where it isn't supported; Windows
 // callers get the weaker rename-only guarantee.
 //
-// On Windows, os.Rename over an existing file works on modern releases. The
-// atomic-rename guarantee may be weaker on very old Windows versions; ccpm
-// targets aren't shared across processes so the practical risk is low.
+// On Windows a rename over a file another process has open fails until that
+// handle closes (Go never opens with FILE_SHARE_DELETE), and concurrent ccpm
+// commands do read config.json and settings while others write them. Renames
+// and snapshot reads therefore retry that error for a short window; see
+// retry.go.
 package atomicwrite
 
 import (
@@ -146,7 +148,7 @@ func Apply(changes []FileChange) error {
 	for i, c := range changes {
 		switch c.Kind {
 		case Write:
-			if err := os.Rename(staged[i], c.Path); err != nil {
+			if err := rename(staged[i], c.Path); err != nil {
 				rollback(changes, snapshots, staged, committed)
 				return fmt.Errorf("atomicwrite: rename staged %q -> %q: %w", staged[i], c.Path, err)
 			}
@@ -266,7 +268,7 @@ func snapshotPath(c FileChange) (snapshot, error) {
 	if !mode.IsRegular() {
 		return snapshot{}, fmt.Errorf("atomicwrite: refusing non-regular file %q (mode %s)", c.Path, mode)
 	}
-	data, err := os.ReadFile(c.Path)
+	data, err := ReadFile(c.Path)
 	if err != nil {
 		return snapshot{}, fmt.Errorf("atomicwrite: read %q: %w", c.Path, err)
 	}
@@ -342,7 +344,7 @@ func rollback(changes []FileChange, snapshots []snapshot, staged []string, commi
 		case snapFile:
 			tmp := c.Path + ".ccpm-rollback"
 			if err := os.WriteFile(tmp, s.data, s.mode); err == nil {
-				_ = os.Rename(tmp, c.Path)
+				_ = rename(tmp, c.Path)
 			}
 		case snapSymlink:
 			_ = os.Remove(c.Path)
