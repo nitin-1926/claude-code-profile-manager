@@ -62,8 +62,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	// Drop settings/MCP fragments and manifest refs left under this name by a
 	// profile removed with an older ccpm, which never cleaned them up:
 	// otherwise the new profile silently inherits that profile's MCP servers
-	// (tokens included) and settings.
-	if err := profilelife.Remove(name); err != nil {
+	// (tokens included) and settings. Every profilelife/manifest step below
+	// takes the config lock (profilelife's contract): editManifest is a
+	// read-modify-write, and a concurrent locked command's install entry
+	// would otherwise be lost. The lock is held per step, never across a prompt.
+	if err := withConfigLock(func() error { return profilelife.Remove(name) }); err != nil {
 		return fmt.Errorf("clearing leftover state for %q: %w", name, err)
 	}
 
@@ -79,7 +82,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	// profilelife.Remove drops anything the import wizard wrote under this
 	// name (settings/MCP fragments, manifest refs), so a later profile with
 	// the same name does not inherit it.
-	rollback := []func(){func() { _ = profile.Remove(name) }, func() { _ = profilelife.Remove(name) }}
+	rollback := []func(){
+		func() { _ = profile.Remove(name) },
+		func() { _ = withConfigLock(func() error { return profilelife.Remove(name) }) },
+	}
 	runRollback := func() {
 		for i := len(rollback) - 1; i >= 0; i-- {
 			rollback[i]()
@@ -100,7 +106,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: import wizard failed: %v\n", err)
 		} else if decision.Source != wizard.SourceScratch {
-			if err := applyImportDecision(dir, name, decision, cfg); err != nil {
+			if err := withConfigLock(func() error { return applyImportDecision(dir, name, decision, cfg) }); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: import step failed: %v\n", err)
 			}
 		}
@@ -193,7 +199,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Apply global installs (skills, etc.) to the new profile
-	if err := profilesync.ApplyGlobals(dir, name); err != nil {
+	if err := withConfigLock(func() error { return profilesync.ApplyGlobals(dir, name) }); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not apply global installs: %v\n", err)
 	}
 
