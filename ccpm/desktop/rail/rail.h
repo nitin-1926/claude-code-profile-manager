@@ -52,16 +52,11 @@ void CCPMNotchSetModel(const char *json);
 // visibility: 0 reveal on hover, 1 always expanded, 2 hidden — rail.Visibility.
 void CCPMNotchSetVisibility(int mode);
 
-// Expands or collapses now, animating unless Reduce Motion is on. Used by the
-// always-on mode and by a peek; ordinary hover drives itself from the cursor
-// watcher inside the C layer, because a cgo hop per mouse-move is latency for
-// a question that can be answered from published geometry.
-void CCPMNotchSetExpanded(int expanded);
 
 void CCPMNotchShow(void);
 void CCPMNotchHide(void);
 
-// Writes the main screen's FULL frame into the out-params — deliberately not
+// Writes the primary display's FULL frame into the out-params — deliberately not
 // visibleFrame. Anchoring to the visible frame moves the notch whenever the
 // Dock is shown, hidden or repositioned, and a notch that drifts does not read
 // as part of the bezel.
