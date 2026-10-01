@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 // URLs (openGraph.images, twitter.images, etc.) and anchors canonical URLs
 // when per-page generateMetadata exports land.
 export const metadata: Metadata = {
-  metadataBase: new URL("https://ccpm.dev"),
+  metadataBase: new URL("https://ccpm.nitingupta.xyz"),
   title: {
     default: "ccpm — Claude Code Profile Manager",
     template: "%s — ccpm",

@@ -69,7 +69,7 @@ export default async function Image() {
           }}
         >
           <div>github.com/nitin-1926/claude-code-profile-manager</div>
-          <div style={{ color: "#c05a3e" }}>ccpm.dev</div>
+          <div style={{ color: "#c05a3e" }}>ccpm.nitingupta.xyz</div>
         </div>
       </div>
     ),
