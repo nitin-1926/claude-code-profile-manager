@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 )
 
@@ -57,7 +58,11 @@ func SaveOwnedKeys(fragmentPath string, keys map[string]struct{}) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(ownedKeysPath(fragmentPath), data, config.FilePerm)
+	// atomicwrite, not os.WriteFile: every materialize parses this file, so a
+	// torn write would fail every launch until someone deletes it by hand.
+	return atomicwrite.Apply([]atomicwrite.FileChange{
+		atomicwrite.WriteFile(ownedKeysPath(fragmentPath), data, config.FilePerm),
+	})
 }
 
 // MarkOwned adds a dot-notation key path to the sidecar for a fragment.

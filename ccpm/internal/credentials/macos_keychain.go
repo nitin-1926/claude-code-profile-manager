@@ -131,8 +131,10 @@ func ReadMacKeychainOAuth(profileDir string) (*MacKeychainOAuth, error) {
 // We always write under the current OS user (the account Claude Code reads
 // from). To avoid a stale entry under a different account name shadowing the
 // fresh write, every other known account name under the same service is
-// deleted first. Without this cleanup, a previous broken `set-default` that
-// wrote under "Claude Code" would silently keep being read by older clients.
+// deleted — but only AFTER the primary write succeeds, so a failed write never
+// leaves the service with no entry at all (AGENTS.md invariant 8). Without this
+// cleanup, a previous broken `set-default` that wrote under "Claude Code" would
+// silently keep being read by older clients.
 func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	service, err := KeychainService(profileDir)
 	if err != nil {
@@ -140,32 +142,59 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	}
 	accounts := keychainAccounts()
 	primary := accounts[0]
-	for _, account := range accounts[1:] {
-		_ = keyring.Delete(service, account)
-	}
-	// `-U` updates if the entry already exists, otherwise creates it. The
-	// whole command — including the token payload — is fed to `security -i`
-	// via stdin so the secret never appears in argv, where any same-UID
-	// process (or ps-polling telemetry/EDR agent) could read it.
-	qService, err := securityQuote(service)
+	// Built (and length-checked) before anything touches the keychain.
+	line, err := securityAddLine(service, primary, raw)
 	if err != nil {
-		return fmt.Errorf("quoting keychain service: %w", err)
+		return err
 	}
-	qAccount, err := securityQuote(primary)
-	if err != nil {
-		return fmt.Errorf("quoting keychain account: %w", err)
-	}
-	qPayload, err := securityQuote(raw)
-	if err != nil {
-		return fmt.Errorf("quoting keychain payload: %w", err)
-	}
-	line := fmt.Sprintf("add-generic-password -U -s %s -a %s -w %s\n", qService, qAccount, qPayload)
 	cmd := exec.Command("/usr/bin/security", "-i")
 	cmd.Stdin = strings.NewReader(line)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("writing keychain entry via security CLI: %w (output: %s)", err, out)
 	}
+	for _, account := range accounts[1:] {
+		_ = keyring.Delete(service, account)
+	}
 	return nil
+}
+
+// securityMaxLine is the longest command line (trailing newline included)
+// `security -i` reads intact. Past it the tool silently truncates the line and
+// STILL executes the cut-off `add-generic-password -U`, overwriting the
+// existing good item with a truncated, unparseable payload before exiting 1.
+// Measured on macOS 26: a 4097-byte line round-trips, 4098 does not.
+// go-keyring enforces the same 4096 ceiling (ErrSetDataTooBig).
+const securityMaxLine = 4096
+
+// ErrKeychainPayloadTooLarge is returned when an OAuth payload cannot be fed
+// to `security -i` without truncation. Nothing in the keychain is touched.
+var ErrKeychainPayloadTooLarge = errors.New("OAuth payload too large for the macOS security CLI (4 KB line limit); keychain left unchanged")
+
+// securityAddLine builds the `security -i` stdin line that upserts the
+// generic password. `-U` updates if the entry already exists, otherwise
+// creates it. The whole command — including the token payload — is fed via
+// stdin so the secret never appears in argv, where any same-UID process (or
+// ps-polling telemetry/EDR agent) could read it. The CLI has no other
+// secret-safe input channel (`-w` with no value prompts on the tty; `-X`
+// takes hex in argv), so an over-long payload is refused, not written.
+func securityAddLine(service, account, raw string) (string, error) {
+	qService, err := securityQuote(service)
+	if err != nil {
+		return "", fmt.Errorf("quoting keychain service: %w", err)
+	}
+	qAccount, err := securityQuote(account)
+	if err != nil {
+		return "", fmt.Errorf("quoting keychain account: %w", err)
+	}
+	qPayload, err := securityQuote(raw)
+	if err != nil {
+		return "", fmt.Errorf("quoting keychain payload: %w", err)
+	}
+	line := fmt.Sprintf("add-generic-password -U -s %s -a %s -w %s\n", qService, qAccount, qPayload)
+	if len(line) > securityMaxLine {
+		return "", fmt.Errorf("%w: command is %d bytes, limit %d", ErrKeychainPayloadTooLarge, len(line), securityMaxLine)
+	}
+	return line, nil
 }
 
 // securityQuote wraps s in double quotes for the `security -i` command
