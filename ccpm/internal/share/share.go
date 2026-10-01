@@ -95,10 +95,17 @@ func EnsureDirs() error {
 	return nil
 }
 
+// ErrNotLink is returned by Link when dst is a real file or directory that
+// ccpm did not create — profile-local content (e.g. a skill Claude Code wrote
+// inside the profile). Link never deletes it; callers treat this as
+// "profile-local wins" (AGENTS.md invariant 11) and skip the entry.
+var ErrNotLink = errors.New("destination exists and is not a ccpm link")
+
 // Link creates a symlink from dst pointing to src. If symlinks are not
 // available (Windows without Developer Mode / admin), it falls back to a
 // recursive copy and emits a one-time warning so the user knows
-// deduplication is degraded.
+// deduplication is degraded. A real file/dir at dst is refused with
+// ErrNotLink unless it is a copy-fallback Link itself recorded.
 func Link(src, dst string) error {
 	if fi, err := os.Lstat(dst); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
@@ -115,10 +122,12 @@ func Link(src, dst string) error {
 			// Wrong-target symlink: leave it in place — the rename below
 			// replaces it atomically, so concurrent profile launches never
 			// observe a missing dst.
+		} else if !isCopyFallback(dst) {
+			return fmt.Errorf("%w: %s", ErrNotLink, dst)
 		} else {
-			// Real file/dir (e.g. a Windows copy-fallback leftover). This one
-			// case is inherently non-atomic: a directory cannot be replaced
-			// by rename, so it must be removed before linking.
+			// A Windows copy-fallback Link recorded earlier. This one case is
+			// inherently non-atomic: a directory cannot be replaced by
+			// rename, so it must be removed before linking.
 			if err := os.RemoveAll(dst); err != nil {
 				return fmt.Errorf("removing existing path at %s: %w", dst, err)
 			}
@@ -151,13 +160,15 @@ func Link(src, dst string) error {
 
 	// Windows fallback: copy the tree and leave a breadcrumb so ccpm doctor
 	// / the next `ccpm sync` can warn about degraded dedup. The breadcrumb
-	// is non-fatal — a missing file only degrades the friendliness of the
-	// next diagnostic message.
+	// also records dst so the next Link may refresh this copy; if recording
+	// fails the copy is merely never refreshed (treated as profile-local).
+	// dst here is absent, a symlink, or a recorded copy — real profile-local
+	// entries were refused above.
 	emitWindowsCopyFallbackWarning()
-	_ = markWindowsCopyFallback()
 	if err := os.RemoveAll(dst); err != nil {
 		return fmt.Errorf("removing existing path at %s: %w", dst, err)
 	}
+	_ = recordCopyFallback(dst)
 	return filetree.CopyTree(src, dst, false)
 }
 
@@ -193,19 +204,67 @@ func emitWindowsCopyFallbackWarning() {
 	})
 }
 
-func markWindowsCopyFallback() error {
+func copyFallbackMarker() (string, error) {
 	base, err := config.BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, ".windows-copy-fallback"), nil
+}
+
+// recordCopyFallback writes the breadcrumb (header line on first use) and
+// appends dst's absolute path, one per line.
+func recordCopyFallback(dst string) error {
+	marker, err := copyFallbackMarker()
 	if err != nil {
 		return err
 	}
-	marker := filepath.Join(base, ".windows-copy-fallback")
-	if _, err := os.Stat(marker); err == nil {
-		return nil
-	}
-	if err := os.MkdirAll(base, config.DirPerm); err != nil {
+	abs, err := filepath.Abs(dst)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(marker, []byte("ccpm fell back to copies because the Windows user cannot create symlinks.\n"), config.FilePerm)
+	if isCopyFallback(abs) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), config.DirPerm); err != nil {
+		return err
+	}
+	line := abs + "\n"
+	if _, err := os.Stat(marker); os.IsNotExist(err) {
+		line = "ccpm fell back to copies because the Windows user cannot create symlinks.\n" + line
+	}
+	f, err := os.OpenFile(marker, os.O_APPEND|os.O_CREATE|os.O_WRONLY, config.FilePerm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// isCopyFallback reports whether dst is a copy Link made in place of a
+// symlink (recorded by recordCopyFallback), and so safe to replace.
+func isCopyFallback(dst string) bool {
+	marker, err := copyFallbackMarker()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return false
+	}
+	abs, err := filepath.Abs(dst)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == abs {
+			return true
+		}
+	}
+	return false
 }
 
 // Unlink removes a symlink (or on Windows, the copied directory).
