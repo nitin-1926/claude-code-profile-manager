@@ -216,7 +216,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := atomicwrite.ReadFile(path)
 	if os.IsNotExist(err) {
 		return &Config{
 			Version:  configVersion,
