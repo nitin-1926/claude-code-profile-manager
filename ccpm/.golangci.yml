@@ -37,3 +37,9 @@ linters:
         - (*github.com/fatih/color.Color).Fprintf
         - (*github.com/fatih/color.Color).Fprintln
         - (*os.File).Close
+
+# `golangci-lint run` reports unformatted files as issues. The Linux lint job
+# cannot see the //go:build darwin desktop code; the macOS lint job covers it.
+formatters:
+  enable:
+    - gofmt

@@ -189,7 +189,7 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 	}
 
 	if !state.global && state.profile == "" {
-		if err := pickAssetScope(spec, state, cfg); err != nil {
+		if err := pickAssetScope(state, cfg); err != nil {
 			return err
 		}
 	}
@@ -210,7 +210,7 @@ func runAssetAdd(spec AssetSpec, state *assetState, srcPath string) error {
 	storeEntry := filepath.Base(abs)
 	sharedDst := filepath.Join(storeRoot, storeEntry)
 
-	live, err := resolveAssetStrategy(spec, state, abs)
+	live, err := resolveAssetStrategy(state, abs)
 	if err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func runAssetRemove(spec AssetSpec, state *assetState, assetID string) error {
 	}
 
 	if !state.global && state.profile == "" {
-		if err := pickAssetScope(spec, state, cfg); err != nil {
+		if err := pickAssetScope(state, cfg); err != nil {
 			return err
 		}
 	}
@@ -468,7 +468,7 @@ func findStoreEntry(spec AssetSpec, assetID string) string {
 	return assetID
 }
 
-func pickAssetScope(spec AssetSpec, state *assetState, cfg *config.Config) error {
+func pickAssetScope(state *assetState, cfg *config.Config) error {
 	scope, err := picker.Select("Install scope", []picker.Option{
 		{Value: "global", Label: "Global", Description: "all profiles now and any created later"},
 		{Value: "profile", Label: "A single profile", Description: "pick one profile"},
@@ -499,7 +499,7 @@ func pickAssetScope(spec AssetSpec, state *assetState, cfg *config.Config) error
 	return nil
 }
 
-func resolveAssetStrategy(spec AssetSpec, state *assetState, src string) (bool, error) {
+func resolveAssetStrategy(state *assetState, src string) (bool, error) {
 	isLinkDir, err := filetree.SymlinkToDirectory(src)
 	if err != nil {
 		return false, fmt.Errorf("inspecting source: %w", err)

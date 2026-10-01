@@ -152,3 +152,30 @@ func TestScreenChangeReLaysOutTheLiveController(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// Every refresh used to push the renderer the same payload twice (SetLayout,
+// then SetModel) and again each minute, and each push rebuilt every layer and
+// took the hovered card down. An identical payload must not be re-sent.
+func TestIdenticalModelIsNotPushedAgain(t *testing.T) {
+	c := New()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.started = true // as after Start, without creating a real panel
+	defer func() { c.started = false }()
+	c.model = BuildModel(nil, ThemeGraphite, "five_hour", time.Unix(1_790_000_000, 0))
+
+	c.pushModelLocked()
+	if len(c.lastPush) == 0 {
+		t.Fatal("first push was not recorded")
+	}
+	first := &c.lastPush[0]
+	c.pushModelLocked()
+	if &c.lastPush[0] != first {
+		t.Fatal("an identical payload was pushed to the renderer again")
+	}
+	c.edge = EdgeLeft // a real change must still go through
+	c.pushModelLocked()
+	if &c.lastPush[0] == first {
+		t.Fatal("a changed payload was not pushed")
+	}
+}
