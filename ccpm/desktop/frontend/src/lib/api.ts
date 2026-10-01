@@ -6,7 +6,7 @@ import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
 import { All as LimitsAll, Get as LimitsGet } from '../../wailsjs/go/services/LimitsService'
-import { Get as PrefsGet, Set as PrefsSet, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
+import { Get as PrefsGet, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
 import {
   Clone as MClone,
   Rename as MRename,
@@ -46,7 +46,7 @@ import {
 } from '../../wailsjs/go/services/StatusLineService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
-import { Check as UpdaterCheck, Install as UpdaterInstall } from '../../wailsjs/go/services/Updater'
+import { Check as UpdaterCheck, Install as UpdaterInstall, Version as UpdaterVersion } from '../../wailsjs/go/services/Updater'
 import { PickDirectory } from '../../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 import type {
@@ -87,7 +87,6 @@ export const api = {
   },
   prefs: {
     get: () => PrefsGet() as unknown as Promise<DesktopPrefs>,
-    set: (p: DesktopPrefs) => PrefsSet(p as never) as unknown as Promise<DesktopPrefs>,
     setNotch: (p: DesktopPrefs) => SetNotch(p as never) as unknown as Promise<DesktopPrefs>,
     setRailProfile: (name: string, enabled: boolean) =>
       SetRailProfile(name, enabled) as unknown as Promise<DesktopPrefs>,
@@ -164,6 +163,8 @@ export const api = {
   updater: {
     check: () => UpdaterCheck() as unknown as Promise<UpdateInfo>,
     install: () => UpdaterInstall() as unknown as Promise<void>,
+    // The running version, local — no GitHub request, unlike check().
+    version: () => UpdaterVersion() as unknown as Promise<string>,
   },
   // Subscribe to the Go watcher's debounced change signal. Returns an unsubscribe fn.
   onChanged: (cb: () => void): (() => void) => EventsOn('ccpm:changed', cb),

@@ -130,6 +130,9 @@ export interface McpView {
   name: string
   type: string
   sources: string[]
+  // True when this profile holds the server at profile scope — the only rows
+  // mutate.removeMCP can take out of it; the service refuses the rest.
+  removable: boolean
 }
 export interface Details {
   profile: string

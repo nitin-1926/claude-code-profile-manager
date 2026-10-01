@@ -79,6 +79,9 @@ func assertNoNullArrays(t *testing.T, v interface{}, fields ...string) {
 
 func TestDetailsNoNullArrays(t *testing.T) {
 	name := syntheticProfile(t)
+	// The MCP list comes from the CLI; a failed listing is now an error, so
+	// pin it to an empty one rather than depending on a ccpm being installed.
+	fakeCCPM(t, `echo '[]'`)
 	d, err := NewDetails().Get(name)
 	if err != nil {
 		t.Fatalf("Details.Get: %v", err)

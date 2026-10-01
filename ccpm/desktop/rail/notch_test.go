@@ -325,20 +325,6 @@ func TestSlotsTileTheBody(t *testing.T) {
 	}
 }
 
-func TestHitIndexAgreesWithTheRings(t *testing.T) {
-	for _, s := range specs() {
-		cells := Cells(PanelRect(screen16, s), s)
-		for i, c := range cells {
-			if got := HitIndex(cells, c.Ring.X+c.Ring.W/2, c.Ring.Y+c.Ring.H/2); got != i {
-				t.Errorf("%+v: ring %d's centre hit-tests as %d", s, i, got)
-			}
-		}
-		if got := HitIndex(cells, -50, -50); got != -1 {
-			t.Errorf("%+v: a point outside the shape hit-tests as %d", s, got)
-		}
-	}
-}
-
 // TestCardsStayInsideThePanel is why the panel reserves slack at each end: the
 // card is drawn in this one panel rather than a second NSPanel, so a card that
 // fell outside would simply be clipped away.
@@ -430,6 +416,52 @@ func TestPanelStaysOnScreen(t *testing.T) {
 	}
 }
 
+// TestRingsStayInsideAShortEdge — more profiles than an edge holds. The panel
+// is clamped to the screen, but the rings kept their pitch: ten profiles down
+// the side of a 956pt screen spanned [-76, 891], half of them off the panel.
+// What does not fit is not drawn; what is drawn is inside the panel and the
+// open shape.
+func TestRingsStayInsideAShortEdge(t *testing.T) {
+	small := Rect{W: 1470, H: 956}
+	for _, hide := range []bool{false, true} {
+		for _, s := range []Spec{
+			{Edge: EdgeRight, Profiles: 10}, {Edge: EdgeLeft, Profiles: 10},
+			{Edge: EdgeRight, Profiles: 40}, {Edge: EdgeBottom, Profiles: 40},
+			{Edge: EdgeTop, Profiles: 40}, {Edge: EdgeTop, Profiles: 40, Hardware: notch16},
+		} {
+			s.HidePercent = hide
+			p := PanelRect(small, s)
+			open := NotchRect(p, s, true)
+			cells := Cells(p, s)
+			overflows := s.span() > alongSpan(p, s.Edge)
+			if len(cells) < 1 || len(cells) > s.Profiles || overflows != (len(cells) < s.Profiles) {
+				t.Errorf("%+v: %d cells of %d (body overflows the panel: %v)", s, len(cells), s.Profiles, overflows)
+			}
+			for i, c := range cells {
+				if !containsRect(bounds(p), c.Ring) || !containsRect(open, c.Ring) {
+					t.Errorf("%+v: ring %d %+v is outside the %.0fx%.0f panel or the open shape %+v", s, i, c.Ring, p.W, p.H, open)
+				}
+				if !containsRect(open, c.Slot) {
+					t.Errorf("%+v: band %d escapes the open shape", s, i)
+				}
+			}
+			// The open shape hugs the rings it draws — the bands tile its
+			// body, one shoulder beyond each end — rather than running the
+			// panel's length with black past the last ring.
+			if !s.Flush() && len(cells) > 0 {
+				first, last := cells[0].Slot, cells[len(cells)-1].Slot
+				body, openLen := last.X+last.W-first.X, open.W
+				if s.Edge.Vertical() {
+					body, openLen = first.Y+first.H-last.Y, open.H
+				}
+				if !near(openLen-body, 2*CurlRadius) {
+					t.Errorf("%+v: open shape %.1f long around a %.1f body, want one shoulder each end", s, openLen, body)
+				}
+			}
+		}
+	}
+}
+
 // TestFoldedLiveRegionDoesNotCoverThePanel is the click-through guarantee: the
 // panel spans a large, mostly transparent strip of the screen edge, and a
 // folded live region that covered it would swallow every click meant for the
@@ -437,32 +469,10 @@ func TestPanelStaysOnScreen(t *testing.T) {
 func TestFoldedLiveRegionDoesNotCoverThePanel(t *testing.T) {
 	for _, s := range specs() {
 		p := PanelRect(screen16, s)
-		rects := LiveRects(p, s, false, -1)
-		if len(rects) != 1 {
-			t.Fatalf("%+v: folded should expose only the wake band, got %d rects", s, len(rects))
-		}
-		if a := rects[0].W * rects[0].H; a >= p.W*p.H*0.25 {
+		wake := WakeRect(p, s)
+		if a := wake.W * wake.H; a >= p.W*p.H*0.25 {
 			t.Errorf("%+v: folded live region is %.0f%% of the panel", s, 100*a/(p.W*p.H))
 		}
-	}
-}
-
-// TestOpenLiveRegionsIncludeTheHoveredCard — without the card the panel goes
-// click-through the instant the pointer leaves the ring, so the card can never
-// be reached.
-func TestOpenLiveRegionsIncludeTheHoveredCard(t *testing.T) {
-	s := Spec{Edge: EdgeRight, Profiles: 3}
-	p := PanelRect(screen16, s)
-	if got := len(LiveRects(p, s, true, -1)); got != 1 {
-		t.Errorf("nothing hovered: want only the shape, got %d rects", got)
-	}
-	rects := LiveRects(p, s, true, 1)
-	card := Cells(p, s)[1].Card
-	if len(rects) != 2 || !InAny(rects, card.X+card.W/2, card.Y+card.H/2) {
-		t.Error("the hovered ring's card does not take the mouse")
-	}
-	if got := len(LiveRects(p, s, true, 9)); got != 1 {
-		t.Errorf("out-of-range hover index produced %d rects", got)
 	}
 }
 

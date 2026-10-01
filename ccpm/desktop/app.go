@@ -19,8 +19,11 @@ import (
 type App struct {
 	ctx     context.Context
 	watcher *fsnotify.Watcher
-	updater *services.Updater
-	rail    *rail.Controller
+	// watchRoots are the trees the watcher covers; lazily added directories
+	// are measured against them for depth and the skip list.
+	watchRoots []string
+	updater    *services.Updater
+	rail       *rail.Controller
 }
 
 // NewApp creates a new App application struct
@@ -32,7 +35,7 @@ func NewApp(updater *services.Updater) *App {
 // freshness watcher.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.updater.SetContext(ctx)
+	a.updater.Ctx = ctx
 	a.startWatcher()
 	a.startRail()
 }
@@ -49,7 +52,7 @@ func (a *App) startRail() {
 		return
 	}
 	a.rail.Start()
-	a.ApplyRailPrefs()
+	a.applyRailPrefs()
 
 	// Once a minute too: reset countdowns and staleness move with the clock
 	// even when no file changes, and a window that has reset should stop
@@ -62,16 +65,16 @@ func (a *App) startRail() {
 			case <-a.ctx.Done():
 				return
 			case <-t.C:
-				a.ApplyRailPrefs()
+				a.applyRailPrefs()
 			}
 		}
 	}()
 }
 
-// ApplyRailPrefs re-reads the preferences and reshapes the rail. Exported so
-// the frontend can call it the moment a setting changes, rather than waiting
-// for the next watcher tick.
-func (a *App) ApplyRailPrefs() {
+// applyRailPrefs re-reads the preferences and reshapes the rail. Unexported:
+// Wails binds every exported App method to JS, and this runs from Go only —
+// on a preference write (PrefsService.OnChange), a file change, and the clock.
+func (a *App) applyRailPrefs() {
 	if a.rail == nil {
 		return
 	}

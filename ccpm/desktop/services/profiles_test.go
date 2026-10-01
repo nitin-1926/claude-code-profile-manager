@@ -2,7 +2,11 @@
 
 package services
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // TestProfilesListLive exercises the read path against the machine's real ~/.ccpm.
 // It asserts only structural invariants (so it passes on any machine, including
@@ -27,5 +31,35 @@ func TestProfilesListLive(t *testing.T) {
 			p.Name, p.IsDefault, p.AuthMethod,
 			p.Counts.Skills, p.Counts.Agents, p.Counts.Commands,
 			p.Counts.Rules, p.Counts.Hooks, p.Counts.Plugins)
+	}
+}
+
+// The overview's asset counts and the Assets tab's rows skipped different
+// entries — the count took "_"-prefixed ones the tab hides — so a profile
+// could claim three skills and list two.
+func TestAssetCountsMatchTheAssetsTab(t *testing.T) {
+	name := syntheticProfile(t)
+	skills := filepath.Join(os.Getenv("HOME"), ".ccpm", "profiles", name, "skills")
+	for _, d := range []string{"demo", ".hidden", "_internal"} {
+		if err := os.MkdirAll(filepath.Join(skills, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := NewProfiles().Get(name)
+	if err != nil || p == nil {
+		t.Fatalf("Get: %v", err)
+	}
+	c, err := NewCascade().Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := 0
+	for _, a := range c.Assets {
+		if a.Kind == "skill" {
+			listed++
+		}
+	}
+	if p.Counts.Skills != listed || listed != 1 {
+		t.Errorf("counted %d skills, Assets tab lists %d, want 1 each", p.Counts.Skills, listed)
 	}
 }
