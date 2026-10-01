@@ -106,10 +106,16 @@ func countDir(dir string) int {
 	}
 	n := 0
 	for _, e := range entries {
-		if e.Name() == "" || e.Name()[0] == '.' {
-			continue
+		if visibleAsset(e.Name()) {
+			n++
 		}
-		n++
 	}
 	return n
+}
+
+// visibleAsset reports whether an entry in a profile's asset directory is an
+// asset shown to the user. The overview counts and the Assets tab both use it,
+// so a count always matches the rows the tab lists.
+func visibleAsset(name string) bool {
+	return name != "" && name[0] != '.' && name[0] != '_'
 }

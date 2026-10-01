@@ -63,6 +63,16 @@ func FillFraction(usedPercentage float64) float64 {
 	return usedPercentage / 100
 }
 
+// usedNow is a window's used-percentage as of now. A window whose reset has
+// passed has rolled over: until the next reading arrives it is empty, not
+// still at the figure it reached before. ResetsAt 0 means no reset clock.
+func usedNow(w services.LimitWindowDTO, now time.Time) float64 {
+	if w.ResetsAt > 0 && w.ResetsAt <= now.Unix() {
+		return 0
+	}
+	return w.UsedPercentage
+}
+
 // BuildModel turns the service-layer limits into a drawable frame.
 //
 // Order is the caller's; it is already name-sorted by LimitsService.All so the
@@ -96,10 +106,11 @@ func buildSlot(l services.ProfileLimits, weeklyMain bool, now time.Time) Slot {
 	}
 
 	for _, w := range l.Windows {
-		frac := FillFraction(w.UsedPercentage)
+		used := usedNow(w, now)
+		frac := FillFraction(used)
 		// HeadroomColor grades on what is LEFT, so invert here rather than
 		// teaching it about used-percentages and having two conventions.
-		color := NotchColor(int(100 - w.UsedPercentage))
+		color := NotchColor(int(100 - used))
 		var isMain bool
 		switch w.Key {
 		case usage.KeyFiveHour:
@@ -111,7 +122,7 @@ func buildSlot(l services.ProfileLimits, weeklyMain bool, now time.Time) Slot {
 		}
 		if isMain {
 			s.Outer, s.OuterRGB = frac, color
-			s.Percent = fmt.Sprintf("%d%%", int(w.UsedPercentage+0.5))
+			s.Percent = fmt.Sprintf("%d%%", int(used+0.5))
 		} else {
 			s.Inner, s.InnerRGB = frac, color
 		}

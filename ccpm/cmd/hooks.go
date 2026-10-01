@@ -71,7 +71,7 @@ Examples:
   ccpm hooks add PostToolUse "lint-check" --matcher "Edit|Write" --profile work`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHooksAdd(state, cmd, args)
+			return withConfigLock(func() error { return runHooksAdd(state, cmd, args) })
 		},
 	}
 	requireProfileFlag(addCmd, &state.profile, "target profile (required)")
@@ -87,7 +87,7 @@ By default the last-added entry for the event is removed. Pass --index to target
 a specific position (0-based), matching the numbering shown in ccpm hooks list.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHooksRemove(state, args)
+			return withConfigLock(func() error { return runHooksRemove(state, args) })
 		},
 	}
 	requireProfileFlag(removeCmd, &state.profile, "target profile (required)")
@@ -153,11 +153,8 @@ func runHooksAdd(state *hooksState, cmd *cobra.Command, args []string) error {
 	events = append(events, entry)
 	hooksRoot[event] = events
 
-	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
-		return fmt.Errorf("writing fragment: %w", err)
-	}
-	if err := settingsmerge.MarkOwned(fragPath, "hooks."+event); err != nil {
-		return fmt.Errorf("recording owned key: %w", err)
+	if err := saveFragment(fragPath, frag, "hooks."+event); err != nil {
+		return err
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Hook added to %s for profile %q\n", event, state.profile)
@@ -205,8 +202,8 @@ func runHooksRemove(state *hooksState, args []string) error {
 		delete(frag, "hooks")
 	}
 
-	if err := settingsmerge.WriteJSON(fragPath, frag); err != nil {
-		return fmt.Errorf("writing fragment: %w", err)
+	if err := saveFragment(fragPath, frag); err != nil {
+		return err
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ Hook removed from %s (index %d) for profile %q\n", event, idx, state.profile)

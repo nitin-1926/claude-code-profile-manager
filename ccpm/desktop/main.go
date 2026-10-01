@@ -28,9 +28,9 @@ func main() {
 	limits := services.NewLimits()
 	prefs := services.NewPrefs()
 	// Every preference write reshapes the rail. Wiring it here rather than
-	// making the frontend call ApplyRailPrefs after each Set removes the only
+	// making the frontend ask for a reshape after each write removes the only
 	// way the two can drift apart.
-	prefs.OnChange = app.ApplyRailPrefs
+	prefs.OnChange = app.applyRailPrefs
 	history := services.NewHistory()
 	statusline := services.NewStatusLine()
 

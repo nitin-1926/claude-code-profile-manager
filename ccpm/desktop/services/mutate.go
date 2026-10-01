@@ -3,11 +3,14 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
-	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -30,21 +33,48 @@ type MutateService struct{}
 
 func NewMutate() *MutateService { return &MutateService{} }
 
+// runCCPM is a mutating shell-out, bounded at 60s.
 func runCCPM(args ...string) CmdResult {
+	r, _ := execCCPM(60*time.Second, args...)
+	return r
+}
+
+// lockedBuffer lets stdout and stderr share one buffer, in the order ccpm wrote
+// them, while stdout is also captured on its own.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+// execCCPM is the one skeleton every ccpm shell-out goes through: find the
+// binary, bound the call so a stuck ccpm can't wedge the UI, strip color, and
+// explain an outdated CLI. r.Output is stdout and stderr interleaved, for
+// showing to a person; stdout alone is returned for callers that parse it,
+// since ccpm logs to stderr.
+func execCCPM(timeout time.Duration, args ...string) (r CmdResult, stdout []byte) {
 	bin := findCCPM()
 	if bin == "" {
-		return CmdResult{Error: "ccpm CLI not found on PATH"}
+		return CmdResult{Error: "ccpm CLI not found on PATH"}, nil
 	}
-	// Bound every mutating shell-out so a stuck ccpm can't wedge the UI.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
-	out, err := cmd.CombinedOutput()
-	r := CmdResult{OK: err == nil, Output: ansiRE.ReplaceAllString(string(out), ""), CCPMPath: bin}
+	var out bytes.Buffer
+	var combined lockedBuffer
+	cmd.Stdout = io.MultiWriter(&out, &combined)
+	cmd.Stderr = &combined
+	err := cmd.Run()
+	r = CmdResult{OK: err == nil, Output: ansiRE.ReplaceAllString(combined.b.String(), ""), CCPMPath: bin}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			r.Error = "ccpm timed out after 60s"
+			r.Error = fmt.Sprintf("ccpm %s timed out after %ds", args[0], int(timeout.Seconds()))
 		} else {
 			r.Error = strings.TrimSpace(err.Error())
 		}
@@ -56,7 +86,7 @@ func runCCPM(args ...string) CmdResult {
 				strings.TrimSpace(r.Output) + ")"
 		}
 	}
-	return r
+	return r, out.Bytes()
 }
 
 // outdatedCLI reports whether ccpm's output is cobra refusing a flag or
@@ -95,23 +125,14 @@ func (s *MutateService) OpenFolder(name string) CmdResult {
 	if !ok {
 		return CmdResult{Error: "unknown profile: " + name}
 	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", pc.Dir)
-	case "windows":
-		cmd = exec.Command("explorer", pc.Dir)
-	default:
-		cmd = exec.Command("xdg-open", pc.Dir)
-	}
-	if err := cmd.Start(); err != nil {
+	if err := exec.Command("open", pc.Dir).Start(); err != nil {
 		return CmdResult{Error: err.Error()}
 	}
 	return CmdResult{OK: true, Output: pc.Dir}
 }
 
 // Launch opens a new Terminal running `ccpm run <name>` (spawns Claude Code with
-// the profile). macOS only for v1; other platforms get a copyable command.
+// the profile).
 func (s *MutateService) Launch(name string) CmdResult {
 	if err := profile.ValidateName(name); err != nil {
 		return CmdResult{Error: err.Error()}
@@ -133,34 +154,47 @@ func (s *MutateService) ImportInTerminal() CmdResult {
 	return s.terminal("", "add")
 }
 
+// Every call below that passes a value typed in the UI puts flags first and
+// `--` before those positionals: a value starting with "-" (a setting of -1)
+// is otherwise parsed as a flag, and the failure reads as an outdated CLI.
+
 // --- asset-level writes (profile-scoped) ---
 
 // AddAsset installs an asset of kind (skill/agent/command/rule/hook) from a
 // filesystem path into a profile.
 func (s *MutateService) AddAsset(kind, path, profile string) CmdResult {
-	return runCCPM(kind, "add", path, "--profile", profile)
+	return runCCPM(kind, "add", "--profile", profile, "--", path)
 }
 
 // RemoveAsset removes a named asset of kind from a profile.
 func (s *MutateService) RemoveAsset(kind, name, profile string) CmdResult {
-	return runCCPM(kind, "remove", name, "--profile", profile)
+	return runCCPM(kind, "remove", "--profile", profile, "--", name)
 }
 
 // --- MCP + plugins ---
 
 // AddStdioMCP adds a stdio MCP server to a profile.
 func (s *MutateService) AddStdioMCP(name, command, profile string) CmdResult {
-	return runCCPM("mcp", "add", name, "--scope", "profile", "--profile", profile, "--command", command)
+	return runCCPM("mcp", "add", "--scope", "profile", "--profile", profile, "--command", command, "--", name)
 }
 
 // AddHTTPMCP adds an http/sse MCP server to a profile.
 func (s *MutateService) AddHTTPMCP(name, url, profile string) CmdResult {
-	return runCCPM("mcp", "add", name, "--scope", "profile", "--profile", profile, "--transport", "http", "--url", url)
+	return runCCPM("mcp", "add", "--scope", "profile", "--profile", profile, "--transport", "http", "--url", url, "--", name)
 }
 
-// RemoveMCP removes a profile-scoped MCP server.
+// RemoveMCP removes a profile-scoped MCP server. It refuses, before asking the
+// CLI, a server this profile does not hold at profile scope: a CLI older than
+// its own guard deletes another profile's record and reports success.
 func (s *MutateService) RemoveMCP(name, profile string) CmdResult {
-	return runCCPM("mcp", "remove", name, "--scope", "profile", "--profile", profile)
+	list, err := readMCP(profile)
+	if err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	if !slices.ContainsFunc(list, func(m McpView) bool { return m.Name == name && m.Removable }) {
+		return CmdResult{Error: fmt.Sprintf("MCP server %q is not installed in profile %q — it comes from another scope", name, profile)}
+	}
+	return runCCPM("mcp", "remove", "--scope", "profile", "--profile", profile, "--", name)
 }
 
 // TogglePlugin enables or disables a plugin (<name>@<marketplace>) for a profile.
@@ -169,49 +203,49 @@ func (s *MutateService) TogglePlugin(plugin string, enable bool, profile string)
 	if enable {
 		verb = "enable"
 	}
-	return runCCPM("plugin", verb, plugin, "--profile", profile)
+	return runCCPM("plugin", verb, "--profile", profile, "--", plugin)
 }
 
 // InstallPlugin installs a plugin (<name>@<marketplace>) into a profile.
 func (s *MutateService) InstallPlugin(plugin, profile string) CmdResult {
-	return runCCPM("plugin", "install", plugin, "--profile", profile)
+	return runCCPM("plugin", "install", "--profile", profile, "--", plugin)
 }
 
 // RemovePlugin uninstalls a plugin (<name>@<marketplace>) from a profile.
 func (s *MutateService) RemovePlugin(plugin, profile string) CmdResult {
-	return runCCPM("plugin", "remove", plugin, "--profile", profile)
+	return runCCPM("plugin", "remove", "--profile", profile, "--", plugin)
 }
 
 // SetSetting sets a settings key (dot notation) to a JSON value for a profile.
 func (s *MutateService) SetSetting(key, value, profile string) CmdResult {
-	return runCCPM("settings", "set", key, value, "--profile", profile)
+	return runCCPM("settings", "set", "--profile", profile, "--", key, value)
 }
 
 // --- permissions + env ---
 
 // AddPermission adds a rule to a bucket (allow/ask/deny) for a profile.
 func (s *MutateService) AddPermission(bucket, rule, profile string) CmdResult {
-	return runCCPM("permissions", bucket, rule, "--profile", profile)
+	return runCCPM("permissions", bucket, "--profile", profile, "--", rule)
 }
 
 // RemovePermission strips a rule from all permission buckets for a profile.
 func (s *MutateService) RemovePermission(rule, profile string) CmdResult {
-	return runCCPM("permissions", "remove", rule, "--profile", profile)
+	return runCCPM("permissions", "remove", "--profile", profile, "--", rule)
 }
 
 // SetPermissionMode sets the default permission mode for a profile.
 func (s *MutateService) SetPermissionMode(mode, profile string) CmdResult {
-	return runCCPM("permissions", "mode", mode, "--profile", profile)
+	return runCCPM("permissions", "mode", "--profile", profile, "--", mode)
 }
 
 // SetEnv sets a KEY=VALUE env var on a profile.
 func (s *MutateService) SetEnv(kv, profile string) CmdResult {
-	return runCCPM("env", "set", kv, "--profile", profile)
+	return runCCPM("env", "set", "--profile", profile, "--", kv)
 }
 
 // UnsetEnv removes an env var from a profile.
 func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
-	return runCCPM("env", "unset", key, "--profile", profile)
+	return runCCPM("env", "unset", "--profile", profile, "--", key)
 }
 
 // terminal launches a new Terminal window running `<ccpm> <args...>`, optionally
@@ -280,9 +314,6 @@ func (s *MutateService) terminal(workdir string, args ...string) CmdResult {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}
 	}
 	full := composeCommand(bin, workdir, args...)
-	if runtime.GOOS != "darwin" {
-		return CmdResult{OK: false, Output: full, Error: "open a terminal and run: " + full}
-	}
 	script := fmt.Sprintf(`tell application "Terminal"
 	activate
 	do script %q

@@ -436,7 +436,7 @@ func dirSize(path string) int64 {
 
 func humanSize(n int64) string {
 	const (
-		_      = iota
+		_        = iota
 		kb int64 = 1 << (10 * iota)
 		mb
 		gb
@@ -460,4 +460,3 @@ func stringSet(in []string) map[string]struct{} {
 	}
 	return out
 }
-

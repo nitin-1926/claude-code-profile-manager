@@ -166,7 +166,7 @@ func BuildIndex(profileDir string) (*Index, error) {
 	ix := LoadIndex(profileDir)
 	changed := ix.pruned
 
-	err := usage.WalkTranscripts(profileDir, "", func(abs, rel string) error {
+	err := usage.WalkTranscripts(profileDir, func(abs, rel string) error {
 		if skipTranscript(abs, rel) {
 			return nil
 		}

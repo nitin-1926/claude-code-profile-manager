@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestEncodeCwd pins the encoding to what Claude Code actually writes on disk:
@@ -131,5 +133,64 @@ func TestEncodeCwdMatchesJavaScriptOnAstralCharacters(t *testing.T) {
 		if got := EncodeCwd(tc.in); got != tc.want {
 			t.Errorf("EncodeCwd(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// A link (or any other non-regular entry) named *.jsonl must never reach a
+// caller. The profile directory can be shared or restored from elsewhere, and
+// every caller opens what it is handed: projects/-x/evil.jsonl -> /dev/zero made
+// `ccpm usage`, the SessionEnd hook, the TUI and the desktop Usage tab read
+// without bound.
+func TestWalkTranscriptsSkipsNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "projects", "-repo")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "s1.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "secret")
+	if err := os.WriteFile(outside, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(proj, "evil.jsonl")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var got []string
+	if err := WalkTranscripts(dir, func(abs, rel string) error {
+		got = append(got, filepath.Base(rel))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "s1.jsonl" {
+		t.Fatalf("walked %v, want only [s1.jsonl]", got)
+	}
+}
+
+// End to end: a link to an endless device must not stall Sync.
+func TestSyncIgnoresLinkToEndlessDevice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /dev/zero")
+	}
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "projects", "-repo")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", filepath.Join(proj, "evil.jsonl")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, _, err := Sync(dir); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Sync is still reading a symlink to /dev/zero after 10s")
 	}
 }

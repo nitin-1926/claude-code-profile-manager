@@ -6,10 +6,6 @@ export function Get() {
   return window['go']['services']['PrefsService']['Get']();
 }
 
-export function Set(arg1) {
-  return window['go']['services']['PrefsService']['Set'](arg1);
-}
-
 export function SetNotch(arg1) {
   return window['go']['services']['PrefsService']['SetNotch'](arg1);
 }

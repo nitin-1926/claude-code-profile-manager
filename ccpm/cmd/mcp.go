@@ -390,7 +390,26 @@ func runMCPRemove(state *mcpState, args []string) error {
 		if state.profile == "" {
 			return fmt.Errorf("--profile is required for --scope profile")
 		}
-		if err := removeMCPFromFragment(filepath.Join(mcpDir, state.profile+".json"), serverName); err != nil {
+		// Refuse a profile that does not hold the server. Without this the
+		// fragment removal below no-ops and the manifest record — which may
+		// belong to another profile — is deleted anyway, reporting success
+		// while the server keeps running there, untracked.
+		fragPath := filepath.Join(mcpDir, state.profile+".json")
+		frag, err := settingsmerge.LoadJSON(fragPath)
+		if err != nil {
+			return fmt.Errorf("loading profile fragment: %w", err)
+		}
+		if _, inFrag := frag[serverName]; !inFrag {
+			m, err := manifest.Load()
+			if err != nil {
+				return fmt.Errorf("loading manifest: %w", err)
+			}
+			rec := m.Find(serverName, manifest.KindMCP)
+			if rec == nil || rec.Scope != manifest.ScopeProfile || !stringSliceContains(rec.Profiles, state.profile) {
+				return fmt.Errorf("MCP server %q is not installed in profile %q", serverName, state.profile)
+			}
+		}
+		if err := removeMCPFromFragment(fragPath, serverName); err != nil {
 			return fmt.Errorf("removing from profile fragment: %w", err)
 		}
 	case mcpScopeProject:

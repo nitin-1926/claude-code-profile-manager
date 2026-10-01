@@ -228,3 +228,129 @@ func TestUnlinkKeepsMarketplaceWhileOtherPluginsRemain(t *testing.T) {
 		t.Errorf("marketplace entry must survive while plug-b@mkt is installed: %+v", known)
 	}
 }
+
+// Upstream changing a plugin's files without bumping its version must not
+// leave the recorded commit pointing at content the cache doesn't hold.
+func TestFetchPluginIntoCacheContentChangeWithoutVersionBump(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	isolateHome(t)
+	seedMarketplace(t, "mkt", "testplug", "1.2.3")
+	mktDir, _ := MarketplaceCloneDir("mkt")
+	manifest, _ := LoadMarketplaceManifest(mktDir)
+	spec := manifest.FindPlugin("testplug")
+
+	oldVersion, oldSHA, err := FetchPluginIntoCache("mkt", *spec, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Same version in plugin.json, new file content, new commit.
+	if err := os.WriteFile(filepath.Join(mktDir, "plugins", "testplug", "SKILL.md"), []byte("updated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", mktDir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "update")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	newVersion, newSHA, err := FetchPluginIntoCache("mkt", *spec, false)
+	if err != nil {
+		t.Fatalf("re-fetch: %v", err)
+	}
+	if newSHA == oldSHA {
+		t.Fatalf("fixture broken: commit did not change (%s)", newSHA)
+	}
+	newPath, err := CachePluginDir("mkt", "testplug", newVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(newPath, "SKILL.md"))
+	if string(got) != "updated" {
+		t.Fatalf("fetch recorded commit %s but cache %s holds %q, want the updated content", newSHA[:12], newVersion, got)
+	}
+	// Profiles still linked to the old cache keep the files their recorded
+	// commit describes.
+	oldPath, _ := CachePluginDir("mkt", "testplug", oldVersion)
+	if got, _ := os.ReadFile(filepath.Join(oldPath, "SKILL.md")); string(got) != "hello" {
+		t.Errorf("old cache %s content = %q, want untouched %q", oldVersion, got, "hello")
+	}
+
+	// Unchanged upstream: re-fetch reuses the new cache entry.
+	again, _, err := FetchPluginIntoCache("mkt", *spec, false)
+	if err != nil || again != newVersion {
+		t.Errorf("unchanged re-fetch = %q, %v; want %q", again, err, newVersion)
+	}
+}
+
+// Whole-repo sources (github/url) are cached with their .git dir, which
+// differs between clones of identical content; it must not count as a change.
+func TestSameTreeIgnoresGitMetadata(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	for dir, gitHead := range map[string]string{a: "ref: one", b: "ref: two"} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte(gitHead), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("same"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if same, err := sameTree(a, b); err != nil || !same {
+		t.Errorf("sameTree = %v, %v; want true (only .git differs)", same, err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "SKILL.md"), []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if same, err := sameTree(a, b); err != nil || same {
+		t.Errorf("sameTree = %v, %v; want false after a content change", same, err)
+	}
+}
+
+// A hostile installed_plugins.json (e.g. restored from a shared bundle) can
+// point installPath at any file. Unlink must only ever remove the cache
+// symlink it would itself have created, never the recorded path.
+func TestUnlinkIgnoresHostileInstallPath(t *testing.T) {
+	home := isolateHome(t)
+	seedMarketplace(t, "mkt", "testplug", "1.2.3")
+
+	mktDir, _ := MarketplaceCloneDir("mkt")
+	manifest, _ := LoadMarketplaceManifest(mktDir)
+	spec := manifest.FindPlugin("testplug")
+	version, sha, err := FetchPluginIntoCache("mkt", *spec, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileDir := filepath.Join(home, ".ccpm", "profiles", "victim")
+	if err := LinkIntoProfile(profileDir, "mkt", "testplug", version, sha); err != nil {
+		t.Fatal(err)
+	}
+
+	victim := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(victim, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedPath := filepath.Join(profileDir, "plugins", "installed_plugins.json")
+	doc, _ := loadV2Installed(installedPath)
+	entries := doc.Plugins["testplug@mkt"]
+	entries[0].InstallPath = victim
+	doc.Plugins["testplug@mkt"] = entries
+	data, _ := marshalIndent(doc)
+	if err := os.WriteFile(installedPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UnlinkFromProfile(profileDir, "mkt", "testplug"); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("UnlinkFromProfile deleted the file named by installPath (%s): %v", victim, err)
+	}
+	link := filepath.Join(profileDir, "plugins", "cache", "mkt", "testplug", version)
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Errorf("profile cache symlink %s should be removed on unlink (err=%v)", link, err)
+	}
+}

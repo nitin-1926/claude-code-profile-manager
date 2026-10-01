@@ -43,13 +43,21 @@ type rawUsage struct {
 // no message.id. Counting each unique key once (largest snapshot wins, see
 // foldLine) is what keeps totals correct.
 func (l transcriptLine) dedupKey() string {
-	if l.Type != "assistant" || l.Message.Usage == nil {
+	return DedupKey(l.Type, l.Message.Usage != nil, l.Message.ID, l.RequestID, l.Message.Model, l.Timestamp)
+}
+
+// DedupKey is the dedup identity rule itself, exported so internal/transcript
+// counts a session's tokens under exactly the same keys as this package: two
+// hand-kept copies of it could drift, and the History and Usage tabs would then
+// disagree about the same session.
+func DedupKey(lineType string, hasUsage bool, messageID, requestID, model, timestamp string) string {
+	if lineType != "assistant" || !hasUsage {
 		return ""
 	}
-	if l.Message.ID != "" {
-		return l.Message.ID + "|" + l.RequestID
+	if messageID != "" {
+		return messageID + "|" + requestID
 	}
-	return l.Message.Model + "|" + l.Timestamp
+	return model + "|" + timestamp
 }
 
 func (l transcriptLine) tokens() Tokens {

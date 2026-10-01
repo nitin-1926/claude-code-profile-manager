@@ -10,25 +10,11 @@ import (
 	"testing"
 )
 
-// firstProfile returns a real profile name to exercise, or skips.
-//
-// Use this only where the test genuinely needs a profile with REAL data on the
-// machine (transcripts, usage). For tests that only check DTO shape, use
-// syntheticProfile — skipping there means the guard does not run on CI.
-func firstProfile(t *testing.T) string {
-	t.Helper()
-	ps, err := NewProfiles().List()
-	if err != nil || len(ps) == 0 {
-		t.Skip("no profiles registered on this machine")
-	}
-	return ps[0].Name
-}
-
 // syntheticProfile points $HOME at a scratch directory containing exactly one
 // registered, empty profile, and returns its name.
 //
-// The DTO-shape guards below used to call firstProfile and skip when the
-// machine had no profiles — so on a clean CI runner 12 of the package's tests
+// The DTO-shape guards below used to read the machine's real ~/.ccpm and skip
+// when it had no profiles — so on a clean CI runner 12 of the package's tests
 // skipped, including the nil-slice guard itself. The invariant they protect
 // (a nil slice marshals to null and blanks the frontend) is exactly the kind
 // that regresses unnoticed, and it was being checked only on the maintainer's
@@ -93,6 +79,9 @@ func assertNoNullArrays(t *testing.T, v interface{}, fields ...string) {
 
 func TestDetailsNoNullArrays(t *testing.T) {
 	name := syntheticProfile(t)
+	// The MCP list comes from the CLI; a failed listing is now an error, so
+	// pin it to an empty one rather than depending on a ccpm being installed.
+	fakeCCPM(t, `echo '[]'`)
 	d, err := NewDetails().Get(name)
 	if err != nil {
 		t.Fatalf("Details.Get: %v", err)
@@ -118,7 +107,7 @@ func TestUsageNoNullArrays(t *testing.T) {
 }
 
 func TestLimitsNoNullArrays(t *testing.T) {
-	name := firstProfile(t)
+	name := syntheticProfile(t)
 	l, err := NewLimits().Get(name)
 	if err != nil {
 		t.Fatalf("Limits.Get: %v", err)

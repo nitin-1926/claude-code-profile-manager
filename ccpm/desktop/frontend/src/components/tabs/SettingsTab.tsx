@@ -18,12 +18,12 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   const [adding, setAdding] = useState(false)
   const [version, setVersion] = useState<string | null>(null)
 
-  // Reuse the updater's version binding (same one UpdateToast reads `current` from)
-  // to show a persistent app-version line. Network/API failures stay silent.
+  // A persistent app-version line. version() is local: check() would make a
+  // GitHub request on every mount and lose the line whenever that failed.
   useEffect(() => {
     api.updater
-      .check()
-      .then((u) => setVersion(u.current))
+      .version()
+      .then(setVersion)
       .catch(() => {})
   }, [])
 

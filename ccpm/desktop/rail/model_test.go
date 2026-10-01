@@ -4,6 +4,7 @@ package rail
 
 import (
 	"testing"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/desktop/services"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
@@ -170,5 +171,33 @@ func TestBuildModelWeeklyMainRingSwapsTheArcs(t *testing.T) {
 		if got := BuildModel([]services.ProfileLimits{available("work", 80, 30)}, ThemeGraphite, main, now).Slots[0]; got.Outer != 0.8 || got.Percent != "80%" {
 			t.Errorf("main %q: outer %v percent %q, want the five-hour default", main, got.Outer, got.Percent)
 		}
+	}
+}
+
+// A window whose reset has passed kept drawing its old usage — a 96% red ring
+// beside a callout saying "Reset — refreshing". Until the next reading it has
+// rolled over, so ring and callout both show it empty.
+func TestAWindowPastItsResetReadsEmpty(t *testing.T) {
+	l := available("work", 96, 40)
+	l.Windows[0].ResetsAt = in(-5 * time.Minute) // five-hour rolled over
+	l.Windows[1].ResetsAt = in(2 * 24 * time.Hour)
+
+	s := BuildModel([]services.ProfileLimits{l}, ThemeGraphite, usage.KeyFiveHour, now).Slots[0]
+	if s.Outer != 0 || s.Percent != "0%" || s.OuterRGB != NotchColor(100) {
+		t.Errorf("reset window: outer %v percent %q rgb %v, want empty", s.Outer, s.Percent, s.OuterRGB)
+	}
+	if s.Inner != 0.4 {
+		t.Errorf("window not yet reset: inner %v, want its 0.4", s.Inner)
+	}
+
+	c := s.Callout.Windows[0]
+	if c.Fraction != 0 || c.Percent != "0% used" || c.Reset != "Reset — refreshing" {
+		t.Errorf("reset window callout: %+v, want empty and refreshing", c)
+	}
+
+	// No reset clock at all is not a reset.
+	l.Windows[0].ResetsAt = 0
+	if s := BuildModel([]services.ProfileLimits{l}, ThemeGraphite, usage.KeyFiveHour, now).Slots[0]; s.Outer != 0.96 {
+		t.Errorf("unknown reset: outer %v, want the reading's 0.96", s.Outer)
 	}
 }

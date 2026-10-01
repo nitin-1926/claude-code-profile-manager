@@ -4,8 +4,6 @@ import {services} from '../models';
 
 export function Get():Promise<services.DesktopPrefs>;
 
-export function Set(arg1:services.DesktopPrefs):Promise<services.DesktopPrefs>;
-
 export function SetNotch(arg1:services.DesktopPrefs):Promise<services.DesktopPrefs>;
 
 export function SetRailProfile(arg1:string,arg2:boolean):Promise<services.DesktopPrefs>;

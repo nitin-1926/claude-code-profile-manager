@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 )
 
 func TestParseKVSlice(t *testing.T) {
@@ -109,11 +110,11 @@ func TestTypeOfMCPDef(t *testing.T) {
 		in   interface{}
 		want string
 	}{
-		"explicit-http":   {map[string]interface{}{"type": "http", "url": "u"}, "http"},
-		"command-stdio":   {map[string]interface{}{"command": "npx"}, "stdio"},
-		"url-only":        {map[string]interface{}{"url": "u"}, "http"},
-		"opaque":          {map[string]interface{}{"foo": "bar"}, "—"},
-		"not-a-map":       {"string", "—"},
+		"explicit-http": {map[string]interface{}{"type": "http", "url": "u"}, "http"},
+		"command-stdio": {map[string]interface{}{"command": "npx"}, "stdio"},
+		"url-only":      {map[string]interface{}{"url": "u"}, "http"},
+		"opaque":        {map[string]interface{}{"foo": "bar"}, "—"},
+		"not-a-map":     {"string", "—"},
 	}
 	for name, c := range cases {
 		if got := typeOfMCPDef(c.in); got != c.want {
@@ -166,5 +167,62 @@ func TestConcurrentManifestMutationsUnderLock(t *testing.T) {
 		if m.Find(id, manifest.KindMCP) == nil {
 			t.Errorf("entry %q lost — read-modify-write race not serialized", id)
 		}
+	}
+}
+
+// Removing a server at profile scope from a profile that does not hold it used
+// to no-op on that profile's fragment and then delete the manifest record
+// anyway — reporting success while the server kept running in the profile that
+// really had it, now untracked by ccpm.
+func TestMCPRemoveRefusesAProfileThatDoesNotHoldTheServer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := share.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMCPFragment("beta", "srv", map[string]interface{}{"command": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordMCPInstall("srv", manifest.ScopeProfile, []string{"beta"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runMCPRemove(&mcpState{scope: mcpScopeProfile, profile: "alpha"}, []string{"srv"})
+	if err == nil || !strings.Contains(err.Error(), `not installed in profile "alpha"`) {
+		t.Fatalf("remove from alpha: err = %v, want a refusal naming alpha", err)
+	}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Find("srv", manifest.KindMCP) == nil {
+		t.Fatal("refused remove still deleted the manifest record")
+	}
+
+	// The profile that holds it can remove it.
+	if err := runMCPRemove(&mcpState{scope: mcpScopeProfile, profile: "beta"}, []string{"srv"}); err != nil {
+		t.Fatalf("remove from beta: %v", err)
+	}
+}
+
+// A manifest record whose fragment entry is already gone must stay removable,
+// or the stale row could never be cleaned up.
+func TestMCPRemoveClearsAStaleProfileRecord(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := recordMCPInstall("stale", manifest.ScopeProfile, []string{"alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMCPRemove(&mcpState{scope: mcpScopeProfile, profile: "alpha"}, []string{"stale"}); err != nil {
+		t.Fatalf("remove stale record: %v", err)
+	}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Find("stale", manifest.KindMCP) != nil {
+		t.Error("stale record survived its removal")
 	}
 }
