@@ -13,9 +13,8 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 
 // The desktop app versions independently of the CLI (its own `desktop-v*`
 // release tags). Its authoritative version lives in ccpm/desktop/wails.json
-// (bumped by scripts/release-desktop.sh). Surface it so the site can deep-link
-// the correct per-arch .dmg on the matching release instead of guessing via
-// /releases/latest (which resolves to the CLI release, not the desktop one).
+// (bumped by scripts/release-desktop.sh). Surfaced so the docs can show the
+// current desktop version.
 const wailsPath = resolve(__dirname, "..", "ccpm", "desktop", "wails.json");
 const wails = JSON.parse(readFileSync(wailsPath, "utf-8")) as {
   info: { productVersion: string };

@@ -9,7 +9,13 @@ export type Tab = {
   content: ReactNode;
 };
 
-export function Tabs({ tabs }: { tabs: Tab[] }) {
+export function Tabs({
+  tabs,
+  label = "Install command",
+}: {
+  tabs: Tab[];
+  label?: string;
+}) {
   const [active, setActive] = useState(0);
   const baseId = useId();
   const tablistRef = useRef<HTMLDivElement>(null);
@@ -43,7 +49,7 @@ export function Tabs({ tabs }: { tabs: Tab[] }) {
       <div
         ref={tablistRef}
         role="tablist"
-        aria-label="Install command"
+        aria-label={label}
         onKeyDown={onKeyDown}
         className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-bg-subtle border border-border"
       >

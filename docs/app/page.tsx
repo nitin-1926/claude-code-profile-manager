@@ -25,12 +25,12 @@ import { Button } from "./components/button";
 import { CodeBlock } from "./components/code-block";
 import { BentoTile } from "./components/bento-tile";
 import { DotGrid, AccentOrb } from "./components/dot-grid";
-import { InstallTabs } from "./components/install-tabs";
+import { InstallTabs, DesktopInstall } from "./components/install-tabs";
 import {
   TerminalReel,
   type ReelStep,
 } from "./components/terminal-reel";
-import { VERSION_TAG, DESKTOP_DMG } from "@/lib/version";
+import { VERSION_TAG } from "@/lib/version";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Hero terminal windows — animated scripts inside a fixed-height frame
@@ -184,24 +184,6 @@ function Hero() {
               <ArrowUpRight size={14} strokeWidth={2.25} />
             </Button>
             <Button
-              href={DESKTOP_DMG.appleSilicon}
-              external
-              variant="secondary"
-              size="md"
-            >
-              macOS · Apple Silicon
-              <ArrowUpRight size={14} strokeWidth={2.25} />
-            </Button>
-            <Button
-              href={DESKTOP_DMG.intel}
-              external
-              variant="secondary"
-              size="md"
-            >
-              macOS · Intel
-              <ArrowUpRight size={14} strokeWidth={2.25} />
-            </Button>
-            <Button
               href="https://github.com/nitin-1926/claude-code-profile-manager"
               external
               variant="secondary"
@@ -210,14 +192,6 @@ function Hero() {
               View on GitHub
             </Button>
           </div>
-
-          <p className="mt-3 max-w-md text-fg-muted leading-relaxed text-[0.8125rem]">
-            Desktop app is macOS-only and not yet notarized. Install it with the
-            one-line installer in the docs, or after installing the .dmg run{" "}
-            <code>xattr -dr com.apple.quarantine /Applications/CCPM.app</code>{" "}
-            once before the first launch, or macOS will refuse to open it.
-            Profile changes run through the CLI, so keep it installed.
-          </p>
         </div>
 
         {/* Right: 3 terminals in a diagonal cascade */}
@@ -815,15 +789,6 @@ function CTA() {
             <ArrowUpRight size={14} strokeWidth={2.25} />
           </Button>
           <Button
-            href={DESKTOP_DMG.appleSilicon}
-            external
-            variant="secondary"
-            size="md"
-          >
-            Download for macOS
-            <ArrowUpRight size={14} strokeWidth={2.25} />
-          </Button>
-          <Button
             href="https://github.com/nitin-1926/claude-code-profile-manager"
             external
             variant="secondary"
@@ -867,20 +832,8 @@ function DesktopShowcase() {
           />
         </div>
 
-        <div className="mt-7 flex flex-wrap items-center gap-2.5 reveal">
-          <Button
-            href={DESKTOP_DMG.appleSilicon}
-            external
-            variant="primary"
-            size="md"
-          >
-            Download — Apple Silicon
-            <ArrowUpRight size={14} strokeWidth={2.25} />
-          </Button>
-          <Button href={DESKTOP_DMG.intel} external variant="secondary" size="md">
-            Intel
-            <ArrowUpRight size={14} strokeWidth={2.25} />
-          </Button>
+        <div className="mt-7 max-w-2xl reveal">
+          <DesktopInstall />
         </div>
       </div>
     </section>

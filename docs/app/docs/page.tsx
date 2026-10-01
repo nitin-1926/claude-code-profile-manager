@@ -5,15 +5,10 @@ import { CodeBlock } from "../components/code-block";
 import { Callout } from "../components/callout";
 import { DocsSidebar } from "../components/docs-sidebar";
 import { DocsToc } from "../components/docs-toc";
-import { InstallTabs } from "../components/install-tabs";
+import { InstallTabs, DesktopInstall } from "../components/install-tabs";
 import { H2, H3 } from "../components/docs/section-headings";
 import { DocsHero } from "../components/docs/docs-hero";
-import {
-  VERSION,
-  DESKTOP_DMG,
-  DESKTOP_RELEASES_URL,
-  DESKTOP_VERSION,
-} from "@/lib/version";
+import { VERSION, DESKTOP_VERSION } from "@/lib/version";
 
 export const metadata: Metadata = {
   title: "ccpm Documentation",
@@ -118,40 +113,15 @@ export default async function DocsPage() {
             pretending.
           </p>
 
-          <H3 id="desktop-download">Download (macOS)</H3>
+          <H3 id="desktop-download">Install (macOS)</H3>
           <p>
-            The quickest install is one line in Terminal. It picks the build for
-            your chip, verifies its checksum and puts <strong>CCPM</strong> in{" "}
-            <strong>Applications</strong>, ready to open with no Gatekeeper
-            prompt:
+            One line in Terminal. It picks the build for your chip, verifies its
+            checksum and puts <strong>CCPM</strong> in{" "}
+            <strong>Applications</strong>, ready to open:
           </p>
-          <CodeBlock
-            code={`curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`}
-            lang="bash"
-          />
-          <p>
-            Or grab the <code>.dmg</code> for your Mac (~3–4 MB each):{" "}
-            <a href={DESKTOP_DMG.appleSilicon}>Apple Silicon</a> (
-            <code>arm64</code>) or <a href={DESKTOP_DMG.intel}>Intel</a> (
-            <code>amd64</code>). Older versions and checksums live on the{" "}
-            <a href={DESKTOP_RELEASES_URL} target="_blank" rel="noopener noreferrer">all desktop releases</a> page. Open the{" "}
-            <code>.dmg</code> and drag <strong>CCPM</strong> into{" "}
-            <strong>Applications</strong>.
-          </p>
-          <Callout type="warn" title="Installed from the .dmg? macOS says it can't be opened">
-            The app is not notarized yet (other apps open after a confirmation
-            because their developers pay Apple to notarize them), so on macOS 15
-            Sequoia and later
-            Gatekeeper blocks it on first launch and may describe it as{" "}
-            <strong>damaged</strong>. It isn&apos;t damaged: macOS just
-            can&apos;t verify who built it, and right-click, Open no longer gets
-            past that on these versions. Run this once in Terminal and it opens
-            normally:{" "}
-            <code>xattr -dr com.apple.quarantine /Applications/CCPM.app</code>.
-            On macOS 14 and earlier, right-click the app and choose{" "}
-            <strong>Open</strong> instead. In-app updates install themselves
-            without repeating this step.
-          </Callout>
+          <div className="not-prose my-5">
+            <DesktopInstall />
+          </div>
           <Callout type="info" title="Requires the ccpm CLI">
             The desktop app uses the <code>ccpm</code> CLI for all write
             actions — <a href="#installation">install it first</a> if you
@@ -161,8 +131,8 @@ export default async function DocsPage() {
           <p>
             <strong>Updates are automatic.</strong> When a new build ships, the
             app shows an in-app <strong>Update now</strong> prompt, downloads it,
-            verifies the SHA-256, and swaps itself in place — no re-downloading,
-            no re-dragging, and no repeat of the Gatekeeper step. If it can&apos;t
+            verifies the SHA-256, and swaps itself in place, with nothing to
+            re-download. If it can&apos;t
             replace itself (its folder isn&apos;t writable by you, or macOS is
             running it from a temporary location because it was never moved to
             Applications), it tells you instead of quitting. The desktop app
@@ -1629,7 +1599,7 @@ ccpm unset-default`}
                 </tr>
                 <tr>
                   <td className="py-2.5 px-4 text-fg">Desktop app</td>
-                  <td className="py-2.5 px-4">Native GUI (.dmg)</td>
+                  <td className="py-2.5 px-4">Native GUI</td>
                   <td className="py-2.5 px-4">—</td>
                   <td className="py-2.5 px-4">—</td>
                 </tr>
