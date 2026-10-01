@@ -1,6 +1,52 @@
 package cmd
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// TestDoctorCorruptConfigExitsUnhealthy: a corrupt config.json printed
+// "Config load failed" and returned nil — exit 0, dropping every issue already
+// counted — although doctor's contract is exit 4 whenever it finds issues.
+func TestDoctorCorruptConfigExitsUnhealthy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stub claude binary is a shell script")
+	}
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ccpm"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ccpm", "config.json"), []byte("{corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Stub claude so doctor never runs a real binary for `--version`.
+	stub := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 9.9.9\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(os.Args[0])
+	c.Env = append(os.Environ(),
+		"CCPM_TEST_EXECUTE=doctor",
+		"HOME="+home,
+		"USERPROFILE="+home,
+		"CLAUDE_BINARY="+stub,
+		"NO_COLOR=1",
+		"CCPM_NO_TTY=1",
+	)
+	out, err := c.CombinedOutput()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != exitUnhealthy {
+		t.Fatalf("doctor on corrupt config: err %v, want exit %d; output:\n%s", err, exitUnhealthy, out)
+	}
+	if !strings.Contains(string(out), "parsing config") {
+		t.Fatalf("output does not name the config problem:\n%s", out)
+	}
+}
 
 func TestCompareSemver(t *testing.T) {
 	cases := []struct {

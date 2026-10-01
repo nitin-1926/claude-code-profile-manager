@@ -704,7 +704,7 @@ func Snapshot(targets []Target) (*Fingerprint, error) {
 			continue
 		}
 
-		if err := hashWalk(root, sub, sub, fp.Files); err != nil {
+		if err := hashWalk(root, sub, sub, fp.Files, map[string]bool{}); err != nil {
 			return nil, err
 		}
 	}
@@ -721,7 +721,22 @@ func Snapshot(targets []Target) (*Fingerprint, error) {
 // logDir tracks the logical path under root so the fingerprint keys stay
 // pinned to ~/.claude/<...> even when the walk crosses into a resolved
 // symlink target that lives elsewhere on disk.
-func hashWalk(root, physDir, logDir string, files map[string]string) error {
+//
+// inChain holds the resolved directories on the CURRENT recursion path (the
+// same stack-not-set pattern as filetree.CopyTree), so a link back to an
+// ancestor (skills/a/loop -> skills) is skipped instead of recursing forever,
+// while two sibling links to one target are both walked.
+func hashWalk(root, physDir, logDir string, files map[string]string, inChain map[string]bool) error {
+	real, err := filepath.EvalSymlinks(physDir)
+	if err != nil {
+		return err
+	}
+	if inChain[real] {
+		return nil
+	}
+	inChain[real] = true
+	defer delete(inChain, real)
+
 	entries, err := os.ReadDir(physDir)
 	if err != nil {
 		return err
@@ -747,7 +762,7 @@ func hashWalk(root, physDir, logDir string, files map[string]string) error {
 				if err != nil {
 					return err
 				}
-				if err := hashWalk(root, resolved, logPath, files); err != nil {
+				if err := hashWalk(root, resolved, logPath, files, inChain); err != nil {
 					return err
 				}
 				continue
@@ -757,7 +772,7 @@ func hashWalk(root, physDir, logDir string, files map[string]string) error {
 		}
 
 		if info.IsDir() {
-			if err := hashWalk(root, physPath, logPath, files); err != nil {
+			if err := hashWalk(root, physPath, logPath, files, inChain); err != nil {
 				return err
 			}
 			continue
