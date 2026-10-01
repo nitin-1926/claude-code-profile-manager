@@ -317,8 +317,8 @@ type profileInstalledEntry struct {
 }
 
 type profileInstalledDoc struct {
-	Version int                                  `json:"version"`
-	Plugins map[string][]profileInstalledEntry  `json:"plugins"`
+	Version int                                `json:"version"`
+	Plugins map[string][]profileInstalledEntry `json:"plugins"`
 }
 
 type profileKnownEntry struct {

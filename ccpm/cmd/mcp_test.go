@@ -109,11 +109,11 @@ func TestTypeOfMCPDef(t *testing.T) {
 		in   interface{}
 		want string
 	}{
-		"explicit-http":   {map[string]interface{}{"type": "http", "url": "u"}, "http"},
-		"command-stdio":   {map[string]interface{}{"command": "npx"}, "stdio"},
-		"url-only":        {map[string]interface{}{"url": "u"}, "http"},
-		"opaque":          {map[string]interface{}{"foo": "bar"}, "—"},
-		"not-a-map":       {"string", "—"},
+		"explicit-http": {map[string]interface{}{"type": "http", "url": "u"}, "http"},
+		"command-stdio": {map[string]interface{}{"command": "npx"}, "stdio"},
+		"url-only":      {map[string]interface{}{"url": "u"}, "http"},
+		"opaque":        {map[string]interface{}{"foo": "bar"}, "—"},
+		"not-a-map":     {"string", "—"},
 	}
 	for name, c := range cases {
 		if got := typeOfMCPDef(c.in); got != c.want {

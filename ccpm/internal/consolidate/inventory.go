@@ -33,10 +33,10 @@ type ProfileSnapshot struct {
 
 // Snapshot is the structured view consumed by Detect.
 type Snapshot struct {
-	HomeDir    string
-	HostDir    string // ~/.claude
-	CCPMDir    string // ~/.ccpm (may be empty if absent)
-	AgentsDir  string // ~/.agents (may be empty)
+	HomeDir   string
+	HostDir   string // ~/.claude
+	CCPMDir   string // ~/.ccpm (may be empty if absent)
+	AgentsDir string // ~/.agents (may be empty)
 
 	HostSkills      []SkillEntry
 	HostAgents      []SkillEntry
