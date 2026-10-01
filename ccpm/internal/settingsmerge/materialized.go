@@ -4,8 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 	"path/filepath"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 )
 
 // materializedFile is the per-profile sidecar recording what ccpm itself wrote
@@ -53,7 +54,7 @@ func fingerprintLeaves(m map[string]interface{}) map[string]interface{} {
 // its data rather than losing any.
 func loadMaterialized(profileDir string) materialized {
 	var m materialized
-	data, err := os.ReadFile(filepath.Join(profileDir, materializedFile))
+	data, err := atomicwrite.ReadFile(filepath.Join(profileDir, materializedFile))
 	if err != nil || json.Unmarshal(data, &m) != nil {
 		return materialized{}
 	}

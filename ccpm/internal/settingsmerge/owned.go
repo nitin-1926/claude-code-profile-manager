@@ -29,7 +29,7 @@ func ownedKeysPath(fragmentPath string) string {
 // LoadOwnedKeys reads the sidecar for a fragment path. Missing file is not
 // an error.
 func LoadOwnedKeys(fragmentPath string) (map[string]struct{}, error) {
-	data, err := os.ReadFile(ownedKeysPath(fragmentPath))
+	data, err := atomicwrite.ReadFile(ownedKeysPath(fragmentPath))
 	if os.IsNotExist(err) {
 		return map[string]struct{}{}, nil
 	}
