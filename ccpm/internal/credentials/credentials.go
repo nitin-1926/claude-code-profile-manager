@@ -12,7 +12,7 @@ import (
 )
 
 type CredStatus struct {
-	Valid     bool
+	Valid    bool
 	Method   string
 	Detail   string
 	ExpireAt string

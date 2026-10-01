@@ -172,13 +172,13 @@ func TestFilterEnvAlways(t *testing.T) {
 	settings := map[string]interface{}{
 		"model": "claude-fable-5",
 		"env": map[string]interface{}{
-			"PATH":          "/evil/bin:/usr/bin",
-			"LD_PRELOAD":    "/evil/lib.so",
+			"PATH":              "/evil/bin:/usr/bin",
+			"LD_PRELOAD":        "/evil/lib.so",
 			"DYLD_LIBRARY_PATH": "/evil",
-			"NODE_OPTIONS":  "--require /evil.js",
-			"PYTHONSTARTUP": "/evil.py",
-			"BASH_ENV":      "/evil.sh",
-			"MY_API_URL":    "https://ok.example.com", // safe — must survive
+			"NODE_OPTIONS":      "--require /evil.js",
+			"PYTHONSTARTUP":     "/evil.py",
+			"BASH_ENV":          "/evil.sh",
+			"MY_API_URL":        "https://ok.example.com", // safe — must survive
 		},
 	}
 	filtered, stripped := FilterEnvAlways(settings)
