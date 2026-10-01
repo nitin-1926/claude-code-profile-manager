@@ -235,6 +235,33 @@ func TestImportDedupeLiveSymlinks(t *testing.T) {
 	}
 }
 
+// A deduped import must not delete a real entry the profile already has
+// under the same name (it may hold edits the host copy doesn't); it keeps it
+// and still links the other entries.
+func TestImportDedupeKeepsRealProfileEntry(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "mine", "SKILL.md"), "host\n")
+	writeFile(t, filepath.Join(home, ".claude", "skills", "other", "SKILL.md"), "host\n")
+	profile := filepath.Join(t.TempDir(), "prof")
+	profSkill := filepath.Join(profile, "skills", "mine", "SKILL.md")
+	writeFile(t, profSkill, "profile edits\n")
+
+	if _, err := Import(profile, ImportOptions{
+		Targets:     []Target{TargetSkills},
+		Dedupe:      true,
+		ProfileName: "prof",
+	}); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if got, err := os.ReadFile(profSkill); err != nil || string(got) != "profile edits\n" {
+		t.Fatalf("profile's own skill destroyed by deduped import: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(profile, "skills", "other", "SKILL.md")); err != nil || string(got) != "host\n" {
+		t.Errorf("other skill not linked: %q, %v", got, err)
+	}
+}
+
 func TestImportItemFilterSkills(t *testing.T) {
 	home := t.TempDir()
 	withHome(t, home)

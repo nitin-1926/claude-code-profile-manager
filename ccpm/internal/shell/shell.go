@@ -36,21 +36,42 @@ func GenerateHook(shellName string) string {
 }
 
 func ExportStatements(shellName, profileName, profileDir string) string {
-	profileDir = strings.ReplaceAll(profileDir, "'", "'\\''")
+	dir := quote(shellName, profileDir)
+	name := quote(shellName, profileName)
+	msg := quote(shellName, "Switched to profile: "+profileName+". Run claude to start.")
 	switch shellName {
 	case "fish":
-		return "set -gx CLAUDE_CONFIG_DIR '" + profileDir + "'\n" +
-			"set -gx CCPM_ACTIVE_PROFILE '" + profileName + "'\n" +
-			"echo 'Switched to profile: " + profileName + ". Run claude to start.'"
+		return "set -gx CLAUDE_CONFIG_DIR " + dir + "\n" +
+			"set -gx CCPM_ACTIVE_PROFILE " + name + "\n" +
+			"echo " + msg
 	case "powershell":
-		return "$env:CLAUDE_CONFIG_DIR = '" + profileDir + "'\n" +
-			"$env:CCPM_ACTIVE_PROFILE = '" + profileName + "'\n" +
-			"Write-Host 'Switched to profile: " + profileName + ". Run claude to start.'"
+		return "$env:CLAUDE_CONFIG_DIR = " + dir + "\n" +
+			"$env:CCPM_ACTIVE_PROFILE = " + name + "\n" +
+			"Write-Host " + msg
 	default:
-		return "export CLAUDE_CONFIG_DIR='" + profileDir + "'\n" +
-			"export CCPM_ACTIVE_PROFILE='" + profileName + "'\n" +
-			"echo 'Switched to profile: " + profileName + ". Run claude to start.'"
+		return "export CLAUDE_CONFIG_DIR=" + dir + "\n" +
+			"export CCPM_ACTIVE_PROFILE=" + name + "\n" +
+			"echo " + msg
 	}
+}
+
+// quote single-quotes s for shellName. Each shell escapes differently inside
+// single quotes: POSIX has no escape (close, emit \', reopen), fish honours
+// \' and \\, and PowerShell doubles the quote — including the typographic
+// quotes it also treats as single quotes.
+func quote(shellName, s string) string {
+	switch shellName {
+	case "fish":
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `'`, `\'`)
+	case "powershell":
+		for _, q := range []string{"'", "\u2018", "\u2019", "\u201A", "\u201B"} {
+			s = strings.ReplaceAll(s, q, q+q)
+		}
+	default:
+		s = strings.ReplaceAll(s, `'`, `'\''`)
+	}
+	return "'" + s + "'"
 }
 
 // bashZshHook ships two shell functions:
@@ -76,7 +97,9 @@ func ExportStatements(shellName, profileName, profileDir string) string {
 //   - Uses 'command claude' rather than $0 so we cannot loop on ourselves.
 const bashZshHook = `ccpm() {
   if [ "$1" = "use" ]; then
-    eval "$(command ccpm use "${@:2}")"
+    local _ccpm_out
+    _ccpm_out="$(command ccpm use "${@:2}")" || return
+    eval "$_ccpm_out"
   else
     command ccpm "$@"
   fi
@@ -96,7 +119,8 @@ claude() {
 
 const fishHook = `function ccpm
   if test "$argv[1]" = "use"
-    eval (command ccpm use $argv[2..])
+    set -l _ccpm_out (command ccpm use $argv[2..]); or return
+    string join \n -- $_ccpm_out | source
   else
     command ccpm $argv
   end
@@ -115,8 +139,10 @@ end`
 
 const powershellHook = `function ccpm {
   if ($args[0] -eq "use") {
-    $output = & ccpm.exe use $args[1..($args.Length-1)]
-    Invoke-Expression $output
+    $rest = @($args | Select-Object -Skip 1)
+    $output = & ccpm.exe use @rest
+    if ($LASTEXITCODE -ne 0) { return }
+    Invoke-Expression ($output -join "` + "`" + `n")
   } else {
     & ccpm.exe @args
   }

@@ -11,6 +11,7 @@ package rail
 import "C"
 
 import (
+	"bytes"
 	"encoding/json"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,10 @@ type Controller struct {
 	// "always" without a second flag the C layer had to combine itself.
 	visibility Visibility
 	model      Model
+	// lastPush is the payload last handed to the renderer. Every refresh used to
+	// push twice (SetLayout, then SetModel) and again each minute with nothing
+	// changed; each push rebuilds every layer.
+	lastPush []byte
 }
 
 // Visibility mirrors the RailMode preference. The zero value is hover-reveal,
@@ -85,6 +90,7 @@ func (c *Controller) Start() {
 	}
 	C.CCPMNotchStart()
 	c.started = true
+	c.lastPush = nil // a fresh panel has drawn nothing yet
 	live.Store(c)
 	C.CCPMNotchSetVisibility(C.int(c.visibility))
 	c.applyLocked()
@@ -182,6 +188,10 @@ func (c *Controller) pushModelLocked() {
 	if err != nil {
 		return // a model that will not marshal is a bug, but not one worth a panic in the UI
 	}
+	if bytes.Equal(b, c.lastPush) {
+		return
+	}
+	c.lastPush = b
 	cs := C.CString(string(b))
 	defer C.free(unsafe.Pointer(cs))
 	C.CCPMNotchSetModel(cs)
@@ -291,7 +301,7 @@ func edgeCode(e Edge) int {
 	}
 }
 
-// ScreenFrame returns the main screen's FULL frame, menu bar and Dock included.
+// ScreenFrame returns the primary display's FULL frame, menu bar and Dock included.
 //
 // Deliberately not visibleFrame. The rail anchored to the visible frame, which
 // meant showing or hiding the Dock slid it along the edge; a notch that moves
@@ -307,7 +317,7 @@ func ScreenFrame() Rect {
 	return Rect{X: float64(x), Y: float64(y), W: float64(w), H: float64(h)}
 }
 
-// HardwareNotch returns the main display's physical notch size, and whether it
+// HardwareNotch returns the primary display's physical notch size, and whether it
 // has one. Only meaningful on the top edge; the notch joins to it there, and
 // the joined state drops the wake band entirely (see WakeRect).
 func HardwareNotch() (Rect, bool) {

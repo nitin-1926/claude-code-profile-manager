@@ -47,6 +47,10 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 }
 
+// execClaude replaces this process with claude. A var so tests can stub the
+// exec instead of replacing the test binary.
+var execClaude = claudepkg.Exec
+
 func runRun(cmd *cobra.Command, args []string) error {
 	// With DisableFlagParsing the first arg after "run" is still the profile
 	// name, but we own the parsing of anything ccpm-specific before it.
@@ -77,10 +81,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("profile %q not found. Run 'ccpm list' to see available profiles", name)
 	}
 
-	// Update last used
-	cfg.UpdateLastUsed(name)
-	_ = config.Save(cfg)
-
 	maybeNudgeDefaultDrift(cfg)
 
 	// Discover the project root (first ancestor of CWD containing a
@@ -104,6 +104,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 	//     via a single atomicwrite transaction, so it is safe to run unlocked
 	//     and must NEVER be skipped: the launch needs an up-to-date settings.json.
 	prelaunchLocked := func() error {
+		stampLastUsed(name)
+
 		// Idempotent — entries already in the manifest are skipped. Failures
 		// are non-fatal so a launch is never blocked by a transient host-disk
 		// issue.
@@ -144,7 +146,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if lockErr := withConfigLock(prelaunchLocked); lockErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: skipping host cascade + statusline this launch (lock unavailable): %v\n", lockErr)
+		fmt.Fprintf(os.Stderr, "Warning: skipping last-used stamp, host cascade + statusline this launch (lock unavailable): %v\n", lockErr)
 	}
 
 	// Materialize shared settings + MCP into the profile dir before launch.
@@ -179,7 +181,24 @@ func runRun(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Config dir: %s\n\n", p.Dir)
 
 	// Exec replaces this process with claude
-	return claudepkg.Exec(p.Dir, apiKey, p.Env, extraEnv, claudeArgs)
+	return execClaude(p.Dir, apiKey, p.Env, extraEnv, claudeArgs)
+}
+
+// stampLastUsed records name as just used. The caller must hold the config
+// lock: config.json is re-loaded here rather than reusing the caller's copy,
+// which was read before the lock and would erase anything a concurrent
+// command (clone, add, env set) saved in between. Best-effort — a failed
+// stamp never blocks a launch.
+func stampLastUsed(name string) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	if _, ok := cfg.Profiles[name]; !ok {
+		return
+	}
+	cfg.UpdateLastUsed(name)
+	_ = config.Save(cfg)
 }
 
 // parseEnvKVs converts a slice of "KEY=VALUE" strings to a map. An entry

@@ -31,13 +31,22 @@ func managedSettingsDir() string {
 	if managedSettingsDirOverride != "" {
 		return managedSettingsDirOverride
 	}
-	switch runtime.GOOS {
+	return managedSettingsDirFor(runtime.GOOS)
+}
+
+// managedSettingsDirFor is managedSettingsDir's per-OS table, split out so
+// every branch is testable from any host.
+func managedSettingsDirFor(goos string) string {
+	switch goos {
 	case "darwin":
 		return "/Library/Application Support/ClaudeCode"
 	case "linux":
 		return "/etc/claude-code"
 	case "windows":
-		return filepath.Join("C:", "ProgramData", "ClaudeCode")
+		// A literal, not filepath.Join("C:", ...): Join yields the
+		// drive-relative "C:ProgramData\..." on Windows. Claude Code reads
+		// Program Files and ignores the legacy C:\ProgramData location.
+		return `C:\Program Files\ClaudeCode`
 	default:
 		return ""
 	}
@@ -100,18 +109,6 @@ func LoadManagedSettings() (map[string]interface{}, error) {
 	}
 
 	return merged, nil
-}
-
-// ManagedMCP returns the managed layer's mcpServers block (if any). It's
-// stripped from the settings map before being handed back so the
-// settings-side merge doesn't trip the stale-mcpServers cleanup.
-func ManagedMCP(managed map[string]interface{}) map[string]interface{} {
-	servers, _ := managed["mcpServers"].(map[string]interface{})
-	if servers == nil {
-		return map[string]interface{}{}
-	}
-	delete(managed, "mcpServers")
-	return servers
 }
 
 func readIfExists(path string) ([]byte, error) {

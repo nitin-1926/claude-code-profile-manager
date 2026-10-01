@@ -23,7 +23,7 @@ var setDefaultCmd = &cobra.Command{
 	Use:               "set-default [name]",
 	Short:             "Set profile as default for VS Code / IDE extension",
 	Args:              cobra.MaximumNArgs(1),
-	RunE:              lockedRunE(runSetDefault),
+	RunE:              runSetDefault,
 	ValidArgsFunction: completeProfileNames,
 }
 
@@ -38,16 +38,18 @@ func init() {
 	rootCmd.AddCommand(unsetDefaultCmd)
 }
 
+// runSetDefault shows the picker (when no name is given) BEFORE taking the
+// config lock — a picker held under the lock would stall every concurrent
+// locked command — then applies the choice under the lock.
 func runSetDefault(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
 	var name string
 	if len(args) == 1 {
 		name = args[0]
 	} else {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
 		// No name given — prompt if interactive, else error with a hint.
 		names := config.ProfileNames(cfg)
 		if len(names) == 0 {
@@ -64,7 +66,7 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 			}
 			opts[i] = picker.Option{Value: n, Label: n, Description: desc}
 		}
-		choice, err := picker.Select("Which profile should be the VSCode default?", opts)
+		choice, err := selectOption("Which profile should be the VSCode default?", opts)
 		if err != nil {
 			if errors.Is(err, picker.ErrNonInteractive) {
 				return fmt.Errorf("profile name is required (e.g. `ccpm set-default %s`)", names[0])
@@ -72,6 +74,16 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		name = choice
+	}
+	return withConfigLock(func() error { return applySetDefault(name) })
+}
+
+// applySetDefault makes name the default. Caller holds the config lock; config
+// is re-loaded here so the picker's snapshot is never the one written back.
+func applySetDefault(name string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	p, exists := cfg.Profiles[name]
@@ -114,7 +126,7 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 		// Works around the Claude Code v2.1.x startup-refresh path that 401s
 		// when CLAUDE_CONFIG_DIR resolves to bare ~/.claude. Best-effort: a
 		// failure here doesn't undo the keychain/identity sync above.
-		if err := setSystemDefaultConfigDir(p.Dir); err != nil {
+		if err := setSystemDefault(p.Dir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not register system-wide CLAUDE_CONFIG_DIR: %v\n", err)
 			yellow.Println("  → IDE extensions may not pick up this profile until you restart them with the env set manually.")
 		}
@@ -123,7 +135,7 @@ func runSetDefault(cmd *cobra.Command, args []string) error {
 		// CLAUDE_CONFIG_DIR we previously set for an OAuth profile. claude
 		// then reads ANTHROPIC_API_KEY from ~/.claude/settings.json's env
 		// block as before.
-		if err := clearSystemDefaultConfigDir(); err != nil {
+		if err := clearSystemDefault(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
 		}
 		if err := applyAPIKeyDefault(name); err != nil {
@@ -154,15 +166,7 @@ func runUnsetDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if err := clearAPIKeyEnv(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not strip ANTHROPIC_API_KEY from ~/.claude/settings.json: %v\n", err)
-	}
-	// Remove the system-wide CLAUDE_CONFIG_DIR we may have set during a
-	// previous `set-default` for an OAuth profile, so IDE extensions stop
-	// being pinned to any specific profile on next launch.
-	if err := clearSystemDefaultConfigDir(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
-	}
+	releaseSystemDefault(true)
 
 	cfg.DefaultProfile = ""
 	if err := config.Save(cfg); err != nil {
@@ -174,6 +178,23 @@ func runUnsetDefault(cmd *cobra.Command, args []string) error {
 		fmt.Println("Restart Cursor/VSCode/Antigravity windows for the change to take effect.")
 	}
 	return nil
+}
+
+// releaseSystemDefault undoes what set-default pushed outside ~/.ccpm: the
+// launchd CLAUDE_CONFIG_DIR + LaunchAgent (so IDE extensions stop being pinned
+// to a profile dir on next launch) and, when clearAPIKey, the
+// ANTHROPIC_API_KEY env set-default wrote into ~/.claude/settings.json. Used
+// by unset-default, and by remove/uninstall when the default goes away.
+// Best-effort: warns, never fails the caller.
+func releaseSystemDefault(clearAPIKey bool) {
+	if clearAPIKey {
+		if err := clearAPIKeyEnv(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not strip ANTHROPIC_API_KEY from ~/.claude/settings.json: %v\n", err)
+		}
+	}
+	if err := clearSystemDefault(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not clear system-wide CLAUDE_CONFIG_DIR: %v\n", err)
+	}
 }
 
 // saveDefaultBackToProfile is the inverse of applyOAuthDefault: it folds the
@@ -309,7 +330,9 @@ func syncOAuthIdentityFromDefault(prevDir string) error {
 	if err := os.MkdirAll(prevDir, config.DirPerm); err != nil {
 		return err
 	}
-	return writeClaudeJSON(dstPath, dst)
+	// WriteJSON writes through a dotfiles symlink rather than replacing
+	// it, and fsyncs before the rename.
+	return settingsmerge.WriteJSON(dstPath, dst)
 }
 
 // copyCredentialsFromDefault mirrors copyCredentialsToDefault in reverse, for
@@ -410,7 +433,9 @@ func syncOAuthIdentityToDefault(profileDir string) error {
 	if !wrote {
 		return nil
 	}
-	return writeClaudeJSON(dstPath, dst)
+	// WriteJSON writes through a dotfiles symlink rather than replacing
+	// it, and fsyncs before the rename.
+	return settingsmerge.WriteJSON(dstPath, dst)
 }
 
 func readClaudeJSON(path string) (map[string]interface{}, error) {
@@ -429,31 +454,6 @@ func readClaudeJSON(path string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return m, nil
-}
-
-// writeClaudeJSON serializes the map back to disk atomically with 0600 perms,
-// matching how Claude Code itself writes the file.
-func writeClaudeJSON(path string, data map[string]interface{}) error {
-	bytes, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-	bytes = append(bytes, '\n')
-	// NOTE: deliberately NOT routed through atomicwrite. This targets the
-	// Claude-Code-owned ~/.claude.json (and a profile's .claude.json), which a
-	// user may have symlinked into a dotfiles repo. atomicwrite refuses to
-	// overwrite a symlink (a guard meant for ccpm-owned files), which would turn
-	// set-default into a hard failure for those users. The temp-file + rename
-	// below preserves the long-standing behavior of replacing the target.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, bytes, 0600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
 }
 
 // applyAPIKeyDefault makes an API-key profile the de-facto default that CLI

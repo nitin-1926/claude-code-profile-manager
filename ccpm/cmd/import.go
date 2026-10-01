@@ -15,6 +15,7 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/filetree"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profilelife"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 )
 
@@ -486,15 +487,6 @@ func runImportFromProfile(state *importFromProfileState) error {
 		return fmt.Errorf("source and target profiles must differ")
 	}
 
-	src, ok := cfg.Profiles[state.src]
-	if !ok {
-		return fmt.Errorf("source profile %q not found", state.src)
-	}
-	dst, ok := cfg.Profiles[state.target]
-	if !ok {
-		return fmt.Errorf("target profile %q not found", state.target)
-	}
-
 	targets, err := defaultclaude.ParseTargets(state.only)
 	if err != nil {
 		return err
@@ -508,27 +500,47 @@ func runImportFromProfile(state *importFromProfileState) error {
 		}
 	}
 
-	if err := importFromProfile(src.Dir, dst.Dir, targets, state.force, false); err != nil {
-		return err
-	}
+	// Pickers above run unlocked; the copy mutates the manifest and share/
+	// fragments, so it runs under the lock against freshly re-loaded config.
+	return withConfigLock(func() error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("reloading config: %w", err)
+		}
+		src, ok := cfg.Profiles[state.src]
+		if !ok {
+			return fmt.Errorf("source profile %q not found", state.src)
+		}
+		dst, ok := cfg.Profiles[state.target]
+		if !ok {
+			return fmt.Errorf("target profile %q not found", state.target)
+		}
 
-	if err := settingsmerge.MaterializeAll(dst.Dir, state.target, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: re-materializing profile: %v\n", err)
-	}
+		if err := importFromProfile(state.src, src.Dir, state.target, dst.Dir, targets, state.force, false); err != nil {
+			return err
+		}
 
-	color.New(color.FgGreen, color.Bold).Printf("✓ Imported assets from %q into %q\n", state.src, state.target)
-	return nil
+		if err := settingsmerge.MaterializeAll(dst.Dir, state.target, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: re-materializing profile: %v\n", err)
+		}
+
+		color.New(color.FgGreen, color.Bold).Printf("✓ Imported assets from %q into %q\n", state.src, state.target)
+		return nil
+	})
 }
 
-// importFromProfile copies selected targets from srcProfileDir into
-// dstProfileDir. When skipEscaping is true, asset symlinks that point outside
-// the source profile (i.e. shared/host-cascaded assets) are skipped rather than
-// failing the copy — used by `ccpm clone`, where those assets re-link via
-// ApplyGlobals/cascade on the new profile.
-func importFromProfile(srcProfileDir, dstProfileDir string, targets []defaultclaude.Target, force, skipEscaping bool) error {
+// importFromProfile copies selected targets from the src profile into dst:
+// the directory contents, the shared/host-asset symlinks (re-created, never
+// followed), and the name-keyed stores (settings/MCP fragments, profile-scoped
+// manifest entries). Profile dirs are ccpm-owned, so escaping symlinks are
+// expected there and skipped by the tree copy rather than refused (the strict
+// copy stays for `import default`, whose ~/.claude source is user-writable).
+// fresh=true when dst is brand new (clone, add): stale state under its name is
+// discarded instead of merged. Caller holds the config lock.
+func importFromProfile(srcName, srcDir, dstName, dstDir string, targets []defaultclaude.Target, force, fresh bool) error {
 	for _, t := range targets {
-		srcPath := profileTargetPath(srcProfileDir, t)
-		dstPath := profileTargetPath(dstProfileDir, t)
+		srcPath := profileTargetPath(srcDir, t)
+		dstPath := profileTargetPath(dstDir, t)
 
 		info, err := os.Stat(srcPath)
 		if os.IsNotExist(err) {
@@ -540,19 +552,27 @@ func importFromProfile(srcProfileDir, dstProfileDir string, targets []defaultcla
 
 		if t == defaultclaude.TargetSettings {
 			if err := mergeProfileSettings(srcPath, dstPath); err != nil {
-				return fmt.Errorf("merging settings from %s: %w", srcProfileDir, err)
+				return fmt.Errorf("merging settings from %s: %w", srcDir, err)
 			}
 			continue
 		}
 
 		if info.IsDir() {
-			if err := copyProfileTree(srcPath, dstPath, force, skipEscaping); err != nil {
+			if err := filetree.CopyTreeSkipEscaping(srcPath, dstPath, !force); err != nil {
 				return fmt.Errorf("copying %s: %w", srcPath, err)
 			}
-			continue
+			if err := profilelife.CopyLinks(srcPath, dstPath, force); err != nil {
+				return fmt.Errorf("linking shared assets from %s: %w", srcPath, err)
+			}
+			if t == defaultclaude.TargetPlugins {
+				// Plugin metadata embeds absolute paths under the source dir.
+				if err := rewritePluginMetadataPaths(dstDir, srcDir, dstDir); err != nil {
+					return fmt.Errorf("rewriting plugin paths: %w", err)
+				}
+			}
 		}
 	}
-	return nil
+	return profilelife.Copy(srcName, dstName, targets, fresh)
 }
 
 func profileTargetPath(root string, t defaultclaude.Target) string {
@@ -573,13 +593,6 @@ func mergeProfileSettings(src, dst string) error {
 	}
 	merged := settingsmerge.DeepMerge(srcData, dstData)
 	return settingsmerge.WriteJSON(dst, merged)
-}
-
-func copyProfileTree(src, dst string, force, skipEscaping bool) error {
-	if skipEscaping {
-		return filetree.CopyTreeSkipEscaping(src, dst, !force)
-	}
-	return filetree.CopyTree(src, dst, !force)
 }
 
 func pickImportTarget(state *importDefaultState, cfg *config.Config) error {

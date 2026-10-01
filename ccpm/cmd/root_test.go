@@ -109,6 +109,25 @@ func TestUnknownCommandKeepsTheHelpHint(t *testing.T) {
 	}
 }
 
+// TestGroupCommandRejectsUnknownSubcommand: a group command (config, auth,
+// env, mcp, …) has no action of its own, and cobra answers an unknown
+// subcommand on a non-root group with help and exit 0 — so a typo like
+// `ccpm config sett statusline false` silently changed nothing. Bare
+// `ccpm <group>` must still print help and exit 0.
+func TestGroupCommandRejectsUnknownSubcommand(t *testing.T) {
+	for _, group := range []string{"config", "auth", "env", "mcp", "settings", "trust", "permissions", "hooks"} {
+		out, code := runCCPMForTest(t, group+" sett statusline false")
+		want := `unknown command "sett" for "ccpm ` + group + `"`
+		if code != exitErr || !strings.Contains(out, want) {
+			t.Errorf("ccpm %s sett: exit %d, want %d with %q; output:\n%s", group, code, exitErr, want, out)
+		}
+		out, code = runCCPMForTest(t, group)
+		if code != 0 || !strings.Contains(out, "Available Commands:") {
+			t.Errorf("bare ccpm %s: exit %d, want 0 with help; output:\n%s", group, code, out)
+		}
+	}
+}
+
 // TestSuccessIsQuietAndExitsZero is the other half: the error path must not
 // have made the success path noisy.
 func TestSuccessIsQuietAndExitsZero(t *testing.T) {
