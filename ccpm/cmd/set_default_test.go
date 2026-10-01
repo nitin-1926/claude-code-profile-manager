@@ -167,8 +167,8 @@ func TestSyncOAuthIdentityToDefaultRewritesIdentityKeys(t *testing.T) {
 			"emailAddress":     "cin@example.com",
 			"organizationName": "CIN Org",
 		},
-		"userID":      "cin-user-id",
-		"projects":    map[string]interface{}{"/foo": "bar"}, // must NOT leak into ~/.claude.json
+		"userID":   "cin-user-id",
+		"projects": map[string]interface{}{"/foo": "bar"}, // must NOT leak into ~/.claude.json
 	})
 	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), srcRaw, 0600); err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestSyncOAuthIdentityToDefaultRewritesIdentityKeys(t *testing.T) {
 			"emailAddress":     "labs@example.com",
 			"organizationName": "Labs Org",
 		},
-		"userID":         "labs-user-id",
+		"userID":                "labs-user-id",
 		"customApiKeyResponses": map[string]interface{}{"approved": []string{"x"}},
 	})
 	if err := os.WriteFile(filepath.Join(tmp, ".claude.json"), homeRaw, 0600); err != nil {
@@ -349,8 +349,8 @@ func TestSyncOAuthIdentityFromDefaultPreservesUnrelatedKeysInProfile(t *testing.
 			"emailAddress":     "labs@rocketium.com",
 			"organizationName": "Labs Org (stale)",
 		},
-		"userID":        "labs-stale-uid",
-		"projects":      map[string]interface{}{"/profile-only": "y"},
+		"userID":         "labs-stale-uid",
+		"projects":       map[string]interface{}{"/profile-only": "y"},
 		"feedbackSurvey": map[string]interface{}{"answered": true},
 	})
 	if err := os.WriteFile(filepath.Join(profileDir, ".claude.json"), profileRaw, 0600); err != nil {

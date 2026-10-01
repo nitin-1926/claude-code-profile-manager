@@ -651,16 +651,9 @@ func runPluginGC() error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	referenced := make(map[string]bool)
-	for _, p := range cfg.Profiles {
-		installed, err := loadInstalledPlugins(p.Dir)
-		if err != nil {
-			continue
-		}
-		for _, ip := range installed {
-			if ip.Marketplace == "" || ip.Version == "" {
-				continue
-			}
-			referenced[ip.Marketplace+"/"+ip.Name+"/"+ip.Version] = true
+	for name, p := range cfg.Profiles {
+		if err := plugins.AddProfileReferences(p.Dir, referenced); err != nil {
+			return fmt.Errorf("profile %q: %w (nothing garbage-collected: caches it uses can't be determined; fix or remove the file and retry)", name, err)
 		}
 	}
 	removed, err := plugins.GarbageCollect(referenced)

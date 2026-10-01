@@ -34,7 +34,8 @@ func newEnvCmd() *cobra.Command {
 		Long: `Manage the env map persisted on a profile.
 
 Entries set here are added to the environment whenever ` + "`ccpm run <profile>`" + `
-launches claude, sitting below parent-process env and below any one-shot
+launches claude. A profile entry replaces the same key inherited from the
+parent shell, and is itself replaced by any one-shot
 ` + "`ccpm run --ccpm-env KEY=VAL`" + ` override. Use it for per-profile base URLs,
 proxy settings, or CLAUDE_CODE_* knobs.
 
@@ -52,7 +53,7 @@ Examples:
   ccpm env set CLAUDE_CODE_MAX_OUTPUT_TOKENS=32768 HTTPS_PROXY=http://localhost:8888 --profile work`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvSet(state, args)
+			return withConfigLock(func() error { return runEnvSet(state, args) })
 		},
 	}
 	requireProfileFlag(setCmd, &state.profile, "target profile (required)")
@@ -62,7 +63,7 @@ Examples:
 		Short: "Remove one or more env vars from a profile",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvUnset(state, args)
+			return withConfigLock(func() error { return runEnvUnset(state, args) })
 		},
 	}
 	requireProfileFlag(unsetCmd, &state.profile, "target profile (required)")

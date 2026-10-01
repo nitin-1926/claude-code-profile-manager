@@ -34,7 +34,7 @@ or moving a project directory invalidates the entry.`,
 		Short:   "Grant trust to the given project directory (defaults to CWD)",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTrustAdd(args)
+			return withConfigLock(func() error { return runTrustAdd(args) })
 		},
 	}
 
@@ -44,7 +44,7 @@ or moving a project directory invalidates the entry.`,
 		Short:   "Revoke trust for the given project directory (defaults to CWD)",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTrustRemove(args)
+			return withConfigLock(func() error { return runTrustRemove(args) })
 		},
 	}
 

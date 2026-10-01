@@ -23,7 +23,7 @@ It is an orchestration layer that composes the official `CLAUDE_CONFIG_DIR` env 
 - **Shared store (`~/.ccpm/share/`)** — the "source of truth" for content that can be used by more than one profile: `skills/`, `mcp/`, `settings/`. Profiles symlink into the store for skills; MCP and settings live as JSON **fragments** that are merged into each profile's `settings.json` at launch.
 - **Fragments**:
   - `share/mcp/` — `global.json` (applies to every profile) and `<profile>.json` (one profile).
-  - `share/settings/` — **only** `<profile>.json` (per-profile). There is no ccpm-managed global settings fragment; the cross-profile baseline is the host `~/.claude/settings.json` file, merged in at `Materialize` time.
+  - `share/settings/` — **only** `<profile>.json` (per-profile). There is no ccpm-managed global settings fragment; the cross-profile baseline is the host `~/.claude/settings.json` file, merged in at `MaterializeAll` time.
 - **Manifest (`~/.ccpm/installs.json`)** — tracks every installed skill / MCP / setting, its scope (`global`, `profile`, or `host`), and which profiles use it. Used by `ccpm sync`, `ccpm doctor`, and `ccpm skill/mcp list`. The `host` scope is reserved for entries auto-adopted from `~/.claude/<asset>/` by the cascade scanner — see §6 below.
 - **Fingerprint (`~/.ccpm/default-claude-fingerprint.json`)** — SHA-256 hashes of files under `~/.claude` at the time of the last `ccpm import default`. Used for drift detection.
 
@@ -32,7 +32,7 @@ It is an orchestration layer that composes the official `CLAUDE_CONFIG_DIR` env 
 1. `ccpm add <name>` creates `~/.ccpm/profiles/<name>/`.
 2. If `~/.claude` exists or at least one other profile exists, the **import-source wizard** offers three options: start empty, import from `~/.claude`, or clone another profile.
 3. Auth step: OAuth (browser login via `claude /login`) or API key (stored in the OS keychain via `go-keyring`).
-4. `sync.ApplyGlobals` runs: shared skills are symlinked in, and `settingsmerge.Materialize` + `MaterializeMCP` write a launch-ready `settings.json` for the new profile.
+4. `sync.ApplyGlobals` runs: shared skills are symlinked in, and `settingsmerge.MaterializeAll` writes a launch-ready `settings.json` and `.claude.json#mcpServers` for the new profile in one transaction.
 5. `ccpm run <name>` execs `claude` with `CLAUDE_CONFIG_DIR` set. `ccpm use <name>` exports the env var into the current shell (requires the shell hook from `ccpm shell-init`).
 6. `ccpm remove <name>` deletes the profile directory, removes the keystore entry, and (on macOS OAuth) removes the namespaced keychain entry.
 
@@ -41,8 +41,8 @@ It is an orchestration layer that composes the official `CLAUDE_CONFIG_DIR` env 
 | Asset    | Cross-profile source                                                               | Profile path                                                   | Merge mechanism                               |
 | -------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
 | Skills   | `~/.ccpm/share/skills/<name>` (global) or `~/.claude/skills/<name>` (host)         | `<profile>/skills/<name>` (link)                               | Symlink                                       |
-| MCP      | `~/.ccpm/share/mcp/global.json` + `<profile>.json`                                 | `<profile>/.claude.json#mcpServers`                            | `settingsmerge.MaterializeMCP`                |
-| Settings | `~/.claude/settings.json` + `share/settings/<profile>.json`                        | `<profile>/settings.json`                                      | `settingsmerge.Materialize` (with owned-keys) |
+| MCP      | `~/.ccpm/share/mcp/global.json` + `<profile>.json`                                 | `<profile>/.claude.json#mcpServers`                            | `settingsmerge.MaterializeAll`                |
+| Settings | `~/.claude/settings.json` + `share/settings/<profile>.json`                        | `<profile>/settings.json`                                      | `settingsmerge.MaterializeAll` (owned-keys)   |
 | Hooks    | `~/.ccpm/share/hooks/<name>` (global) or `~/.claude/hooks/<name>` (host)           | `<profile>/hooks/<name>` (link)                                | Symlink                                       |
 | Agents   | `~/.ccpm/share/agents/<name>` (global) or `~/.claude/agents/<name>` (host)         | `<profile>/agents/<name>` (link)                               | Symlink (dedup import)                        |
 | Commands | `~/.ccpm/share/commands/<name>` (global) or `~/.claude/commands/<name>` (host)     | `<profile>/commands/<name>` (link)                             | Symlink (dedup import)                        |
@@ -76,18 +76,18 @@ When extending the cascade to a new asset kind:
 
 ## 5. Merge and precedence rules
 
-`settingsmerge.Materialize(profileDir, profileName, projectRoot)` is the canonical implementation. Merge order (lowest → highest, higher wins):
+`settingsmerge.MaterializeAll(profileDir, profileName, projectRoot)` is the canonical implementation. It writes **profile-scoped sources only**, lowest → highest (higher wins):
 
-1. Existing `<profileDir>/settings.json` — preserves keys Claude Code auto-wrote that nothing else redefines.
+1. Keys already in `<profileDir>/settings.json` that ccpm did not write — what Claude Code or the user wrote in a session (`/model`, a permission rule, an in-session MCP server). These are preserved.
 2. `~/.claude/settings.json` — the host/user file native Claude Code already uses. ccpm treats it as the shared baseline. **There is no ccpm-managed global settings fragment.**
 3. `share/settings/<profileName>.json` — ccpm-managed per-profile fragment.
-4. **Owned-keys override** — any leaf key path recorded in `share/settings/<profile>.owned.json` is re-applied from the profile fragment, so values set via `ccpm settings set --profile` survive Claude Code rewriting `settings.json`.
-5. `<projectRoot>/.claude/settings.json` — per-repo override discovered by walking up from CWD at `ccpm run` time.
-6. `<projectRoot>/.claude/settings.local.json` — gitignored per-machine override for the same project.
+4. **Owned-keys override** — any leaf key path recorded in `share/settings/<profile>.owned.json` is re-applied from the profile fragment.
 
-`projectRoot` is `""` from non-launch codepaths (add/use/sync/import) so they don't bake CWD-relative state into a profile.
+**Project and managed layers are never written into the profile.** Claude Code already reads a repo's `.claude/settings*.json` and `.mcp.json` from the working directory (behind its own trust prompt) and managed policy from the system directory. Copying them into the profile's user-scope file persisted them into every later session anywhere, including command-running keys like `apiKeyHelper` from an untrusted repo. `ComputeMerged` still layers project and managed settings on top for display (`ccpm settings show`, the desktop app); `projectRoot` is accepted but no longer affects what is written.
 
-MCP merge (`MaterializeMCP(profileDir, profileName, projectRoot)`): existing profile `.claude.json#mcpServers` → host `~/.claude.json#mcpServers` → `share/mcp/global.json` → `share/mcp/<profileName>.json` → project `.claude/settings.json#mcpServers` → project `.mcp.json`. Isolation invariant (never iterate `share/mcp/*`) is still enforced and tested in `internal/settingsmerge/merge_test.go`.
+**Removals propagate.** `<profileDir>/.ccpm-materialized.json` (written in the same atomicwrite transaction) records sha256 fingerprints — never values, so no tokens — of what ccpm contributed. On the next rebuild a value still matching its fingerprint is ccpm's: it is rebuilt from its source, or removed if the source is gone (`ccpm mcp remove`, `settings unset`, a key deleted from the host). Anything unrecorded or changed since ccpm wrote it belongs to the user and is kept. Values a profile already held before the sidecar existed are never claimed, so upgrading loses nothing. Arrays still merge by replacement.
+
+MCP merge: host `~/.claude.json#mcpServers` → `share/mcp/global.json` → `share/mcp/<profileName>.json`, plus servers already in the profile's `.claude.json` that ccpm did not write. Servers are compared as whole definitions. Isolation invariant (never iterate `share/mcp/*`) is still enforced and tested in `internal/settingsmerge/merge_test.go`.
 
 ## 6. Authentication matrix
 
@@ -164,11 +164,11 @@ Three categories — any new MCP-related feature must document which it targets.
 
 ## 11. Invariants contributors must preserve
 
-1. **MCP isolation** — `MaterializeMCP` must only read `global.json` and `<profileName>.json`. Never iterate the whole directory. Regression test lives in `merge_test.go`.
+1. **MCP isolation** — `MaterializeAll` must only read `global.json` and `<profileName>.json`. Never iterate the whole directory. Regression test lives in `merge_test.go`.
 2. **Windows build** — anything using `syscall.Exec`, `unix.*`, or POSIX signal files must be behind a `//go:build !windows` tag.
 3. **macOS keychain access** — all `go-keyring` calls that target Claude Code's service name must go through `credentials.KeychainService(profileDir)` to avoid hard-coding the sha8 or using the wrong account.
 4. **Owned-keys** — `ccpm settings set` and `ccpm settings apply` must call `settingsmerge.MarkOwned` / `MarkOwnedFromPatch`. Skipping this means user-set values get silently overwritten on `ccpm run`. Owned-keys live **per profile only** now; there is no global owned-keys sidecar.
-5. **No ccpm-global settings layer** — the cross-profile settings baseline is `~/.claude/settings.json`, read directly by `settingsmerge.Materialize` via `loadHostClaudeSettings`. Do not reintroduce `share/settings/global.json`, a `--global` flag on `ccpm settings set/apply`, or any mechanism that makes ccpm the authoritative store for shared defaults. If you need to share a value across profiles, edit the host file or use `ccpm settings set --profile` on each profile.
+5. **No ccpm-global settings layer** — the cross-profile settings baseline is `~/.claude/settings.json`, read directly by `settingsmerge.MaterializeAll` via `loadHostClaudeSettings`. Do not reintroduce `share/settings/global.json`, a `--global` flag on `ccpm settings set/apply`, or any mechanism that makes ccpm the authoritative store for shared defaults. If you need to share a value across profiles, edit the host file or use `ccpm settings set --profile` on each profile.
 6. **Dedup by default on import** — `ccpm import default` and `ccpm add`-with-wizard default to `Dedupe=true` for skills/agents/commands. `--no-share` is the opt-out.
 7. **No network calls by default** — ccpm is local-first. The single exception is the explicitly opt-in release check (`ccpm version --check-latest`, results cached 24h under `os.UserCacheDir()`); it never runs implicitly and never blocks the command on failure. Never add telemetry, *implicit* update checks, background remote fetch, or any network access that the user did not directly request on that invocation.
 8. **Failure modes never delete credentials** — `ccpm remove` is the only command allowed to delete a keychain entry.

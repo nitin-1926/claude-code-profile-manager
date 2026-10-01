@@ -10,10 +10,10 @@ import (
 // rules), which top-level items are only in ~/.claude, only in profiles, and
 // which are shared.
 type ProfileDiff struct {
-	Target           Target
-	OnlyInDefault    []string          // items present in ~/.claude but no profile has them
-	OnlyInProfiles   map[string][]string // profile name -> items only in that profile
-	SharedAdopted    []string            // items present in default AND at least one profile
+	Target         Target
+	OnlyInDefault  []string            // items present in ~/.claude but no profile has them
+	OnlyInProfiles map[string][]string // profile name -> items only in that profile
+	SharedAdopted  []string            // items present in default AND at least one profile
 }
 
 // ComputeProfileDiffs walks ~/.claude and each profileDir for every target in

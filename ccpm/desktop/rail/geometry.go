@@ -47,24 +47,6 @@ func ParseEdge(s string) Edge {
 	}
 }
 
-// Layout constants, in points.
-const (
-	// SlotLength is the space one profile occupies along the rail's long axis.
-	SlotLength = 76
-	// EndPadding is the breathing room at each end of the stack.
-	EndPadding = 10
-)
-
-// StackLength returns the rail's long dimension for n profiles. A rail with no
-// profiles still returns a positive size — callers hide it rather than trying
-// to place a zero-area window, which AppKit handles poorly.
-func StackLength(n int) float64 {
-	if n < 1 {
-		n = 1
-	}
-	return float64(n)*SlotLength + 2*EndPadding
-}
-
 // fallbackScreen stands in when AppKit has not published a screen frame yet.
 //
 // Every dimension of PanelRect is computed relative to the screen it is given,

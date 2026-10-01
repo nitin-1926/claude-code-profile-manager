@@ -358,3 +358,61 @@ func TestScanHostUnadoptedSkipsUnreadableDir(t *testing.T) {
 		}
 	}
 }
+
+// A real (non-symlink) profile-local entry with the same name as a host
+// entry — e.g. a skill Claude Code created inside the profile — must survive
+// host adoption and relinking, and must not abort adoption of other entries.
+func TestEnsureHostAdoption_KeepsRealProfileLocalEntry(t *testing.T) {
+	home, _ := seedHostAssets(t)
+	profiles := filepath.Join(home, ".ccpm", "profiles")
+	dirA := filepath.Join(profiles, "a")
+	mine := filepath.Join(dirA, "skills", "matt-skills", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(mine), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mine, []byte("profile-local"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	assertMine := func(when string) {
+		t.Helper()
+		if got, err := os.ReadFile(mine); err != nil || string(got) != "profile-local" {
+			t.Fatalf("%s: profile-local skill destroyed: %q, %v", when, got, err)
+		}
+	}
+
+	if err := EnsureHostAdoption(dirA, "a", false); err != nil {
+		t.Fatalf("EnsureHostAdoption(a): %v", err)
+	}
+	assertMine("after adopting into a")
+	if _, err := os.Lstat(filepath.Join(dirA, "agents", "matt-agents")); err != nil {
+		t.Errorf("adoption of other entries was aborted: %v", err)
+	}
+
+	// Profile b adopts matt-skills, so it becomes a registered host entry
+	// that a's next run relinks through linkCascadeEntry.
+	dirB := filepath.Join(profiles, "b")
+	if err := os.MkdirAll(dirB, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureHostAdoption(dirB, "b", false); err != nil {
+		t.Fatalf("EnsureHostAdoption(b): %v", err)
+	}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst := m.Find("matt-skills", manifest.KindSkill)
+	if inst == nil {
+		t.Fatal("matt-skills not registered after b adopted it")
+	}
+	if slices.Contains(inst.Profiles, "a") {
+		t.Errorf("matt-skills registered for a, whose own copy shadows it: %v", inst.Profiles)
+	}
+	if err := linkCascadeEntry(dirA, "a", *inst); err != nil {
+		t.Errorf("relinking over a profile-local entry should be a silent skip, got %v", err)
+	}
+	if err := EnsureHostAdoption(dirA, "a", false); err != nil {
+		t.Fatalf("EnsureHostAdoption(a) rerun: %v", err)
+	}
+	assertMine("after relinking into a")
+}

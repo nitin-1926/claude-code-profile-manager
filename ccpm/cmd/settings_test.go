@@ -1,10 +1,40 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
+
+// TestSettingsApplyGuardsCommandExecutingKeys: these Claude Code settings
+// each run a command (credential helpers, auth refresh, OTEL headers, file
+// suggestion, status lines, process wrapper), yet `settings apply` wrote them
+// from a pasted fragment without --i-know-what-this-does.
+func TestSettingsApplyGuardsCommandExecutingKeys(t *testing.T) {
+	sandboxHome(t, "a")
+	for _, key := range []string{
+		"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh",
+		"otelHeadersHelper", "fileSuggestion", "subagentStatusLine", "processWrapper",
+	} {
+		patch := filepath.Join(t.TempDir(), "patch.json")
+		if err := os.WriteFile(patch, []byte(`{"`+key+`": "/tmp/evil.sh"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := runCobra(t, newSettingsCmd(), "apply", patch, "--profile", "a")
+		if err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s: apply without --i-know-what-this-does = %v, want a refusal naming the key", key, err)
+		}
+		if frag, _ := loadFragmentAndOwned(t, "a"); frag[key] != nil {
+			t.Errorf("%s: refused apply still wrote the key", key)
+		}
+		if err := runCobra(t, newSettingsCmd(), "apply", patch, "--profile", "a", "--i-know-what-this-does"); err != nil {
+			t.Errorf("%s: apply with --i-know-what-this-does: %v", key, err)
+		}
+	}
+}
 
 func TestSetNestedKey(t *testing.T) {
 	m := map[string]interface{}{}
