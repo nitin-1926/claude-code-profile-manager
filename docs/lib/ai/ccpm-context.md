@@ -17,9 +17,14 @@ Use this block as the authoritative **user-facing** summary. Do not infer beyond
 
 ## Install
 
+The website and READMEs show two tabs, **CLI** and **Desktop**. CLI options, in this order:
+
 - **npm**: `npm i -g @ngcodes/ccpm`
-- **curl**: `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh`
 - **go**: `go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest`
+- **curl** (macOS / Linux): `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh`
+- **source**: `git clone https://github.com/nitin-1926/claude-code-profile-manager.git && cd claude-code-profile-manager/ccpm && go build -o ccpm .`, then `./ccpm --version` to check it (needs Go).
+
+Desktop (macOS only) installs with `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`; see the desktop section below. A downloadable `.dmg` is coming soon.
 
 ## Real top-level commands
 
