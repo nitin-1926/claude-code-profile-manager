@@ -90,9 +90,13 @@ void ccpmRailOnMain(dispatch_block_t block) {
 // bezel. Go clamps against this frame; the menu bar is not in the way because
 // the panel sits at NSStatusWindowLevel, above it.
 static void ccpmNotchRefreshScreen(void) {
-  NSScreen *screen = [NSScreen mainScreen];
+  // The primary display (the one with the menu bar, and on a MacBook the
+  // camera notch), not [NSScreen mainScreen]: that is whichever display holds
+  // the key window, so with a second monitor the notch landed on a different
+  // display from one launch to the next.
+  NSScreen *screen = [[NSScreen screens] firstObject];
   if (screen == nil) {
-    screen = [[NSScreen screens] firstObject];
+    screen = [NSScreen mainScreen];
   }
   if (screen == nil) {
     return; // headless or mid-reconfiguration; keep the last known frame

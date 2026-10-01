@@ -3,12 +3,14 @@
 package services
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/transcript"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
@@ -25,16 +27,18 @@ func TestHistorySessionsUnknownProfileIsSafe(t *testing.T) {
 	}
 }
 
-func TestHistorySessionsOnRealProfile(t *testing.T) {
-	name := firstProfile(t)
+func TestHistorySessionsOnSeededProfile(t *testing.T) {
+	name, _, _, _ := historyFixture(t)
 	h := NewHistory()
 	rows, err := h.Sessions(name)
 	if err != nil {
 		t.Fatalf("Sessions(%s): %v", name, err)
 	}
 	assertNoNullArrays(t, map[string]any{"sessions": rows}, "sessions")
-	if len(rows) == 0 {
-		t.Skip("profile has no sessions to assert on")
+	// Two sessions; the subagent transcript folds into "sess" rather than
+	// becoming a third row.
+	if len(rows) != 2 {
+		t.Fatalf("got %d sessions, want 2: %+v", len(rows), rows)
 	}
 	for _, r := range rows {
 		if r.ID == "" {
@@ -49,20 +53,22 @@ func TestHistorySessionsOnRealProfile(t *testing.T) {
 			break
 		}
 	}
+	if rows[0].ID != "sess" || rows[1].ID != "other" {
+		t.Errorf("order = [%s %s], want [sess other]", rows[0].ID, rows[1].ID)
+	}
 	// Subagent transcripts must never surface as their own session.
 	for _, r := range rows {
 		if strings.HasPrefix(r.ID, "agent-") {
 			t.Errorf("a subagent transcript was listed as a session: %s", r.ID)
 		}
 	}
-	t.Logf("%s: %d sessions", name, len(rows))
 }
 
 // TestHistoryTranscriptRejectsTraversal is the regression guard for the
 // arbitrary-file-read this API would otherwise be. Session ids reach it from
 // on-disk JSON, and a profile directory can be shared or restored.
 func TestHistoryTranscriptRejectsTraversal(t *testing.T) {
-	name := firstProfile(t)
+	name, sessRel, _, _ := historyFixture(t)
 	h := NewHistory()
 	for _, bad := range []string{
 		"../../../../etc/passwd",
@@ -92,6 +98,45 @@ func TestHistoryTranscriptRejectsTraversal(t *testing.T) {
 			t.Errorf("ToolBody(%q) returned content — path traversal", bad)
 		}
 	}
+
+	// The loop above stops at the allowlist: none of those ids is a session.
+	// Containment exists for what the allowlist cannot catch — a tampered
+	// sidecar, which a shared or restored profile can carry — so plant escaping
+	// paths in a real entry and leave containment the only thing in the way.
+	dir := profileDir(name)
+	projects := filepath.Join(dir, "projects")
+	secret := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(dir))), "secret.jsonl")
+	if err := os.WriteFile(secret, []byte(userLine(t, "x1", "outside", "SECRET outside projects", "2026-01-03T00:00:00Z")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	escape, err := filepath.Rel(projects, secret)
+	if err != nil || !strings.HasPrefix(escape, "..") {
+		t.Fatalf("fixture: %q is not outside projects/ (%v)", escape, err)
+	}
+	escape = filepath.ToSlash(escape)
+	ix := transcript.LoadIndex(dir)
+	e := ix.Entries["sess"]
+	if e == nil || e.RelPath != sessRel {
+		t.Fatalf("fixture: sess not indexed at %q: %+v", sessRel, e)
+	}
+	e.RelPath = escape
+	e.SubPaths = append(e.SubPaths, escape, filepath.ToSlash(secret))
+	b, err := json.Marshal(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript.IndexPath(dir), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"", escape, filepath.ToSlash(secret)} {
+		page, err := h.Transcript(name, "sess", rel, 0, 10)
+		if err == nil || len(page.Turns) != 0 {
+			t.Errorf("Transcript(sess, %q) escaped projects/ via the sidecar (err=%v, turns=%d)", rel, err, len(page.Turns))
+		}
+		if body, err := h.ToolBody(name, "sess", rel, "x1", 0); err == nil || body.Body != "" {
+			t.Errorf("ToolBody(sess, %q) escaped projects/ via the sidecar (err=%v)", rel, err)
+		}
+	}
 }
 
 // An unknown session now reports why rather than returning a blank page, but
@@ -99,10 +144,10 @@ func TestHistoryTranscriptRejectsTraversal(t *testing.T) {
 // invariant — Wails marshals the value whether or not the error is set, and a
 // nil slice becomes JSON null and breaks the frontend's .map.
 func TestHistoryTranscriptUnknownSessionErrorsWithANonNilPage(t *testing.T) {
-	name := firstProfile(t)
+	name, _, _, _ := historyFixture(t)
 	page, err := NewHistory().Transcript(name, "no-such-session", "", 0, 10)
-	if err == nil {
-		t.Error("an unknown session should report that it could not be found")
+	if err == nil || !strings.Contains(err.Error(), "no transcript on record") {
+		t.Errorf("an unknown session should report that it could not be found, got %v", err)
 	}
 	if page.Turns == nil {
 		t.Error("Turns must be an empty slice, never nil")
@@ -117,8 +162,13 @@ func TestHistoryTranscriptUnknownSessionErrorsWithANonNilPage(t *testing.T) {
 // before Search(tok) registers. Without the tombstone the cancel is a no-op and
 // a full profile scan runs anyway.
 func TestHistoryCancelBeforeSearch(t *testing.T) {
-	name := firstProfile(t)
+	name, _, _, _ := historyFixture(t)
 	h := NewHistory()
+	// Positive control: the same query does match, so zero hits below means
+	// the scan was cancelled, not that there was nothing to find.
+	if res, err := h.Search(name, "the", "tok-control", false); err != nil || len(res.Hits) == 0 {
+		t.Fatalf("control search found nothing (err=%v) — fixture broken", err)
+	}
 	h.CancelSearch("tok-early")
 	res, err := h.Search(name, "the", "tok-early", false)
 	if err != nil {
@@ -136,7 +186,7 @@ func TestHistoryCancelBeforeSearch(t *testing.T) {
 }
 
 func TestHistorySearchTokensAreIndependentAndDoNotLeak(t *testing.T) {
-	name := firstProfile(t)
+	name, _, _, _ := historyFixture(t)
 	h := NewHistory()
 
 	var wg sync.WaitGroup
@@ -260,30 +310,74 @@ func TestRebuildDoesNotAdmitAnArbitraryPath(t *testing.T) {
 // hostile path in the session id, fails at "session not found" long before the
 // relPath allowlist is consulted — which is how the previous allowlist test
 // passed with the allowlist deleted.
+//
+// Each transcript is shape-real: a user prompt followed by the assistant's
+// reply, every line with its own uuid, assistant lines carrying message.id and
+// requestId, and subagent lines carrying the PARENT's sessionId under
+// <sid>/subagents/. "sess" is newer than "other".
 func historyFixture(t *testing.T) (profile, sessRel, subRel, otherRel string) {
 	t.Helper()
 	profile = syntheticProfile(t)
 	dir := profileDir(profile)
 	proj := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"))
-	write := func(path, sess, uuid, text string) {
+	write := func(path string, lines ...string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		line := `{"type":"user","uuid":"` + uuid + `","sessionId":"` + sess + `","cwd":"/repo",` +
-			`"timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"` + text + `"}}` + "\n"
-		if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "")), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(proj, "sess.jsonl"), "sess", "u1", "hello from sess")
-	write(filepath.Join(proj, "sess", "subagents", "agent-a.jsonl"), "sess", "s1", "from the subagent")
-	write(filepath.Join(proj, "other.jsonl"), "other", "o1", "a DIFFERENT session's private text")
+	write(filepath.Join(proj, "sess.jsonl"),
+		userLine(t, "u1", "sess", "hello from sess", "2026-01-02T00:00:00Z"),
+		asstLine(t, "a1", "u1", "sess", "msg_s1", "hi back", "2026-01-02T00:00:01Z", false))
+	write(filepath.Join(proj, "sess", "subagents", "agent-a.jsonl"),
+		sidechain(userLine(t, "s1", "sess", "from the subagent", "2026-01-02T00:00:02Z")),
+		asstLine(t, "s2", "s1", "sess", "msg_s2", "subagent done", "2026-01-02T00:00:03Z", true))
+	write(filepath.Join(proj, "other.jsonl"),
+		userLine(t, "o1", "other", "a DIFFERENT session's private text", "2026-01-01T00:00:00Z"),
+		asstLine(t, "o2", "o1", "other", "msg_o1", "noted", "2026-01-01T00:00:01Z", false))
 	if _, err := NewHistory().Sessions(profile); err != nil {
 		t.Fatalf("listing: %v", err)
 	}
 	enc := usage.EncodeCwd("/repo")
 	return profile, enc + "/sess.jsonl", enc + "/sess/subagents/agent-a.jsonl", enc + "/other.jsonl"
+}
+
+func jsonLine(t *testing.T, v map[string]any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b) + "\n"
+}
+
+func userLine(t *testing.T, uuid, sess, text, ts string) string {
+	t.Helper()
+	return jsonLine(t, map[string]any{
+		"type": "user", "uuid": uuid, "parentUuid": nil, "sessionId": sess, "cwd": "/repo",
+		"timestamp": ts, "isSidechain": false,
+		"message": map[string]any{"role": "user", "content": text},
+	})
+}
+
+func asstLine(t *testing.T, uuid, parent, sess, msgID, text, ts string, isSidechain bool) string {
+	t.Helper()
+	return jsonLine(t, map[string]any{
+		"type": "assistant", "uuid": uuid, "parentUuid": parent, "sessionId": sess, "cwd": "/repo",
+		"timestamp": ts, "isSidechain": isSidechain, "requestId": "req_" + msgID,
+		"message": map[string]any{"id": msgID, "role": "assistant", "model": "claude-opus-5",
+			"content": []any{map[string]any{"type": "text", "text": text}},
+			"usage": map[string]any{"input_tokens": 100, "output_tokens": 10,
+				"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}},
+	})
+}
+
+// sidechain marks a user line as a subagent's, as Claude Code writes them.
+func sidechain(line string) string {
+	return strings.Replace(line, `"isSidechain":false`, `"isSidechain":true`, 1)
 }
 
 // TestRelPathAllowlistRefusesAnotherSessionsTranscript reaches the allowlist

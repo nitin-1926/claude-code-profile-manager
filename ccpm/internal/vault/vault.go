@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 )
@@ -43,8 +44,10 @@ func (v *Vault) Backup(profileName string, data []byte) error {
 		return fmt.Errorf("creating vault directory: %w", err)
 	}
 
+	// Stage + rename so a failed write never truncates the previous good
+	// backup, and a symlink at the path is refused rather than followed.
 	path := filepath.Join(vaultDir, profileName+".enc")
-	if err := os.WriteFile(path, encrypted, 0600); err != nil {
+	if err := atomicwrite.Apply([]atomicwrite.FileChange{atomicwrite.WriteFile(path, encrypted, 0600)}); err != nil {
 		return fmt.Errorf("writing vault file: %w", err)
 	}
 
@@ -52,7 +55,8 @@ func (v *Vault) Backup(profileName string, data []byte) error {
 }
 
 func (v *Vault) Restore(profileName string) ([]byte, error) {
-	key, err := v.Store.GetOrCreateVaultMasterKey()
+	// Get-only: a restore must never mint a master key.
+	key, err := v.Store.GetVaultMasterKey()
 	if err != nil {
 		return nil, fmt.Errorf("getting vault master key: %w", err)
 	}

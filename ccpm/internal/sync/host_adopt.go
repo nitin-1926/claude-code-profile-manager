@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -120,7 +121,11 @@ func adoptHostEntries(profileDir, profileName string, entries []hostEntry, m *ma
 			continue
 		}
 		dst := filepath.Join(profileDir, subdir, e.Name)
-		if err := share.Link(e.Src, dst); err != nil {
+		if err := share.Link(e.Src, dst); errors.Is(err, share.ErrNotLink) {
+			// The profile has its own real entry of this name: profile-local
+			// wins (invariant 11). Leave it and don't register this profile.
+			continue
+		} else if err != nil {
 			return mutated, fmt.Errorf("linking host %s %q into %q: %w", e.Kind, e.Name, profileName, err)
 		}
 
@@ -164,7 +169,17 @@ func linkHostEntry(profileDir string, inst manifest.Install) error {
 		return nil
 	}
 	dst := filepath.Join(profileDir, subdir, inst.ID)
-	return share.Link(src, dst)
+	return linkUnlessProfileLocal(src, dst)
+}
+
+// linkUnlessProfileLocal links dst -> src but treats a real (non-link)
+// profile-local entry at dst as a silent skip: profile-local always wins
+// (AGENTS.md invariant 11), and warning on every run would be noise.
+func linkUnlessProfileLocal(src, dst string) error {
+	if err := share.Link(src, dst); err != nil && !errors.Is(err, share.ErrNotLink) {
+		return err
+	}
+	return nil
 }
 
 func manifestKey(kind manifest.AssetKind, id string) string {
@@ -206,4 +221,3 @@ func reportAdoption(profileName string, entries []hostEntry) {
 		len(entries), profileName, strings.Join(parts, " "),
 	)
 }
-

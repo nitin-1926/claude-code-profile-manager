@@ -1,10 +1,15 @@
 package plugins
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -200,10 +205,12 @@ func CachePluginDir(marketplace, pluginName, version string) (string, error) {
 
 // FetchPluginIntoCache resolves a marketplace plugin entry's source and
 // materializes its files into the shared cache. The cache dir is created if
-// missing; an existing cache dir is reused (FetchPluginIntoCache is
-// idempotent). Returns the version string read from the resulting plugin.json
-// and the git commit the plugin content came from (empty when unresolvable),
-// so the caller can pin the exact installed commit.
+// missing; an existing cache dir is reused only when its files match the
+// fetched ones (FetchPluginIntoCache is idempotent). Content that changed
+// without a version bump is cached as "<version>+<commit12>". Returns that
+// cache version (plugin.json's version, "0.0.0" if absent, possibly with the
+// commit suffix) and the git commit the plugin content came from (empty when
+// unresolvable), so the caller can pin the exact installed commit.
 func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bool) (version, commitSHA string, err error) {
 	src, err := spec.ResolveSource()
 	if err != nil {
@@ -298,9 +305,34 @@ func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bo
 		return "", "", err
 	}
 	if _, err := os.Stat(finalDest); err == nil {
-		// Already cached at this version — discard the staging clone.
-		_ = os.RemoveAll(stage)
-		return version, commitSHA, nil
+		same, err := sameTree(stageContent, finalDest)
+		if err != nil {
+			_ = os.RemoveAll(stage)
+			return "", "", fmt.Errorf("comparing with cached %s: %w", version, err)
+		}
+		if same {
+			// Identical files: the new commit describes the cache too.
+			_ = os.RemoveAll(stage)
+			return version, commitSHA, nil
+		}
+		// Upstream changed without a version bump. Swapping the shared dir
+		// would change files under every profile linked to it (and falsify
+		// their recorded commit), so cache this content beside it, keyed by
+		// commit.
+		if len(commitSHA) < 12 {
+			_ = os.RemoveAll(stage)
+			return "", "", fmt.Errorf("plugin %q changed upstream without a version bump (still %s) and its commit could not be resolved to cache it separately", spec.Name, version)
+		}
+		version += "+" + commitSHA[:12]
+		if finalDest, err = CachePluginDir(marketplace, spec.Name, version); err != nil {
+			_ = os.RemoveAll(stage)
+			return "", "", err
+		}
+		if _, err := os.Stat(finalDest); err == nil {
+			// Already cached from this exact commit.
+			_ = os.RemoveAll(stage)
+			return version, commitSHA, nil
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(finalDest), config.DirPerm); err != nil {
 		_ = os.RemoveAll(stage)
@@ -312,6 +344,59 @@ func FetchPluginIntoCache(marketplace string, spec MarketplacePluginSpec, ssh bo
 	}
 	_ = os.RemoveAll(stage)
 	return version, commitSHA, nil
+}
+
+// sameTree reports whether two plugin trees hold the same paths, types, file
+// bytes and symlink targets. .git entries are ignored: clone metadata differs
+// between fetches of identical content.
+func sameTree(a, b string) (bool, error) {
+	da, err := treeDigest(a)
+	if err != nil {
+		return false, err
+	}
+	db, err := treeDigest(b)
+	if err != nil {
+		return false, err
+	}
+	return maps.Equal(da, db), nil
+}
+
+func treeDigest(root string) (map[string]string, error) {
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Name() == ".git" && p != root {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			out[rel] = "link:" + target
+		case d.IsDir():
+			out[rel] = "dir"
+		default:
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(data)
+			out[rel] = "file:" + hex.EncodeToString(sum[:])
+		}
+		return nil
+	})
+	return out, err
 }
 
 func readPluginVersion(pluginRoot string) (string, error) {
@@ -433,10 +518,16 @@ func UnlinkFromProfile(profileDir, marketplace, pluginName string) error {
 		return err
 	}
 
-	// Capture the cache symlink path from the entry so we know what to remove.
-	var cacheSymlink string
-	if entries, ok := installedDoc.Plugins[id]; ok && len(entries) > 0 {
-		cacheSymlink = entries[len(entries)-1].InstallPath
+	// Never trust the recorded installPath: installed_plugins.json can arrive
+	// from a shared bundle, and deleting whatever path it names would let a
+	// bundle remove arbitrary files. Rebuild the path LinkIntoProfile would
+	// have created from validated segments, and only remove it if it is
+	// actually a symlink.
+	var cacheSymlinks []string
+	for _, e := range installedDoc.Plugins[id] {
+		if p := profileCacheSymlinkPath(profileDir, marketplace, pluginName, e.Version); p != "" && !slices.Contains(cacheSymlinks, p) {
+			cacheSymlinks = append(cacheSymlinks, p)
+		}
 	}
 	delete(installedDoc.Plugins, id)
 
@@ -464,14 +555,31 @@ func UnlinkFromProfile(profileDir, marketplace, pluginName string) error {
 		atomicwrite.WriteFile(installedPath, installedBytes, config.FilePerm),
 		atomicwrite.WriteFile(knownPath, knownBytes, config.FilePerm),
 	}
-	if cacheSymlink != "" {
-		changes = append(changes, atomicwrite.DeleteFile(cacheSymlink))
+	for _, p := range cacheSymlinks {
+		changes = append(changes, atomicwrite.DeleteFile(p))
 	}
 	if !stillUsed {
 		profileMktSymlink := filepath.Join(profileDir, "plugins", "marketplaces", marketplace)
 		changes = append(changes, atomicwrite.DeleteFile(profileMktSymlink))
 	}
 	return atomicwrite.Apply(changes)
+}
+
+// profileCacheSymlinkPath returns <profile>/plugins/cache/<mkt>/<plugin>/<version>
+// when every segment validates and that path is a symlink; "" otherwise.
+// A versionless entry maps to "0.0.0", matching the host-adoption layout.
+func profileCacheSymlinkPath(profileDir, marketplace, pluginName, version string) string {
+	if version == "" {
+		version = "0.0.0"
+	}
+	if ValidateName(marketplace) != nil || ValidateName(pluginName) != nil || ValidateVersion(version) != nil {
+		return ""
+	}
+	p := filepath.Join(profileDir, "plugins", "cache", marketplace, pluginName, version)
+	if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return ""
+	}
+	return p
 }
 
 // ----- on-disk helper types -----

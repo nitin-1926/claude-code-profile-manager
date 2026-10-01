@@ -18,15 +18,15 @@ func TestValidateName(t *testing.T) {
 		{"Profile1", false},
 		{"a", false},
 
-		{"", true},                          // empty
-		{"has space", true},                 // space
-		{"../escape", true},                 // path traversal
-		{"-starts-with-dash", true},         // must start alphanumeric
-		{"_starts-with-underscore", true},    // must start alphanumeric
-		{strings.Repeat("a", 33), true},     // too long
-		{"hello!", true},                    // special char
-		{"hello@world", true},               // special char
-		{"hello/world", true},               // slash
+		{"", true},                        // empty
+		{"has space", true},               // space
+		{"../escape", true},               // path traversal
+		{"-starts-with-dash", true},       // must start alphanumeric
+		{"_starts-with-underscore", true}, // must start alphanumeric
+		{strings.Repeat("a", 33), true},   // too long
+		{"hello!", true},                  // special char
+		{"hello@world", true},             // special char
+		{"hello/world", true},             // slash
 	}
 
 	for _, tt := range tests {
