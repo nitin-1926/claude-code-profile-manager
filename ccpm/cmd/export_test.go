@@ -252,7 +252,7 @@ func TestExportImportBundleRoundTrip(t *testing.T) {
 	write(".ccpm/share/agents/bar.md", "agent body")
 	write("private/id_rsa", "KEY")
 	write(".ccpm/share/settings/src.json", `{"model":"opus"}`)
-	write(".ccpm/share/settings/src.owned.json", `["model"]`)
+	write(".ccpm/share/settings/src.owned.json", `{"keys":["model"]}`)
 	write(".ccpm/share/mcp/src.json", `{"srv":{"command":"srv-bin"}}`)
 	symlinkOrSkip(t, filepath.Join(home, ".ccpm", "share", "skills", "foo"), filepath.Join(src, "skills", "foo"))
 	symlinkOrSkip(t, filepath.Join(home, ".ccpm", "share", "agents", "bar.md"), filepath.Join(src, "agents", "bar.md"))
@@ -272,7 +272,7 @@ func TestExportImportBundleRoundTrip(t *testing.T) {
 		"skills/foo/SKILL.md":              "skill body",
 		"agents/bar.md":                    "agent body",
 		".ccpm-bundle/settings.json":       `{"model":"opus"}`,
-		".ccpm-bundle/settings.owned.json": `["model"]`,
+		".ccpm-bundle/settings.owned.json": `{"keys":["model"]}`,
 		".ccpm-bundle/mcp.json":            `{"srv":{"command":"srv-bin"}}`,
 	} {
 		if got[name] != want {
@@ -296,7 +296,7 @@ func TestExportImportBundleRoundTrip(t *testing.T) {
 	dst := filepath.Join(home, ".ccpm", "profiles", "dst")
 	for rel, want := range map[string]string{
 		".ccpm/share/settings/dst.json":          `{"model":"opus"}`,
-		".ccpm/share/settings/dst.owned.json":    `["model"]`,
+		".ccpm/share/settings/dst.owned.json":    `{"keys":["model"]}`,
 		".ccpm/share/mcp/dst.json":               `{"srv":{"command":"srv-bin"}}`,
 		".ccpm/profiles/dst/skills/foo/SKILL.md": "skill body",
 	} {
