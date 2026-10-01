@@ -1,7 +1,7 @@
-import type { ReactNode } from 'react'
 import type { Profile } from '@/types'
 import { shortDate, tildePath } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { SectionLabel } from '@/components/ui/SectionLabel'
 import {
   Bot,
   FolderOpen,
@@ -41,14 +41,6 @@ export function OverviewTab({ profile }: { profile: Profile }) {
         </div>
       </section>
     </div>
-  )
-}
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-      {children}
-    </h2>
   )
 }
 

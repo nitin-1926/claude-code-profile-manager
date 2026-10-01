@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.7.0"
+var version = "0.7.9"
 
 var rootCmd = &cobra.Command{
 	Use:   "ccpm",
@@ -41,6 +41,21 @@ func registerProfileFlagCompletion(cmd *cobra.Command) {
 	}
 }
 
+// rejectUnknownSubcommands makes every group command (subcommands, no action
+// of its own) fail on an unknown subcommand. Cobra only does that for the
+// root: a non-runnable group prints help and exits 0, so a typo like
+// `ccpm config sett statusline false` silently changed nothing. Bare
+// `ccpm <group>` still prints help and exits 0.
+func rejectUnknownSubcommands(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		if sub.HasSubCommands() && !sub.Runnable() {
+			sub.Args = cobra.NoArgs
+			sub.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+		}
+		rejectUnknownSubcommands(sub)
+	}
+}
+
 var logLevel string
 
 // configureLogging maps --log-level onto the process-wide slog default.
@@ -65,6 +80,7 @@ func Execute() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "warn", "log verbosity: debug | info | warn | error")
 	cobra.OnInitialize(configureLogging)
 	registerProfileFlagCompletion(rootCmd)
+	rejectUnknownSubcommands(rootCmd)
 	if err := rootCmd.Execute(); err != nil {
 		// Deliberately NOT printing the error here. Cobra already printed it
 		// ("Error: <msg>"), and printing again is what made every ccpm failure

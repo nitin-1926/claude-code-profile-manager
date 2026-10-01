@@ -12,7 +12,8 @@ const PHASE_LABEL: Record<string, string> = {
 }
 
 // UpdateToast checks GitHub for a newer desktop build a few seconds after launch
-// and, if one exists, offers a one-click in-place update (bottom-right). The Go
+// and, if one exists, offers a one-click in-place update (docked under the
+// toast stack, bottom-right; see ToastProvider). The Go
 // updater downloads + verifies + swaps the bundle and relaunches — no re-drag.
 export function UpdateToast() {
   const [info, setInfo] = useState<UpdateInfo | null>(null)
@@ -54,7 +55,7 @@ export function UpdateToast() {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-80" aria-live="polite">
+    <div aria-live="polite">
       <div className="overflow-hidden rounded-xl border border-primary/40 bg-popover shadow-xl">
         <div className="flex items-start gap-2.5 p-3.5">
           <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">

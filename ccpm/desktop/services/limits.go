@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
@@ -90,10 +89,12 @@ func (s *LimitsService) All() ([]ProfileLimits, error) {
 }
 
 func limitsFor(profile, dir string) ProfileLimits {
-	account, plan := accountAndPlan(dir)
+	account, tier := accountAndPlan(dir)
+	// The reason reads the raw tier; people read the label.
+	plan := PlanLabel(tier)
 	l := usage.LoadLimits(dir)
 	if !l.Available() {
-		out := emptyLimits(profile, reasonForMissing(plan))
+		out := emptyLimits(profile, reasonForMissing(tier))
 		out.Account, out.Plan = account, plan
 		return out
 	}
@@ -186,9 +187,4 @@ func PlanLabel(tier string) string {
 	default:
 		return tier
 	}
-}
-
-// Age is exposed so the frontend and the rail format freshness identically.
-func Age(capturedAt int64, now time.Time) time.Duration {
-	return usage.Limits{CapturedAt: capturedAt}.Age(now)
 }

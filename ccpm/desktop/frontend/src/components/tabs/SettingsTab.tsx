@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
-import type { CmdResult, SettingKV } from '@/types'
-import { useToast } from '@/components/ui/Toast'
+import { useCommand } from '@/lib/useCommand'
+import type { SettingKV } from '@/types'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { StatusLineSection } from '@/components/settings/StatusLineSection'
@@ -11,34 +11,24 @@ import { Plus, Save } from 'lucide-react'
 
 export function SettingsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
   const [data, reload, error] = useLive<SettingKV[]>(() => api.settings.get(profile), [profile])
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useCommand(() => {
+    reload()
+    onMutated()
+  })
   const [adding, setAdding] = useState(false)
   const [version, setVersion] = useState<string | null>(null)
-  const toast = useToast()
 
-  // Reuse the updater's version binding (same one UpdateToast reads `current` from)
-  // to show a persistent app-version line. Network/API failures stay silent.
+  // A persistent app-version line. version() is local: check() would make a
+  // GitHub request on every mount and lose the line whenever that failed.
   useEffect(() => {
     api.updater
-      .check()
-      .then((u) => setVersion(u.current))
+      .version()
+      .then(setVersion)
       .catch(() => {})
   }, [])
 
-  function report(action: string, r: CmdResult) {
-    if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-    else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
-    reload()
-    onMutated()
-  }
-
   async function save(key: string, value: string) {
-    setBusy(true)
-    try {
-      report(`Set ${key}`, await api.mutate.setSetting(key, value, profile))
-    } finally {
-      setBusy(false)
-    }
+    await run(`Set ${key}`, () => api.mutate.setSetting(key, value, profile))
   }
 
   // The status line section is rendered by both the error and the loading
@@ -136,7 +126,7 @@ function SettingRow({ kv, busy, onSave }: { kv: SettingKV; busy: boolean; onSave
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && dirty && valid && onSave(value)}
+        onKeyDown={(e) => e.key === 'Enter' && !busy && dirty && valid && onSave(value)}
         spellCheck={false}
         className={cn(
           'flex-1 rounded-md border bg-background px-2.5 py-1.5 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -166,12 +156,18 @@ function NewKeyModal({
 }) {
   const [key, setKey] = useState('')
   const [value, setValue] = useState('')
+  // Start empty on every open (the modal stays mounted while closed).
+  useEffect(() => {
+    if (open) {
+      setKey('')
+      setValue('')
+    }
+  }, [open])
   const valid = key.trim() && isJSON(value)
   return (
     <Modal open={open} onClose={onCancel} title="New setting">
       <label className="text-xs text-muted-foreground">Key (dot notation, e.g. statusLine.type)</label>
       <input
-        autoFocus
         value={key}
         onChange={(e) => setKey(e.target.value)}
         placeholder="theme"

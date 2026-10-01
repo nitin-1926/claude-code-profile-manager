@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './lib/api'
 import type { Profile } from './types'
 import { Sidebar } from './components/Sidebar'
@@ -6,7 +6,6 @@ import { ProfileView } from './components/ProfileView'
 import { EmptyState } from './components/EmptyState'
 import { TitleBar } from './components/TitleBar'
 import { CliBanner } from './components/CliBanner'
-import { UpdateToast } from './components/UpdateToast'
 import { RefreshCw } from 'lucide-react'
 import { cn } from './lib/utils'
 
@@ -19,20 +18,29 @@ export default function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [selected, setSelected] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // Bumped only by the title-bar button: it resets a tab's error boundary, so
+  // the "hit refresh" advice on the error card actually does something.
+  const [refreshCount, setRefreshCount] = useState(0)
+  const refreshSeq = useRef(0)
 
+  // Only the latest refresh applies: the watcher and a mutation can overlap,
+  // and an older list resolving last would drop a just-cloned profile and
+  // reset the selection to profiles[0].
   async function refresh() {
+    const seq = ++refreshSeq.current
     setRefreshing(true)
     try {
       const profiles = await api.profiles.list()
+      if (seq !== refreshSeq.current) return
       setState({ status: 'ready', profiles })
       setSelected((cur) => {
         if (cur && profiles.some((p) => p.name === cur)) return cur
         return profiles[0]?.name ?? null
       })
     } catch (e) {
-      setState({ status: 'error', message: String(e) })
+      if (seq === refreshSeq.current) setState({ status: 'error', message: String(e) })
     } finally {
-      setRefreshing(false)
+      if (seq === refreshSeq.current) setRefreshing(false)
     }
   }
 
@@ -45,7 +53,10 @@ export default function App() {
 
   const refreshButton = (
     <button
-      onClick={() => void refresh()}
+      onClick={() => {
+        setRefreshCount((n) => n + 1)
+        void refresh()
+      }}
       title="Refresh"
       className="flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
@@ -58,7 +69,6 @@ export default function App() {
       <TitleBar right={state.status === 'ready' && state.profiles.length > 0 ? refreshButton : undefined} />
       <CliBanner />
       <div className="flex min-h-0 flex-1">{renderBody()}</div>
-      <UpdateToast />
     </div>
   )
 
@@ -92,8 +102,9 @@ export default function App() {
           <ProfileView
             profile={active}
             names={names}
-            onMutated={() => void refresh()}
+            onMutated={refresh}
             onSelect={setSelected}
+            refreshKey={refreshCount}
           />
         </main>
       </>

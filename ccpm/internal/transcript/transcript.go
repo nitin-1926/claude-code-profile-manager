@@ -12,10 +12,7 @@
 package transcript
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"slices"
 	"strings"
@@ -25,17 +22,9 @@ import (
 )
 
 const (
-	// maxLineBytes is the largest JSONL line we will read. The longest line
-	// measured in a real profile was 1.3 MB (a single tool result), so this is
-	// generous headroom; a line beyond it is counted and skipped rather than
-	// aborting the file, because one pathological line must not cost the reader
-	// every turn after it.
-	//
-	// This bounds ALLOCATION, not just decode cost: a transcript truncated or
-	// concatenated without a trailing newline would otherwise have its entire
-	// length materialised by ReadBytes before the cap could be consulted — 77 MB
-	// on the largest file observed, more with buffer growth.
-	maxLineBytes = 8 << 20
+	// maxLineBytes is the largest JSONL line we will read; a longer one is
+	// counted and skipped. See usage.MaxLineBytes for why it bounds allocation.
+	maxLineBytes = usage.MaxLineBytes
 
 	// previewBytes is how much of a tool input or tool result is carried inline
 	// on a Turn. The reader shows a one-line chip; the full body is fetched only
@@ -153,19 +142,16 @@ type rawLine struct {
 // usageKey is the identity under which a usage-bearing line is counted exactly
 // once, or "" when the line carries no countable usage.
 //
-// This MUST match internal/usage/ingest.go's dedupKey. Claude Code writes one
-// API response as several assistant lines sharing a message.id, each carrying a
-// growing usage snapshot, so summing lines over-counts about 2x — measured
-// 1.87x-2.29x across five real transcripts. Every line has its own uuid, so
-// keying on uuid dedups nothing at all.
+// The rule is usage.DedupKey, shared so this and the usage store agree by
+// construction. Claude Code writes one API response as several assistant lines
+// sharing a message.id, each carrying a growing usage snapshot, so summing
+// lines over-counts about 2x — measured 1.87x-2.29x across five real
+// transcripts. Every line has its own uuid, so keying on uuid dedups nothing.
 func (l rawLine) usageKey() string {
-	if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
+	if l.Message == nil {
 		return ""
 	}
-	if l.Message.ID != "" {
-		return l.Message.ID + "|" + l.RequestID
-	}
-	return l.Message.Model + "|" + l.Timestamp
+	return usage.DedupKey(l.Type, l.Message.Usage != nil, l.Message.ID, l.RequestID, l.Message.Model, l.Timestamp)
 }
 
 // usageTokens is the four-way tally on this line, zero when it carries none.
@@ -370,61 +356,16 @@ func ClipRunes(s string, n int) string {
 // The early-stop return is what bounds search: once a file has produced its
 // quota of hits there is nothing to gain from decoding the rest of it, and on a
 // common query the rest is most of a 76 MB file.
+//
+// The bounded reader itself is usage.EachLine, shared with the usage ingest so
+// both packages cap lines, and drop a half-written tail, identically.
 func eachLine(path string, fn func(raw []byte, skipped bool) bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-
-	// bufio.Scanner is not usable here: it yields a final line that has no
-	// trailing newline, which is exactly the half-written line this must skip.
-	// ReadBytes has the right semantics but would materialise a whole
-	// newline-free file before any cap could be consulted, so the line is
-	// assembled fragment by fragment and dropped once it passes maxLineBytes.
-	r := bufio.NewReaderSize(f, 1<<20)
-	var line []byte
-	oversize := false
-	for {
-		frag, err := r.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			if oversize || len(line)+len(frag) > maxLineBytes {
-				oversize = true // keep draining, stop accumulating
-				line = line[:0]
-			} else {
-				line = append(line, frag...)
-			}
-			continue
-		}
-		if err != nil {
-			// EOF with bytes pending is a line still being written: leave it.
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
-		// The cap must be re-checked here, not only in the ErrBufferFull branch:
-		// the fragment that finally contains the newline arrives with err == nil,
-		// so a line just over the limit would otherwise be assembled in full.
-		if oversize || len(line)+len(frag) > maxLineBytes {
-			oversize = false
-			line = line[:0]
-			if !fn(nil, true) {
-				return nil
-			}
-			continue
-		}
-		var complete []byte
-		if len(line) == 0 {
-			complete = frag // fast path: whole line already contiguous
-		} else {
-			complete = append(line, frag...)
-		}
-		if !fn(complete, false) {
-			return nil
-		}
-		line = line[:0]
-	}
+	return usage.EachLine(f, func(line []byte, _ int64) bool { return fn(line, line == nil) })
 }
 
 // ReadPage returns the turns in [offset, offset+limit) along with the file's
@@ -704,48 +645,6 @@ func PageAround(path, uuid string, limit int) (Page, int, error) {
 	}
 	page, err := ReadPage(path, offset, limit)
 	return page, at, err
-}
-
-// FirstUserPrompt pulls a human-readable preview out of one decoded transcript
-// line. The shape varies across Claude Code versions, so a few known spots are
-// probed: a v1 top-level "content" string, and v2's message.content as either a
-// string or an array of typed blocks.
-//
-// This is the content-block decoding that cmd/sessions.go used to own. It lives
-// here so there is exactly one implementation to keep current when the format
-// moves.
-func FirstUserPrompt(entry map[string]any) string {
-	if role, _ := entry["role"].(string); role != "user" && entry["role"] != nil {
-		return ""
-	}
-	if s, ok := entry["content"].(string); ok {
-		return strings.TrimSpace(s)
-	}
-	msg, ok := entry["message"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	if role, _ := msg["role"].(string); role != "user" && msg["role"] != nil {
-		return ""
-	}
-	switch content := msg["content"].(type) {
-	case string:
-		return strings.TrimSpace(content)
-	case []any:
-		for _, blk := range content {
-			bm, ok := blk.(map[string]any)
-			if !ok {
-				continue
-			}
-			if t, _ := bm["type"].(string); t != "text" {
-				continue
-			}
-			if text, ok := bm["text"].(string); ok {
-				return strings.TrimSpace(text)
-			}
-		}
-	}
-	return ""
 }
 
 // isTitleWorthy rejects the prompts that make a useless session title: the

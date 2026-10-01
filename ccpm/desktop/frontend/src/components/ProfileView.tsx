@@ -3,6 +3,7 @@ import type { CmdResult, Profile } from '@/types'
 import { tildePath, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { useCommand } from '@/lib/useCommand'
 import { useToast } from '@/components/ui/Toast'
 import { PromptModal, ConfirmModal } from '@/components/ui/Modal'
 import { validateProfileName } from '@/lib/validate'
@@ -37,20 +38,28 @@ export function ProfileView({
   names,
   onMutated,
   onSelect,
+  refreshKey,
 }: {
   profile: Profile
   names: string[]
-  onMutated: () => void
+  /** Resolves once the profile list has been re-read. */
+  onMutated: () => Promise<void>
   onSelect: (name: string) => void
+  /** Changes when the user hits the title-bar refresh. */
+  refreshKey: number
 }) {
   const [tab, setTab] = useState<string>('Overview')
   const [dialog, setDialog] = useState<Dialog>(null)
   const toast = useToast()
+  const { run } = useCommand()
 
-  function report(action: string, r: CmdResult) {
-    if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-    else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
-    onMutated()
+  // Select the new name only after the refreshed list contains it. Selecting
+  // first made App fall back to profiles[0] for a frame, remounting every tab
+  // (a full History scan) under an unrelated profile.
+  async function mutateAndSelect(action: string, call: () => Promise<CmdResult>, next: string) {
+    const ok = await run(action, call)
+    await onMutated()
+    if (ok) onSelect(next)
   }
 
   async function launch() {
@@ -136,7 +145,7 @@ export function ProfileView({
 
             The per-fetch generation guards inside the tabs stay: they cover
             overlapping loads WITHIN one profile, which a key cannot. */}
-        <ErrorBoundary key={profile.name} resetKey={`${profile.name}:${tab}`}>
+        <ErrorBoundary key={profile.name} resetKey={`${profile.name}:${tab}:${refreshKey}`}>
           {tab === 'Overview' && <OverviewTab profile={profile} />}
           {tab === 'Cascade' && <CascadeTab profile={profile.name} />}
           {tab === 'Assets' && <AssetsTab profile={profile.name} onMutated={onMutated} />}
@@ -160,9 +169,7 @@ export function ProfileView({
         onCancel={() => setDialog(null)}
         onConfirm={async (dst) => {
           setDialog(null)
-          const res = await api.mutate.clone(profile.name, dst)
-          report('Clone', res)
-          if (res.ok) onSelect(dst)
+          await mutateAndSelect('Clone', () => api.mutate.clone(profile.name, dst), dst)
         }}
       />
       <PromptModal
@@ -175,9 +182,7 @@ export function ProfileView({
         onCancel={() => setDialog(null)}
         onConfirm={async (next) => {
           setDialog(null)
-          const res = await api.mutate.rename(profile.name, next)
-          report('Rename', res)
-          if (res.ok) onSelect(next)
+          await mutateAndSelect('Rename', () => api.mutate.rename(profile.name, next), next)
         }}
       />
       <ConfirmModal
@@ -189,7 +194,8 @@ export function ProfileView({
         onCancel={() => setDialog(null)}
         onConfirm={async () => {
           setDialog(null)
-          report('Delete', await api.mutate.remove(profile.name))
+          await run('Delete', () => api.mutate.remove(profile.name))
+          await onMutated()
         }}
       />
     </div>

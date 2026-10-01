@@ -80,6 +80,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 	green := color.New(color.FgGreen, color.Bold)
 
 	if syncDryRun {
+		if len(targets) == 0 {
+			return fmt.Errorf("no profiles exist yet — create one with `ccpm add <name>`")
+		}
 		// Cascade links and host adoption are GLOBAL — driven by the shared
 		// manifest and the ~/.claude scan — so the preview below is identical
 		// for every listed profile (that's why PreviewApplyGlobals ignores the
@@ -114,9 +117,20 @@ func runSync(cmd *cobra.Command, args []string) error {
 	// shared manifest (host adoption appends entries), so two concurrent
 	// syncs — or a sync racing a `ccpm skill add` — would lose updates (H7).
 	return withConfigLock(func() error {
+		// Re-load inside the lock: cfg was read before the picker, and a
+		// profile removed since then would otherwise be synced from the stale
+		// copy — re-creating its directory and recording it again.
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
 		var failed []string
 		for _, name := range targets {
-			p := cfg.Profiles[name]
+			p, ok := cfg.Profiles[name]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Warning: profile %q was removed; skipping\n", name)
+				continue
+			}
 
 			if err := profilesync.ApplyGlobalsWithOptions(p.Dir, name, profilesync.Options{
 				SkipHostAdoption: syncNoAutoAdopt,

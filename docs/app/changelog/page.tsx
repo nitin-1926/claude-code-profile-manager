@@ -51,7 +51,7 @@ export default function ChangelogPage() {
   return (
     <>
       <Nav />
-      <div className="relative overflow-hidden">
+      <main id="main" className="relative overflow-hidden">
         <DotGrid />
         <AccentOrb className="top-[-120px] right-[-20%] w-[560px] h-[560px]" />
         <div className="relative max-w-3xl mx-auto px-6 pt-12 pb-20">
@@ -198,7 +198,7 @@ export default function ChangelogPage() {
             and use <strong className="text-fg">Ask Me</strong> (⌘K / Ctrl+K).
           </p>
         </div>
-      </div>
+      </main>
       <Footer />
     </>
   );

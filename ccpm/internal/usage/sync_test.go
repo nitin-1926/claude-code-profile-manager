@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -206,5 +208,108 @@ func TestSyncStraddleAdoptsLargerSnapshot(t *testing.T) {
 	}
 	if got := sess.Records["s1"].Messages; got != 1 {
 		t.Fatalf("messages = %d, want 1 (a revision is not a new message)", got)
+	}
+}
+
+// Claude Code prunes transcripts; their cursors used to stay in state.json
+// forever (79 dead entries on a real profile), rewritten on every sync. A
+// cursor is dropped only once its file is really gone — one the walk merely
+// could not reach this time keeps its cursor, or the next sync would re-count
+// the whole file.
+func TestSyncPrunesCursorsForDeletedTranscripts(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions enforced")
+	}
+	dir := t.TempDir()
+	line := func(sess string) []byte {
+		return []byte(realAsstLine(t, sess+"-u1", "msg_"+sess, "req_"+sess, sess, "/repo", "2026-06-27T10:00:00.000Z", "opus", 10, 0, "a"))
+	}
+	keep := writeTranscript(t, dir, "/repo", "keep", line("keep"))
+	gone := writeTranscript(t, dir, "/repo", "gone", line("gone"))
+	hidden := writeTranscript(t, dir, "/other", "hidden", line("hidden"))
+	if _, _, err := Sync(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	// Unreadable, not deleted: the walk cannot enter it this time.
+	hiddenDir := filepath.Dir(hidden)
+	if err := os.Chmod(hiddenDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hiddenDir, 0o755) })
+	if _, _, err := Sync(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := loadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := func(p string) string { r, _ := filepath.Rel(filepath.Join(dir, "projects"), p); return r }
+	if _, ok := st.Files[rel(gone)]; ok {
+		t.Errorf("cursor for a deleted transcript survived: %v", st.Files)
+	}
+	if _, ok := st.Files[rel(keep)]; !ok {
+		t.Errorf("cursor for a live transcript was dropped")
+	}
+	if _, ok := st.Files[rel(hidden)]; !ok {
+		t.Errorf("cursor for a transiently unreachable transcript was dropped")
+	}
+}
+
+// realAsstLine renders one assistant line in the shape Claude Code actually
+// writes: its own uuid, the request's message.id + requestId (the dedup key),
+// and a usage block under message. text pads message.content so a test can
+// make the line as long as it needs.
+func realAsstLine(t *testing.T, uuid, msgID, reqID, sess, cwd, ts, model string, in, out int64, text string) string {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"type": "assistant", "uuid": uuid, "parentUuid": nil, "isSidechain": false,
+		"sessionId": sess, "cwd": cwd, "timestamp": ts, "requestId": reqID,
+		"version": "2.1.0", "userType": "external",
+		"message": map[string]any{
+			"id": msgID, "type": "message", "role": "assistant", "model": model,
+			"content": []any{map[string]any{"type": "text", "text": text}},
+			"usage": map[string]any{
+				"input_tokens": in, "output_tokens": out,
+				"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b) + "\n"
+}
+
+// An over-cap line must be skipped — never materialised whole — and the cursor
+// must still advance past it so the lines after it count. Without the cap the
+// reader buffered the entire line (a newline-free file grows without bound) and
+// decoded it as usage.
+func TestSyncSkipsOversizeLineAndAdvancesPastIt(t *testing.T) {
+	dir := t.TempDir()
+	huge := strings.Repeat("z", MaxLineBytes+4096)
+	body := realAsstLine(t, "u1", "msg_1", "req_1", "s1", "/repo", "2026-06-27T10:00:00.000Z", "opus", 100, 0, "a") +
+		realAsstLine(t, "u2", "msg_big", "req_big", "s1", "/repo", "2026-06-27T10:01:00.000Z", "opus", 1000, 0, huge) +
+		realAsstLine(t, "u3", "msg_2", "req_2", "s1", "/repo", "2026-06-27T10:02:00.000Z", "opus", 50, 0, "b")
+	path := writeTranscript(t, dir, "/repo", "s1", []byte(body))
+
+	sess, _, err := Sync(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.Records["s1"].Total(); got != 150 {
+		t.Fatalf("total = %d, want 150 (the over-cap line must be skipped, the lines around it counted)", got)
+	}
+	st, err := loadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := filepath.Rel(filepath.Join(dir, "projects"), path)
+	if got, want := st.Files[rel].Offset, int64(len(body)); got != want {
+		t.Fatalf("cursor = %d, want %d (end of file, past the skipped line)", got, want)
 	}
 }

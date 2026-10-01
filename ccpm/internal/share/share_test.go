@@ -1,6 +1,7 @@
 package share
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -146,6 +147,75 @@ func TestLinkReplacesExisting(t *testing.T) {
 	target, _ := os.Readlink(dst)
 	if target != src2 {
 		t.Errorf("symlink should point to src2 after replacement, got %q", target)
+	}
+}
+
+// A real file or directory at dst is profile-local content (e.g. a skill
+// Claude Code created inside the profile). Link must refuse it with
+// ErrNotLink and leave it intact — host adoption used to RemoveAll it.
+func TestLinkRefusesRealFileOrDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	src := filepath.Join(tmp, "host", "foo")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	realDir := filepath.Join(tmp, "profile", "skills", "foo")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mine := filepath.Join(realDir, "SKILL.md")
+	if err := os.WriteFile(mine, []byte("profile-local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realFile := filepath.Join(tmp, "profile", "agents", "bar.md")
+	if err := os.MkdirAll(filepath.Dir(realFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(realFile, []byte("profile-local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, dst := range []string{realDir, realFile} {
+		if err := Link(src, dst); !errors.Is(err, ErrNotLink) {
+			t.Errorf("Link over real %s: err = %v, want ErrNotLink", dst, err)
+		}
+	}
+	for _, p := range []string{mine, realFile} {
+		if got, err := os.ReadFile(p); err != nil || string(got) != "profile-local" {
+			t.Fatalf("Link destroyed profile-local %s: %q, %v", p, got, err)
+		}
+	}
+}
+
+// A Windows copy-fallback dir is recorded by path when created, so a later
+// Link (after Developer Mode is enabled, or to refresh it) may replace it.
+func TestLinkReplacesRecordedCopyFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests may require elevated privileges on Windows")
+	}
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	src := filepath.Join(tmp, "store", "foo")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(tmp, "profile", "skills", "foo")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordCopyFallback(dst); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Link(src, dst); err != nil {
+		t.Fatalf("Link over recorded copy-fallback: %v", err)
+	}
+	if target, err := os.Readlink(dst); err != nil || target != src {
+		t.Fatalf("dst not replaced by symlink to src: target=%q err=%v", target, err)
 	}
 }
 

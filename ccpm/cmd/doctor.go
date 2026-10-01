@@ -108,8 +108,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		red.Printf("Config load failed: %v\n", err)
-		return nil
+		// Every later section needs the config, so stop here — but as an
+		// issue with the unhealthy exit code, not a silent exit 0.
+		red.Printf("  ✗ config load failed: %v\n", err)
+		issues++
+		fmt.Println()
+		red.Printf("✗ %d issue(s), %d warning(s)\n", issues, warnings)
+		return exitWithCode(exitUnhealthy, fmt.Errorf("%d issue(s), %d warning(s)", issues, warnings))
 	}
 
 	// -----------------------------------------------------------------

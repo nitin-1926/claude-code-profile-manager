@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -129,7 +130,7 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 
 	// After printing, never before: caching is a side effect and must not be
 	// able to delay or suppress the line the TUI is waiting on.
-	persistRateLimits(in, profile, now)
+	persistRateLimits(in, cfg, profile, now)
 	return nil
 }
 
@@ -141,7 +142,7 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 // file's contract is that nothing here disturbs the rendered line. Every
 // failure is swallowed deliberately — a missed usage reading is not worth a
 // polluted TUI, and the next render will try again.
-func persistRateLimits(in statusLineInput, profileName string, now time.Time) {
+func persistRateLimits(in statusLineInput, cfg *config.Config, profileName string, now time.Time) {
 	if in.RateLimits == nil {
 		return
 	}
@@ -162,8 +163,16 @@ func persistRateLimits(in statusLineInput, profileName string, now time.Time) {
 	if len(windows) == 0 {
 		return
 	}
-	dir := statusLineProfileDir(profileName)
+	dir := statusLineProfileDir(cfg, profileName)
 	if dir == "" {
+		return
+	}
+	// This runs on every TUI repaint, and each save is a fully-synced atomic
+	// write that also wakes the desktop watcher. An unchanged reading is
+	// rewritten only once the cache is limitsRefreshAge old, which keeps
+	// captured_at honest to within that.
+	if cached := usage.LoadLimits(dir); cached.Available() &&
+		slices.Equal(cached.Windows, windows) && cached.Age(now) < limitsRefreshAge {
 		return
 	}
 	_ = usage.SaveLimits(dir, usage.Limits{
@@ -173,17 +182,18 @@ func persistRateLimits(in statusLineInput, profileName string, now time.Time) {
 	})
 }
 
-// statusLineProfileDir resolves the on-disk directory for a profile name.
+// limitsRefreshAge is how stale an unchanged cached reading may get before a
+// render rewrites it just to move captured_at.
+const limitsRefreshAge = time.Minute
+
+// statusLineProfileDir resolves the on-disk directory for a profile name from
+// the already-loaded config (nil when it failed to load).
 //
 // Deliberately goes through the registry rather than trusting CLAUDE_CONFIG_DIR
 // directly: that variable can point anywhere, and the cache must only ever be
 // written inside a directory ccpm actually owns.
-func statusLineProfileDir(name string) string {
-	if name == "" {
-		return ""
-	}
-	cfg, err := config.Load()
-	if err != nil {
+func statusLineProfileDir(cfg *config.Config, name string) string {
+	if name == "" || cfg == nil {
 		return ""
 	}
 	p, ok := cfg.Profiles[name]

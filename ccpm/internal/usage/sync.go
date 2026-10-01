@@ -1,11 +1,12 @@
 package usage
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/lock"
@@ -52,7 +53,9 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 			newFiles[k] = v
 		}
 
-		walkErr := WalkTranscripts(profileDir, "", func(abs, rel string) error {
+		visited := make(map[string]bool, len(st.Files))
+		walkErr := WalkTranscripts(profileDir, func(abs, rel string) error {
+			visited[rel] = true
 			ns, ferr := ingestFile(abs, st.Files[rel], sess, day)
 			if ferr != nil {
 				// Unreadable right now (e.g. native claude mid-write); leave the
@@ -64,6 +67,20 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 		})
 		if walkErr != nil {
 			return walkErr
+		}
+		// Drop cursors for transcripts Claude Code has pruned, or state.json
+		// grows with dead entries forever and is rewritten whole every sync.
+		// Only a confirmed not-exist counts: a file the walk could not reach
+		// this time (an unreadable dir) keeps its cursor, since losing it
+		// would re-count the whole file once it is readable again.
+		projects := filepath.Join(profileDir, "projects")
+		for rel := range newFiles {
+			if visited[rel] {
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(projects, rel)); errors.Is(err, fs.ErrNotExist) {
+				delete(newFiles, rel)
+			}
 		}
 		st.Files = newFiles
 
@@ -127,20 +144,12 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 		}
 	}
 
-	reader := bufio.NewReaderSize(f, 1024*1024)
+	// EachLine stops before a trailing line with no '\n' (still being written),
+	// so the cursor never passes it and the next sync picks it up complete.
 	consumed := start
-	for {
-		lineBytes, rerr := reader.ReadBytes('\n')
-		if rerr != nil {
-			if errors.Is(rerr, io.EOF) {
-				// Trailing bytes without '\n' = an incomplete line still being
-				// written; stop before it and pick it up once it's complete.
-				break
-			}
-			return prev, rerr
-		}
+	rerr := EachLine(f, func(lineBytes []byte, n int64) bool {
 		var l transcriptLine
-		if jerr := json.Unmarshal(lineBytes, &l); jerr == nil {
+		if lineBytes != nil && json.Unmarshal(lineBytes, &l) == nil {
 			if foldLine(l, sess, day, counted) {
 				if k := l.dedupKey(); k != "" && !inOrder[k] {
 					inOrder[k] = true
@@ -148,14 +157,21 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 				}
 			}
 		}
-		// A complete line (even malformed JSON) is permanently consumed.
-		consumed += int64(len(lineBytes))
+		// A complete line (even malformed JSON, or skipped for exceeding
+		// MaxLineBytes) is permanently consumed.
+		consumed += n
+		return true
+	})
+	if rerr != nil {
+		return prev, rerr
 	}
 
-	// ponytail: bounded to the last recentWindow keys. Claude writes a response's
-	// duplicate lines adjacently, so only keys near the tail can straddle the
-	// next boundary; persisting every key ever seen would grow state.json without
-	// limit. Raise the window if transcripts ever interleave more widely.
+	// ponytail: bounded to the last recentWindow keys; persisting every key ever
+	// seen would grow state.json without limit. A response's duplicate lines are
+	// USUALLY near each other, but not always — a duplicate has been observed
+	// more than 128 keys after its first line. If a sync boundary falls between
+	// such a pair, the late duplicate finds no seeded key and is counted a
+	// second time. Raise the window if that ever shows up in totals.
 	if len(order) > recentWindow {
 		order = order[len(order)-recentWindow:]
 	}

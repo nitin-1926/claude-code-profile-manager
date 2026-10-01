@@ -66,12 +66,13 @@ func BuildCallout(l services.ProfileLimits, now time.Time) Callout {
 		return c
 	}
 	for _, w := range l.Windows {
+		used := usedNow(w, now)
 		c.Windows = append(c.Windows, CalloutWindow{
 			Label:    w.Label,
 			Reset:    FormatReset(w.ResetsAt, now),
-			Percent:  fmt.Sprintf("%d%% used", int(w.UsedPercentage+0.5)),
-			Fraction: FillFraction(w.UsedPercentage),
-			RGB:      NotchColor(int(100 - w.UsedPercentage)),
+			Percent:  fmt.Sprintf("%d%% used", int(used+0.5)),
+			Fraction: FillFraction(used),
+			RGB:      NotchColor(int(100 - used)),
 		})
 	}
 	return c

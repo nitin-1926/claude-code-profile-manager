@@ -129,6 +129,7 @@ static dispatch_block_t gCardWork = nil;
 
 static void ccpmNotchSetExpandedInternal(BOOL wanted);
 static void ccpmNotchSyncCard(void);
+static void ccpmNotchShowCard(NSInteger want, BOOL animated);
 
 NSColor *ccpmRailColor(unsigned int rgb, CGFloat alpha) {
   return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -332,7 +333,10 @@ void ccpmNotchUpdateInteractive(void) {
 }
 
 static NSInteger ccpmNotchSlotAt(NSPoint local) {
-  if (!gExpanded) {
+  // Only inside the open shape. The end rings' hit bands reach past its
+  // rounded ends, so a pointer resting there showed a card while the notch,
+  // finding the pointer outside every live rect, folded under it.
+  if (!gExpanded || !NSPointInRect(local, gExpandedRect)) {
     return -1;
   }
   for (NSInteger i = 0; i < (NSInteger)gCells.count; i++) {
@@ -358,7 +362,11 @@ static void ccpmCancel(dispatch_block_t __strong *slot) {
 // for the same position does nothing the first call did not — which is what
 // makes three overlapping event sources safe.
 static void ccpmNotchCursorMoved(void) {
-  if (CCPMNotchPanelRef() == nil) {
+  // Ordered out (switched off, or no profile shown): nothing to track. The
+  // poll and the global monitor would otherwise keep expanding the invisible
+  // panel and building cards off screen.
+  NSPanel *panel = CCPMNotchPanelRef();
+  if (panel == nil || !panel.isVisible) {
     return;
   }
   if (gVisibility == kVisHover) {
@@ -419,6 +427,22 @@ void ccpmNotchStopWatching(void) {
   gPollTimer = nil;
   ccpmCancel(&gFoldWork);
   ccpmCancel(&gCardWork);
+  // The panel is about to go. Drop every layer and state flag tied to it, so a
+  // later Start builds fresh ones on the new panel: EnsureLayers returns early
+  // while gBody is set, which left a restarted notch empty, its layers still
+  // attached to the dead panel.
+  [gBody removeFromSuperlayer];
+  [gContent removeFromSuperlayer];
+  [gCard removeFromSuperlayer];
+  gBody = nil;
+  gClip = nil;
+  gContent = nil;
+  gCard = nil;
+  gCardFor = -1;
+  gCellLayers = nil;
+  gLastFraction = nil;
+  gHovered = -1;
+  gExpanded = NO;
 }
 
 // ---- Layers
@@ -434,7 +458,9 @@ static CATextLayer *ccpmText(NSString *s, CGRect frame, CGFloat size, NSColor *c
   t.alignmentMode = align;
   t.truncationMode = kCATruncationEnd;
   t.frame = frame;
-  t.contentsScale = [NSScreen mainScreen].backingScaleFactor ?: 2.0;
+  // The panel's own display, not the key window's: on a mixed-DPI setup the
+  // two differ and text rendered at the wrong scale comes out blurry.
+  t.contentsScale = CCPMNotchPanelRef().backingScaleFactor ?: 2.0;
   return t;
 }
 
@@ -638,12 +664,6 @@ static void ccpmNotchSetExpandedInternal(BOOL wanted) {
                  dispatch_get_main_queue(), work);
 }
 
-void CCPMNotchSetExpanded(int expanded) {
-  ccpmRailOnMain(^{
-    ccpmNotchSetExpandedInternal(expanded ? YES : NO);
-  });
-}
-
 void CCPMNotchSetVisibility(int mode) {
   ccpmRailOnMain(^{
     gVisibility = mode;
@@ -821,6 +841,56 @@ static void ccpmNotchRemoveCard(BOOL animated) {
   [CATransaction commit];
 }
 
+// Draws the card for ring `want`, replacing whatever card is up. Animated when
+// the pointer moves onto a ring (glide from the previous card, or fade in);
+// not when a refresh rebuilds the card the pointer is already resting on.
+static void ccpmNotchShowCard(NSInteger want, BOOL animated) {
+  NSPanel *panel = CCPMNotchPanelRef();
+  ccpmCancel(&gCardWork);
+  NSInteger from = gCardFor;
+  gHovered = want;
+  NSDictionary *callout = nil;
+  if (gSlots != nil && want >= 0 && want < (NSInteger)gSlots.count &&
+      [gSlots[want] isKindOfClass:[NSDictionary class]]) {
+    callout = gSlots[want][@"callout"];
+  }
+  if (panel == nil || ![callout isKindOfClass:[NSDictionary class]]) {
+    // Nothing to show for this ring: take the previous ring's card down rather
+    // than leave it up while gHovered already points somewhere else.
+    ccpmNotchRemoveCard(NO);
+    ccpmNotchUpdateInteractive();
+    return;
+  }
+
+  CALayer *next = ccpmCardLayer(callout, want);
+  [panel.contentView.layer addSublayer:next];
+
+  if (animated && from >= 0 && gCard != nil && !ccpmReduceMotion()) {
+    // Moving between rings: the new card glides in from where the old one was,
+    // rather than one card vanishing and another appearing.
+    NSRect a = ccpmCellRect(from, @"body"), b = ccpmCellRect(want, @"body");
+    CGPoint pos = next.position;
+    CASpringAnimation *glide = ccpmSpring(@"position", kGlide);
+    glide.fromValue = [NSValue valueWithPoint:NSMakePoint(pos.x + NSMinX(a) - NSMinX(b),
+                                                          pos.y + NSMinY(a) - NSMinY(b))];
+    glide.toValue = [NSValue valueWithPoint:pos];
+    [next addAnimation:glide forKey:@"glide"];
+    [gCard removeFromSuperlayer];
+  } else {
+    ccpmNotchRemoveCard(NO);
+    if (animated && !ccpmReduceMotion()) {
+      CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
+      fade.fromValue = @0;
+      fade.toValue = @1;
+      fade.duration = kCrossfade;
+      [next addAnimation:fade forKey:@"fade"];
+    }
+  }
+  gCard = next;
+  gCardFor = want;
+  ccpmNotchUpdateInteractive();
+}
+
 // Shows, moves or removes the card for whatever the pointer is over.
 static void ccpmNotchSyncCard(void) {
   NSPanel *panel = CCPMNotchPanelRef();
@@ -837,12 +907,28 @@ static void ccpmNotchSyncCard(void) {
     want = gHovered;
   }
   if (want == gHovered) {
+    // Back on the ring (or card) a pending removal was scheduled for: keep it.
+    // Returning without cancelling let that removal fire under the pointer.
+    ccpmCancel(&gCardWork);
+    // Nothing hovered, yet a card is still drawn. The fold and Hidden paths
+    // reset gHovered before calling here, so comparing the pointer against
+    // gHovered alone saw "no change" and never took the card down: it stayed
+    // on screen with no way to dismiss it.
+    if (want < 0 && gCard != nil) {
+      ccpmNotchRemoveCard(YES);
+      ccpmNotchUpdateInteractive();
+    }
     return;
   }
 
   if (want < 0) {
-    // Deferred: the pointer is usually in transit to the card.
-    ccpmCancel(&gCardWork);
+    // Deferred: the pointer is usually in transit to the card. Once scheduled,
+    // further moves must not push it back, or a pointer that keeps moving
+    // (anywhere on screen, since the global monitor reports every move) holds
+    // the card up indefinitely in Always mode.
+    if (gCardWork != nil) {
+      return;
+    }
     NSInteger was = gHovered;
     dispatch_block_t work = dispatch_block_create(0, ^{
       gCardWork = nil;
@@ -859,44 +945,7 @@ static void ccpmNotchSyncCard(void) {
     return;
   }
 
-  ccpmCancel(&gCardWork);
-  NSInteger from = gCardFor;
-  gHovered = want;
-  if (gSlots == nil || want >= (NSInteger)gSlots.count) {
-    return;
-  }
-  NSDictionary *callout = gSlots[want][@"callout"];
-  if (![callout isKindOfClass:[NSDictionary class]]) {
-    return;
-  }
-
-  CALayer *next = ccpmCardLayer(callout, want);
-  [panel.contentView.layer addSublayer:next];
-
-  if (from >= 0 && gCard != nil && !ccpmReduceMotion()) {
-    // Moving between rings: the new card glides in from where the old one was,
-    // rather than one card vanishing and another appearing.
-    NSRect a = ccpmCellRect(from, @"body"), b = ccpmCellRect(want, @"body");
-    CGPoint pos = next.position;
-    CASpringAnimation *glide = ccpmSpring(@"position", kGlide);
-    glide.fromValue = [NSValue valueWithPoint:NSMakePoint(pos.x + NSMinX(a) - NSMinX(b),
-                                                          pos.y + NSMinY(a) - NSMinY(b))];
-    glide.toValue = [NSValue valueWithPoint:pos];
-    [next addAnimation:glide forKey:@"glide"];
-    [gCard removeFromSuperlayer];
-  } else {
-    ccpmNotchRemoveCard(NO);
-    if (!ccpmReduceMotion()) {
-      CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
-      fade.fromValue = @0;
-      fade.toValue = @1;
-      fade.duration = kCrossfade;
-      [next addAnimation:fade forKey:@"fade"];
-    }
-  }
-  gCard = next;
-  gCardFor = want;
-  ccpmNotchUpdateInteractive();
+  ccpmNotchShowCard(want, YES);
 }
 
 // ---- Entry points
@@ -957,8 +1006,13 @@ void CCPMNotchSetModel(const char *json) {
     gSlots = slots;
     gCells = [model[@"cells"] isKindOfClass:[NSArray class]] ? model[@"cells"] : @[];
 
-    // The stack was rebuilt underneath whatever was hovered.
+    // The stack is rebuilt underneath whatever is hovered. Remember the ring
+    // so its card comes back with the new numbers: this runs on every file
+    // change and once a minute, and dropping the card took it away from under
+    // a pointer resting on it (after which the notch folded).
+    NSInteger keep = gHovered;
     gHovered = -1;
+    ccpmCancel(&gCardWork);
     ccpmNotchRemoveCard(NO);
 
     for (CALayer *l in gCellLayers) {
@@ -976,6 +1030,9 @@ void CCPMNotchSetModel(const char *json) {
       [gCellLayers addObject:cell];
     }
     ccpmNotchApplyCells(NO);
+    if (gExpanded && keep >= 0 && keep < (NSInteger)n) {
+      ccpmNotchShowCard(keep, NO);
+    }
     ccpmNotchUpdateInteractive();
   });
 }

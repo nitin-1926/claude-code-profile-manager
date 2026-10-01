@@ -3,9 +3,7 @@
 package services
 
 import (
-	"context"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -38,25 +36,12 @@ type HealthService struct{}
 func NewHealth() *HealthService { return &HealthService{} }
 
 // Doctor runs `ccpm doctor` with color disabled and returns its plain output.
+// Bounded so a stalled doctor can't hang the Health tab forever. doctor exits
+// non-zero when it finds problems; that lands in Error, not as a tool failure.
 func (s *HealthService) Doctor() (HealthResult, error) {
-	bin := findCCPM()
-	if bin == "" {
-		return HealthResult{Available: false, Error: "ccpm CLI not found on PATH"}, nil
+	r, _ := execCCPM(30*time.Second, "doctor")
+	if r.CCPMPath == "" {
+		return HealthResult{Available: false, Error: r.Error}, nil
 	}
-	// Bound the call so a stalled `ccpm doctor` can't hang the Health tab forever.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "doctor")
-	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
-	out, err := cmd.CombinedOutput()
-	res := HealthResult{Available: true, CCPMPath: bin, Output: ansiRE.ReplaceAllString(string(out), "")}
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			res.Error = "ccpm doctor timed out after 30s"
-		} else {
-			// doctor exits non-zero when it finds problems; that's not a tool failure
-			res.Error = strings.TrimSpace(err.Error())
-		}
-	}
-	return res, nil
+	return HealthResult{Available: true, CCPMPath: r.CCPMPath, Output: r.Output, Error: r.Error}, nil
 }

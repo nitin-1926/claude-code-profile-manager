@@ -1,10 +1,8 @@
 package usage
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"sort"
 	"time"
@@ -42,11 +40,29 @@ type Block struct {
 	ProjectedCost    float64 `json:"projectedCost"`
 }
 
-// LoadBlocks reads a profile's transcripts, dedups usage entries, and groups
-// them into 5-hour blocks (newest last). The final block is marked active when
-// its window still contains now and had activity within the window.
+// blockLookback is how far back LoadBlocks reads. The active block starts less
+// than blockWindow before now, so two windows is enough to find it and the
+// block before it.
+//
+// ponytail: block boundaries chain — each starts at the first entry >=5h after
+// the previous block's start — so a window's true anchor can depend on activity
+// older than the lookback. The chain re-anchors at any idle gap of >=5h, which
+// almost every day has; only activity continuous for the whole lookback can
+// shift the active block's start by up to an hour from a full-history scan.
+// If that ever matters, derive blocks from a timestamped incremental store.
+const blockLookback = 2 * blockWindow
+
+// usageField prefilters lines before decoding. Only a line carrying a usage
+// object can count, and most of a live transcript's bytes are tool results
+// without one; decoding them just to discard them was most of the read time.
+var usageField = []byte(`"usage"`)
+
+// LoadBlocks reads the transcripts touched within blockLookback of now, dedups
+// their usage entries from that period, and groups them into 5-hour blocks
+// (newest last). The final block is marked active when its window still
+// contains now and had activity within the window.
 func LoadBlocks(profileDir string, now time.Time) ([]Block, error) {
-	entries, err := collectEntries(profileDir)
+	entries, err := collectEntries(profileDir, now.Add(-blockLookback))
 	if err != nil {
 		return nil, err
 	}
@@ -106,19 +122,6 @@ func groupBlocks(entries []entry, now time.Time) []Block {
 	return blocks
 }
 
-// ActiveBlock returns the active block from LoadBlocks, or nil if none is active.
-func ActiveBlock(profileDir string, now time.Time) (*Block, error) {
-	blocks, err := LoadBlocks(profileDir, now)
-	if err != nil {
-		return nil, err
-	}
-	if n := len(blocks); n > 0 && blocks[n-1].IsActive {
-		b := blocks[n-1]
-		return &b, nil
-	}
-	return nil, nil
-}
-
 type blockAccum struct {
 	start  time.Time
 	lastTS time.Time
@@ -152,45 +155,42 @@ func (a *blockAccum) finish() Block {
 	}
 }
 
-// collectEntries walks every transcript for a profile and returns the deduped
-// usage entries (largest-token snapshot wins per key), each with its own
-// timestamp. This is a full read (not incremental) — blocks are an on-demand
-// view, so freshness matters more than the incremental store's speed.
-func collectEntries(profileDir string) ([]entry, error) {
+// collectEntries returns the deduped usage entries (largest-token snapshot wins
+// per key) stamped at or after since, each with its own timestamp. Only
+// transcripts modified since then are read: Claude Code appends, so a file's
+// mtime bounds every timestamp in it. Those files are read in full, not
+// incrementally — blocks are an on-demand view, so freshness matters more than
+// the incremental store's speed.
+func collectEntries(profileDir string, since time.Time) ([]entry, error) {
 	counted := map[string]Tokens{}
 	byKey := map[string]*entry{}
 
-	err := WalkTranscripts(profileDir, "", func(abs, rel string) error {
+	err := WalkTranscripts(profileDir, func(abs, rel string) error {
+		if fi, serr := os.Stat(abs); serr != nil || fi.ModTime().Before(since) {
+			return nil
+		}
 		f, ferr := os.Open(abs)
 		if ferr != nil {
 			return nil // skip unreadable (e.g. mid-write)
 		}
 		defer f.Close()
-		reader := bufio.NewReaderSize(f, 1024*1024)
-		for {
-			lineBytes, rerr := reader.ReadBytes('\n')
-			if len(lineBytes) > 0 {
-				var l transcriptLine
-				if json.Unmarshal(lineBytes, &l) == nil {
-					if key := l.dedupKey(); key != "" {
-						tok := l.tokens()
-						if prev, ok := counted[key]; !ok || tok.Total() > prev.Total() {
-							counted[key] = tok
-							ts, perr := time.Parse(time.RFC3339, l.Timestamp)
-							if perr == nil {
-								byKey[key] = &entry{ts: ts, model: l.Message.Model, tokens: tok}
-							}
-						}
+		_ = EachLine(f, func(lineBytes []byte, _ int64) bool {
+			var l transcriptLine
+			if !bytes.Contains(lineBytes, usageField) || json.Unmarshal(lineBytes, &l) != nil {
+				return true
+			}
+			if key := l.dedupKey(); key != "" {
+				tok := l.tokens()
+				if prev, ok := counted[key]; !ok || tok.Total() > prev.Total() {
+					counted[key] = tok
+					ts, perr := time.Parse(time.RFC3339, l.Timestamp)
+					if perr == nil && !ts.Before(since) {
+						byKey[key] = &entry{ts: ts, model: l.Message.Model, tokens: tok}
 					}
 				}
 			}
-			if rerr != nil {
-				if errors.Is(rerr, io.EOF) {
-					break
-				}
-				return nil
-			}
-		}
+			return true
+		}) // a read error mid-file keeps what was read, as before
 		return nil
 	})
 	if err != nil {

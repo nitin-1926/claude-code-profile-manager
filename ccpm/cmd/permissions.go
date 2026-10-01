@@ -68,7 +68,7 @@ shape, only that the string is non-empty.`,
 			Short: short,
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return runPermsAdd(state, bucket, args[0])
+				return withConfigLock(func() error { return runPermsAdd(state, bucket, args[0]) })
 			},
 		}
 		c.Flags().StringVar(&state.profile, "profile", "", "target profile")
@@ -107,7 +107,7 @@ shape, only that the string is non-empty.`,
                        managed-settings key permissions.disableBypassPermissionsMode)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPermsMode(state, args)
+			return withConfigLock(func() error { return runPermsMode(state, args) })
 		},
 	}
 	modeCmd.Flags().StringVar(&state.profile, "profile", "", "target profile")
@@ -162,14 +162,19 @@ func runPermsAdd(state *permState, bucket permissionBucket, rule string) error {
 		doc["permissions"] = permsRoot
 	}
 
-	if err := settingsmerge.WriteJSON(path, doc); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	if !state.global {
+	if state.global {
+		if err := settingsmerge.WriteJSON(path, doc); err != nil {
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+	} else {
 		// Owned-keys tracking only applies to the ccpm profile fragment;
 		// the host ~/.claude/settings.json uses its own (native) semantics.
+		owned := make([]string, 0, len(buckets))
 		for _, b := range buckets {
-			_ = settingsmerge.MarkOwned(path, "permissions."+string(b))
+			owned = append(owned, "permissions."+string(b))
+		}
+		if err := saveFragment(path, doc, owned...); err != nil {
+			return err
 		}
 	}
 
@@ -202,11 +207,12 @@ func runPermsMode(state *permState, args []string) error {
 	root["defaultMode"] = mode
 	doc["permissions"] = root
 
-	if err := settingsmerge.WriteJSON(path, doc); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	if !state.global {
-		_ = settingsmerge.MarkOwned(path, "permissions.defaultMode")
+	if state.global {
+		if err := settingsmerge.WriteJSON(path, doc); err != nil {
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+	} else if err := saveFragment(path, doc, "permissions.defaultMode"); err != nil {
+		return err
 	}
 
 	color.New(color.FgGreen, color.Bold).Printf("✓ permissions.defaultMode = %q (%s)\n", mode, permsScopeDescription(state))

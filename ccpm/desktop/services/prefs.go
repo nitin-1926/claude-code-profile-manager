@@ -236,11 +236,6 @@ func (s *PrefsService) update(edit func(*DesktopPrefs)) (DesktopPrefs, error) {
 	return stored, nil
 }
 
-// Set replaces the preferences.
-func (s *PrefsService) Set(p DesktopPrefs) (DesktopPrefs, error) {
-	return s.update(func(cur *DesktopPrefs) { *cur = p })
-}
-
 // SetNotch stores only the notch's own settings from p, leaving the theme and
 // the per-profile choices as they are in the file. The notch settings section
 // sends its whole copy; merging here, under the lock, means a theme change

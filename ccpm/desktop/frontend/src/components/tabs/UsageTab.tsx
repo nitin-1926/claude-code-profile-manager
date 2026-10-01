@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import type { Block, Usage, UsageNamed } from '@/types'
 import { humanMinutes, humanTokens, money } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { SectionLabel } from '@/components/ui/SectionLabel'
 import { Flame, Timer } from 'lucide-react'
 
 const WINDOWS = [
@@ -26,7 +27,17 @@ export function UsageTab({ profile }: { profile: string }) {
       .get(profile, win)
       .then((u) => alive && setData(u))
       .catch((e) => alive && setError(String(e)))
-    // active 5-hour block (burn/projection) — independent of the window filter
+    return () => {
+      alive = false
+    }
+  }, [profile, win])
+
+  // Active 5-hour block (burn/projection). Independent of the window filter,
+  // so its own effect: it reads transcripts, and re-reading them on every
+  // window click was pure waste.
+  useEffect(() => {
+    let alive = true
+    setActive(null)
     api.usage
       .blocks(profile)
       .then((bs) => alive && setActive(bs.find((b) => b.isActive) ?? null))
@@ -34,7 +45,7 @@ export function UsageTab({ profile }: { profile: string }) {
     return () => {
       alive = false
     }
-  }, [profile, win])
+  }, [profile])
 
   return (
     <div className="px-6 py-5">
@@ -151,14 +162,6 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       <div className={cn('text-xl font-semibold tabular-nums', accent && 'text-primary')}>{value}</div>
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
     </div>
-  )
-}
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-      {children}
-    </h2>
   )
 }
 

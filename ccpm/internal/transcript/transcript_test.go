@@ -363,42 +363,6 @@ func TestClipRunes(t *testing.T) {
 	}
 }
 
-// --- FirstUserPrompt -------------------------------------------------------
-//
-// These cases are carried over from cmd/sessions_test.go, which owned this
-// decoder before it moved here.
-
-func TestFirstUserPrompt(t *testing.T) {
-	cases := []struct {
-		name  string
-		entry map[string]any
-		want  string
-	}{
-		{"v1 top-level content string",
-			map[string]any{"content": "  hello v1  "}, "hello v1"},
-		{"v2 message.content string",
-			map[string]any{"message": map[string]any{"role": "user", "content": "hello v2"}}, "hello v2"},
-		{"v2 message.content block array",
-			map[string]any{"message": map[string]any{"role": "user", "content": []any{
-				map[string]any{"type": "text", "text": "hello blocks"}}}}, "hello blocks"},
-		{"skips non-text leading block",
-			map[string]any{"message": map[string]any{"role": "user", "content": []any{
-				map[string]any{"type": "thinking", "thinking": "hmm"},
-				map[string]any{"type": "text", "text": "after thinking"}}}}, "after thinking"},
-		{"assistant role is rejected",
-			map[string]any{"message": map[string]any{"role": "assistant", "content": "not a prompt"}}, ""},
-		{"empty entry",
-			map[string]any{}, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := FirstUserPrompt(tc.entry); got != tc.want {
-				t.Errorf("FirstUserPrompt() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestIsTitleWorthy(t *testing.T) {
 	// Real first-user lines are frequently slash-command envelopes; using one
 	// as a title makes every other row read "/model".

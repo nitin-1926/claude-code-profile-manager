@@ -714,12 +714,54 @@ func TestPersistRateLimitsIgnoresUnknownProfile(t *testing.T) {
 		SevenDay *rateWindow `json:"seven_day"`
 	}{FiveHour: &rateWindow{UsedPercentage: 50}}
 
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Must not panic and must not write anywhere.
-	persistRateLimits(in, "does-not-exist", time.Now())
+	persistRateLimits(in, cfg, "does-not-exist", time.Now())
 
-	if dir := statusLineProfileDir("does-not-exist"); dir != "" {
+	if dir := statusLineProfileDir(cfg, "does-not-exist"); dir != "" {
 		t.Errorf("resolved a directory for an unregistered profile: %q", dir)
 	}
+}
+
+// The status line renders on every TUI repaint. Rewriting limits.json each
+// time — a fully-synced atomic write, ~7ms, that also wakes the desktop
+// watcher — bought nothing when only captured_at moved. An unchanged reading is
+// rewritten only once the cached one is a minute old, so "captured N ago" stays
+// honest; a changed reading is always written.
+func TestPersistRateLimitsSkipsAnUnchangedFreshReading(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	profileDir := filepath.Join(home, "profiles", "work")
+	writeTestConfig(t, home, "work", profileDir)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reading := func(pct float64) statusLineInput {
+		var in statusLineInput
+		in.RateLimits = &struct {
+			FiveHour *rateWindow `json:"five_hour"`
+			SevenDay *rateWindow `json:"seven_day"`
+		}{FiveHour: &rateWindow{UsedPercentage: pct, ResetsAt: 1_800_018_000}}
+		return in
+	}
+	t0 := time.Unix(1_800_000_000, 0)
+	check := func(step string, at time.Time, pct float64, wantCaptured time.Time) {
+		t.Helper()
+		persistRateLimits(reading(pct), cfg, "work", at)
+		if got := usage.LoadLimits(profileDir).CapturedAt; got != wantCaptured.Unix() {
+			t.Errorf("%s: captured_at = %d, want %d", step, got, wantCaptured.Unix())
+		}
+	}
+	check("first reading", t0, 50, t0)
+	check("same reading 10s later", t0.Add(10*time.Second), 50, t0)
+	check("changed reading", t0.Add(20*time.Second), 51, t0.Add(20*time.Second))
+	check("same reading a minute on", t0.Add(81*time.Second), 51, t0.Add(81*time.Second))
 }
 
 func writeTestConfig(t *testing.T, home, profile, dir string) {
