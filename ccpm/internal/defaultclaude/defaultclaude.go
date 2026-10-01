@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -399,7 +400,12 @@ func importDirDeduped(srcDir, dstProfileDir string, t Target, opts ImportOptions
 			}
 		}
 
-		if err := share.Link(storePath, linkPath); err != nil {
+		if err := share.Link(storePath, linkPath); errors.Is(err, share.ErrNotLink) {
+			// The profile already has its own real entry of this name; it
+			// may hold edits, so keep it (profile-local wins) and move on.
+			fmt.Fprintf(os.Stderr, "ccpm: kept existing %s (not a ccpm link); remove it and re-run to use the shared copy\n", linkPath)
+			continue
+		} else if err != nil {
 			return fmt.Errorf("linking %s: %w", linkPath, err)
 		}
 

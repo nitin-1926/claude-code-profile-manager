@@ -110,10 +110,16 @@ func WriteMacKeychainOAuth(profileDir string, raw string) error {
 	}
 	accounts := keychainAccounts()
 	primary := accounts[0]
+	// Stale other-account entries are pruned only after the primary write
+	// succeeds (e.g. Set fails with ErrSetDataTooBig past wincred's 2560-byte
+	// blob limit), so a failed write never deletes credentials (invariant 8).
+	if err := keyring.Set(service, primary, raw); err != nil {
+		return err
+	}
 	for _, account := range accounts[1:] {
 		_ = keyring.Delete(service, account)
 	}
-	return keyring.Set(service, primary, raw)
+	return nil
 }
 
 // DeleteMacKeychainOAuth removes every OAuth entry (all known account names)
