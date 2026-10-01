@@ -16,18 +16,32 @@ ccpm gives every profile its own config directory and sets `CLAUDE_CONFIG_DIR` t
 
 ## Install
 
+### CLI
+
 ```bash
 # npm
 npm i -g @ngcodes/ccpm
 
+# go
+go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
+
 # curl (macOS / Linux)
 curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh
 
-# go
-go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
+# source
+git clone https://github.com/nitin-1926/claude-code-profile-manager.git
+cd claude-code-profile-manager/ccpm
+go build -o ccpm .
+./ccpm --version
 ```
 
-**Prefer a GUI?** Install the native macOS **desktop app** with one line, `curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh`, or grab the Apple Silicon or Intel `.dmg` from the [desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true). See [Desktop app](#desktop-app-optional) below. (The desktop app still uses the `ccpm` CLI for write actions, so install one of the above too.)
+### Desktop (macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh
+```
+
+A native app over the same engine. The installer picks your chip, verifies the checksum and puts **CCPM** in Applications, and the app updates itself from then on. A downloadable `.dmg` is coming soon. The app uses the `ccpm` CLI for changes, so install the CLI too. More in [Desktop app](#desktop-app-optional).
 
 ## Quick start
 
@@ -67,7 +81,7 @@ To do it explicitly (or to pull in changes you made to `~/.claude` later), run `
 
 ## Changelog
 
-Release notes live on the docs site: **[ccpm.dev/changelog](https://ccpm.dev/changelog)**.
+Release notes live on the docs site: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nitingupta.xyz/changelog)**.
 
 ## Key features
 
@@ -114,27 +128,19 @@ Configure it in the **Usage notch** section of the **Settings** tab: a switch to
 
 > **Where the numbers come from.** Claude Code already sends your rate-limit windows to `ccpm statusline`, and ccpm caches them per profile. **No API call, no credentials read.** The trade-off is that a profile's reading only refreshes when you actually use Claude Code on it — so the callout always tells you how old the number is, and says so plainly once it goes stale. A profile you've never run shows an empty ring and "No reading yet" rather than a misleading 0%, and so does a profile with its own custom `statusLine`, because only ccpm's status line records the readings. Only subscription plans (Max/Pro) report limits at all; API-key profiles say so instead of pretending.
 
-### Download (macOS)
+### Install (macOS)
 
-The quickest install is one line in Terminal. It picks the build for your chip, verifies its checksum and puts **CCPM** in **Applications**, ready to open with no Gatekeeper prompt:
+One line in Terminal. It picks the build for your chip, verifies its checksum and puts **CCPM** in **Applications**, ready to open:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh
 ```
 
-Or grab the build for your Mac from the **[desktop releases →](https://github.com/nitin-1926/claude-code-profile-manager/releases?q=desktop-v&expanded=true)**: **Apple Silicon** (`CCPM-<version>-arm64.dmg`) or **Intel** (`CCPM-<version>-amd64.dmg`). Each is ~3–4 MB.
+A downloadable `.dmg` is coming soon.
 
-Open the `.dmg` and drag **CCPM** into **Applications**. The app is not notarized yet (that needs an Apple Developer account), and on **macOS 15 Sequoia and later** Gatekeeper no longer lets right-click → Open past that: it refuses to launch the app and may even call it **"damaged"**. It isn't — the download is checksummed and ad-hoc signed, macOS just can't vouch for who built it. (Other apps you download open after a confirmation because their developers pay Apple to notarize them; a browser download of an app that is not notarized gets no such dialog. The one-liner above avoids this because `curl` does not mark what it downloads.) Clear the download flag once and it opens normally:
+**Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place, with nothing to re-download. If it can't replace itself (its folder isn't writable by you, or macOS is running it from a temporary location because it was never moved to Applications), it tells you instead of quitting. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
 
-```sh
-xattr -dr com.apple.quarantine /Applications/CCPM.app
-```
-
-On macOS 14 and earlier, right-clicking the app and choosing **Open** works instead.
-
-**Updates are automatic.** When a new version ships, the app shows an in-app **Update now** prompt, downloads it, and swaps itself in place — no re-downloading, no re-dragging, and no repeat of the Gatekeeper step. If it can't replace itself (its folder isn't writable by you, or macOS is running it from a temporary location because it was never moved to Applications), it tells you instead of quitting. The desktop app versions independently of the CLI (released on `desktop-v*` tags).
-
-The app uses the `ccpm` CLI for write actions — install it first if you haven't (see [Install](#install) for the go / npm / curl options).
+The app uses the `ccpm` CLI for write actions — install it first if you haven't (see [Install](#install) for the npm / go / curl / source options).
 
 ### Build from source
 
@@ -577,15 +583,6 @@ ccpm uninstall
 
 # skip the confirmation
 ccpm uninstall --force
-```
-
-## Build from source
-
-```bash
-git clone https://github.com/nitin-1926/claude-code-profile-manager.git
-cd claude-code-profile-manager/ccpm
-go build -o ccpm .
-./ccpm --version
 ```
 
 ## Releasing

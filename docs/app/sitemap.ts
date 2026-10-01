@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const base = "https://ccpm.dev";
+  const base = "https://ccpm.nitingupta.xyz";
   const now = new Date();
   return [
     {

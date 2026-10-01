@@ -8,7 +8,7 @@ export default function robots(): MetadataRoute.Robots {
         allow: "/",
       },
     ],
-    sitemap: "https://ccpm.dev/sitemap.xml",
-    host: "https://ccpm.dev",
+    sitemap: "https://ccpm.nitingupta.xyz/sitemap.xml",
+    host: "https://ccpm.nitingupta.xyz",
   };
 }
