@@ -1,7 +1,9 @@
 import { MAX_QUESTION_CHARS } from "./config";
 
+// The fence tags buildUserMessage wraps context and question in, spacing
+// variants included, so a question cannot close its own fence.
 const INJECTION_MARKERS =
-  /<\|(?:system|user|assistant)\|>|<\/(?:system|user|assistant)>|<ccpm_docs_context>|<\/ccpm_docs_context>|<user_question>|<\/user_question>/i;
+  /<\|(?:system|user|assistant)\|>|<\/(?:system|user|assistant)>|<\s*\/?\s*(?:ccpm_docs_context|user_question)\s*>/i;
 
 const SCRIPT_MARKERS =
   /<\s*\/?\s*(?:script|iframe|object|embed|style|svg|math|link|meta)\b|javascript\s*:|data\s*:\s*text\/html|on(?:error|load|click|mouseover|focus)\s*=/i;

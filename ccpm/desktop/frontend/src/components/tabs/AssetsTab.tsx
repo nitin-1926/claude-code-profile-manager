@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
-import type { Cascade, CascadeAsset, CmdResult } from '@/types'
+import { useCommand } from '@/lib/useCommand'
+import type { Cascade, CascadeAsset } from '@/types'
 import { LayerBadge } from '@/components/LayerBadge'
 import { ConfirmModal } from '@/components/ui/Modal'
-import { useToast } from '@/components/ui/Toast'
 import { cn } from '@/lib/utils'
 import { Plus, Trash2 } from 'lucide-react'
 
@@ -19,35 +19,20 @@ const LABEL: Record<string, string> = {
 
 export function AssetsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
   const [data, reload, error] = useLive<Cascade>(() => api.cascade.get(profile), [profile])
-  const [busy, setBusy] = useState(false)
-  const [pendingRemove, setPendingRemove] = useState<{ kind: string; name: string } | null>(null)
-  const toast = useToast()
-
-  function report(action: string, r: CmdResult) {
-    if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-    else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
+  const { busy, run } = useCommand(() => {
     reload()
     onMutated()
-  }
+  })
+  const [pendingRemove, setPendingRemove] = useState<{ kind: string; name: string } | null>(null)
 
   async function add(kind: string) {
     const dir = await api.pickDirectory()
     if (!dir) return
-    setBusy(true)
-    try {
-      report(`Add ${kind}`, await api.mutate.addAsset(kind, dir, profile))
-    } finally {
-      setBusy(false)
-    }
+    await run(`Add ${kind}`, () => api.mutate.addAsset(kind, dir, profile))
   }
 
   async function remove(kind: string, name: string) {
-    setBusy(true)
-    try {
-      report(`Remove ${name}`, await api.mutate.removeAsset(kind, name, profile))
-    } finally {
-      setBusy(false)
-    }
+    await run(`Remove ${name}`, () => api.mutate.removeAsset(kind, name, profile))
   }
 
   // Surface the failure instead of an indefinite "Loading…" — useLive

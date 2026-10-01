@@ -15,33 +15,48 @@ export const useToast = () => useContext(ToastCtx)
 
 let counter = 0
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+// `dock` renders at the bottom of the same stack (the update prompt), so a
+// toast can never cover it: two independently fixed boxes in one corner did.
+export function ToastProvider({ children, dock }: { children: React.ReactNode; dock?: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const push = useCallback((t: Omit<Toast, 'id'>) => {
     const id = ++counter
     setToasts((s) => [...s, { ...t, id }])
-    setTimeout(() => setToasts((s) => s.filter((x) => x.id !== id)), 4500)
+    // Errors carry multi-line CLI output worth reading; give them longer.
+    setTimeout(() => setToasts((s) => s.filter((x) => x.id !== id)), t.kind === 'error' ? 10000 : 4500)
   }, [])
 
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2" aria-live="polite">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className="flex items-start gap-2.5 rounded-lg border border-border bg-popover p-3 shadow-lg"
-          >
-            <Icon kind={t.kind} />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">{t.title}</div>
-              {t.desc && (
-                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{t.desc}</div>
-              )}
+      <div className="fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2">
+        <div className="flex flex-col gap-2" aria-live="polite">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className="flex items-start gap-2.5 rounded-lg border border-border bg-popover p-3 shadow-lg"
+            >
+              <Icon kind={t.kind} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{t.title}</div>
+                {t.desc && (
+                  <div
+                    className={cn(
+                      'mt-0.5 font-mono text-[11px] text-muted-foreground',
+                      // Success stays one compact line; an error wraps (and
+                      // scrolls past a few lines) so the CLI's message is readable.
+                      t.kind === 'error' ? 'max-h-40 overflow-y-auto whitespace-pre-wrap break-words' : 'truncate',
+                    )}
+                  >
+                    {t.desc}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
+        {dock}
       </div>
     </ToastCtx.Provider>
   )

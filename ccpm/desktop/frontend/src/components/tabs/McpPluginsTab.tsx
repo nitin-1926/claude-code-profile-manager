@@ -1,35 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { useLive } from '@/lib/useLive'
-import type { CmdResult, Details } from '@/types'
-import { useToast } from '@/components/ui/Toast'
-import { Modal } from '@/components/ui/Modal'
+import { useCommand } from '@/lib/useCommand'
+import type { Details } from '@/types'
+import { ConfirmModal, Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/Switch'
 import { Plug, Plus, Puzzle, Trash2 } from 'lucide-react'
 
 export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
   const [data, reload, error] = useLive<Details>(() => api.details.get(profile), [profile])
-  const [busy, setBusy] = useState(false)
-  const [addingMcp, setAddingMcp] = useState(false)
-  const [addingPlugin, setAddingPlugin] = useState(false)
-  const toast = useToast()
-
-  function report(action: string, r: CmdResult) {
-    if (r.ok) toast({ kind: 'success', title: `${action} succeeded`, desc: r.output.split('\n')[0] })
-    else toast({ kind: 'error', title: `${action} failed`, desc: (r.error || r.output).split('\n')[0] })
+  const { busy, run } = useCommand(() => {
     reload()
     onMutated()
-  }
-
-  async function withBusy(fn: () => Promise<void>) {
-    setBusy(true)
-    try {
-      await fn()
-    } finally {
-      setBusy(false)
-    }
-  }
+  })
+  const [addingMcp, setAddingMcp] = useState(false)
+  const [addingPlugin, setAddingPlugin] = useState(false)
+  const [pending, setPending] = useState<{ kind: 'mcp' | 'plugin'; name: string } | null>(null)
 
   // Surface the failure instead of an indefinite "Loading…" — useLive
   // reports fetch errors and every consumer must render them.
@@ -69,7 +56,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
               <RemoveBtn
                 busy={busy}
                 title={`Remove ${m.name} from this profile`}
-                onClick={() => withBusy(async () => report(`Remove ${m.name}`, await api.mutate.removeMCP(m.name, profile)))}
+                onClick={() => setPending({ kind: 'mcp', name: m.name })}
               />
             </div>
           ))}
@@ -102,15 +89,13 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
                   on={p.enabled}
                   disabled={busy}
                   onClick={() =>
-                    withBusy(async () =>
-                      report(`${p.enabled ? 'Disable' : 'Enable'} ${p.name}`, await api.mutate.togglePlugin(p.name, !p.enabled, profile)),
-                    )
+                    run(`${p.enabled ? 'Disable' : 'Enable'} ${p.name}`, () => api.mutate.togglePlugin(p.name, !p.enabled, profile))
                   }
                 />
                 <RemoveBtn
                   busy={busy}
                   title={`Uninstall ${p.name}`}
-                  onClick={() => withBusy(async () => report(`Uninstall ${p.name}`, await api.mutate.removePlugin(p.name, profile)))}
+                  onClick={() => setPending({ kind: 'plugin', name: p.name })}
                 />
               </div>
             </div>
@@ -127,7 +112,7 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
         onCancel={() => setAddingMcp(false)}
         onConfirm={async (name, command) => {
           setAddingMcp(false)
-          await withBusy(async () => report(`Add MCP ${name}`, await api.mutate.addStdioMCP(name, command, profile)))
+          await run(`Add MCP ${name}`, () => api.mutate.addStdioMCP(name, command, profile))
         }}
       />
       <OneFieldModal
@@ -139,7 +124,24 @@ export function McpPluginsTab({ profile, onMutated }: { profile: string; onMutat
         onCancel={() => setAddingPlugin(false)}
         onConfirm={async (plugin) => {
           setAddingPlugin(false)
-          await withBusy(async () => report(`Install ${plugin}`, await api.mutate.installPlugin(plugin, profile)))
+          await run(`Install ${plugin}`, () => api.mutate.installPlugin(plugin, profile))
+        }}
+      />
+      <ConfirmModal
+        open={pending !== null}
+        title={pending ? (pending.kind === 'mcp' ? `Remove "${pending.name}"?` : `Uninstall "${pending.name}"?`) : ''}
+        message={
+          pending?.kind === 'plugin'
+            ? 'This uninstalls the plugin from this profile. You can install it again later.'
+            : 'This removes the MCP server from this profile. You can add it back later.'
+        }
+        confirmLabel={pending?.kind === 'plugin' ? 'Uninstall' : 'Remove'}
+        onCancel={() => setPending(null)}
+        onConfirm={async () => {
+          const p = pending
+          setPending(null)
+          if (p?.kind === 'mcp') await run(`Remove ${p.name}`, () => api.mutate.removeMCP(p.name, profile))
+          else if (p) await run(`Uninstall ${p.name}`, () => api.mutate.removePlugin(p.name, profile))
         }}
       />
     </div>
@@ -152,7 +154,7 @@ function RemoveBtn({ busy, title, onClick }: { busy: boolean; title: string; onC
       disabled={busy}
       title={title}
       onClick={onClick}
-      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:opacity-50"
     >
       <Trash2 className="size-3.5" />
     </button>
@@ -178,12 +180,16 @@ function OneFieldModal({
   onConfirm: (v: string) => void
 }) {
   const [v, setV] = useState('')
+  // Start empty on every open: the component stays mounted while closed, and
+  // the last value pre-filled would invite a duplicate add.
+  useEffect(() => {
+    if (open) setV('')
+  }, [open])
   const ok = v.trim().length > 0
   return (
     <Modal open={open} onClose={onCancel} title={title}>
       <label className="text-xs text-muted-foreground">{label}</label>
       <input
-        autoFocus
         value={v}
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && ok && onConfirm(v.trim())}
@@ -214,12 +220,17 @@ function TwoFieldModal({
 }) {
   const [a, setA] = useState('')
   const [b, setB] = useState('')
+  useEffect(() => {
+    if (open) {
+      setA('')
+      setB('')
+    }
+  }, [open])
   const ok = a.trim() && b.trim()
   return (
     <Modal open={open} onClose={onCancel} title={title}>
       <label className="text-xs text-muted-foreground">{f1.label}</label>
       <input
-        autoFocus
         value={a}
         onChange={(e) => setA(e.target.value)}
         placeholder={f1.placeholder}

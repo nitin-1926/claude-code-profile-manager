@@ -8,6 +8,7 @@ import '@fontsource/jetbrains-mono/500.css'
 import './globals.css'
 import App from './App'
 import { ToastProvider } from './components/ui/Toast'
+import { UpdateToast } from './components/UpdateToast'
 import { ThemeProvider } from './lib/theme'
 
 const container = document.getElementById('root')
@@ -16,7 +17,7 @@ const root = createRoot(container!)
 root.render(
   <React.StrictMode>
     <ThemeProvider>
-      <ToastProvider>
+      <ToastProvider dock={<UpdateToast />}>
         <App />
       </ToastProvider>
     </ThemeProvider>

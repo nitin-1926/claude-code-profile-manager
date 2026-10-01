@@ -563,5 +563,5 @@ function report(
   r: CmdResult,
 ) {
   if (r.ok) toast({ kind: 'success', title: success })
-  else toast({ kind: 'error', title: failure, desc: (r.error || r.output).split('\n')[0] })
+  else toast({ kind: 'error', title: failure, desc: r.error || r.output })
 }

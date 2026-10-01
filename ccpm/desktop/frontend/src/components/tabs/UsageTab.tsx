@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import type { Block, Usage, UsageNamed } from '@/types'
 import { humanMinutes, humanTokens, money } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { SectionLabel } from '@/components/ui/SectionLabel'
 import { Flame, Timer } from 'lucide-react'
 
 const WINDOWS = [
@@ -161,14 +162,6 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       <div className={cn('text-xl font-semibold tabular-nums', accent && 'text-primary')}>{value}</div>
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
     </div>
-  )
-}
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-      {children}
-    </h2>
   )
 }
 

@@ -14,6 +14,7 @@ import {
 import { useAiSearch } from "./ai-search-context";
 import { Markdown } from "./markdown";
 import { MAX_QUESTION_CHARS } from "@/lib/ai/config";
+import { lockBodyScroll } from "../scroll-lock";
 
 const EXAMPLES = [
   "Run two profiles at once",
@@ -77,8 +78,14 @@ export function AiSearchDialog() {
       reset();
       return;
     }
+    // Whatever had focus when the dialog opened (the trigger, or the page
+    // for Cmd+K) gets it back on close instead of focus falling to <body>.
+    const opener = document.activeElement as HTMLElement | null;
     const t = window.setTimeout(() => inputRef.current?.focus(), 50);
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(t);
+      opener?.focus?.();
+    };
   }, [open, reset]);
 
   useEffect(() => {
@@ -110,19 +117,18 @@ export function AiSearchDialog() {
           e.preventDefault();
           last.focus();
         }
-      } else if (active === last) {
+      } else if (active === last || !panel?.contains(active)) {
         e.preventDefault();
         first.focus();
       }
     }
 
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlockScroll = lockBodyScroll();
 
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlockScroll();
     };
   }, [open, closeDialog]);
 
@@ -278,9 +284,11 @@ export function AiSearchDialog() {
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="Ask about profiles, MCP, OAuth, settings…"
               aria-label="Your question"
-              disabled={loading}
+              // readOnly, not disabled: disabling the focused input drops
+              // focus to <body>, outside the dialog's focus trap.
+              readOnly={loading}
               style={{ outline: "none", outlineOffset: 0, borderRadius: 0 }}
-              className="min-w-0 flex-1 border-none bg-transparent py-1 text-[1rem] leading-6 text-fg placeholder:text-fg-subtle disabled:opacity-70"
+              className="min-w-0 flex-1 border-none bg-transparent py-1 text-[1rem] leading-6 text-fg placeholder:text-fg-subtle read-only:opacity-70"
             />
             <button
               type="submit"

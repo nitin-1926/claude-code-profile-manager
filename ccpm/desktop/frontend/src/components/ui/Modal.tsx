@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useGuarded } from '@/lib/useGuarded'
 
@@ -16,17 +16,30 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
 
+  // Callers pass inline arrows, and the watcher re-renders App on every
+  // limits.json write. Depending on onClose would tear the effect down on each
+  // render, refocusing the opener and then the first field mid-typing.
+  const onCloseRef = useRef(onClose)
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose
+  })
+
   useEffect(() => {
     if (!open) return
-    // Remember who opened us so focus can go back there on close, and move
-    // focus into the dialog so Tab doesn't start behind the scrim.
+    // Remember who opened us so focus can go back there on close. This runs
+    // before anything inside the dialog is focused, which is why the dialog
+    // (not an autoFocus prop on a child) owns initial focus: a child's
+    // autoFocus fires first, and the opener would be recorded as that child.
     const opener = document.activeElement as HTMLElement | null
-    // Don't steal focus from a child that autoFocused itself (PromptModal's input).
-    if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus()
+    const panel = panelRef.current
+    // Move focus into the dialog so Tab doesn't start behind the scrim.
+    const firstField = panel?.querySelector<HTMLElement>('input:not([disabled]), textarea:not([disabled]), select:not([disabled])')
+    if (firstField) firstField.focus()
+    else panel?.focus()
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose()
+        onCloseRef.current()
         return
       }
       // Focus trap: without it Tab walks straight out of the dialog into the
@@ -51,7 +64,7 @@ export function Modal({
       window.removeEventListener('keydown', onKey)
       opener?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
   return (
@@ -109,7 +122,6 @@ export function PromptModal({
     <Modal open={open} onClose={onCancel} title={title}>
       <label className="text-xs text-muted-foreground">{label}</label>
       <input
-        autoFocus
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && canSubmit && guard(() => onConfirm(value.trim()))()}
@@ -157,7 +169,6 @@ export function ConfirmModal({
       <p className="text-sm text-muted-foreground">{message}</p>
       {requireText && (
         <input
-          autoFocus
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           placeholder={`type "${requireText}" to confirm`}
