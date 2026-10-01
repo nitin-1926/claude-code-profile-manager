@@ -11,10 +11,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profilelife"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	profilesync "github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/sync"
 )
@@ -37,7 +36,7 @@ you intend to use long-term against the same account, prefer --no-auth and run
 such caveat.`,
 	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: completeProfileNames,
-	RunE:              runClone,
+	RunE:              lockedRunE(runClone),
 }
 
 func init() {
@@ -69,47 +68,48 @@ func runClone(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("creating clone directory: %w", err)
 	}
-
-	// Copy the source's own assets (settings/MCP/plugins + any real, profile-
-	// local files). skipEscaping=true means shared/host-cascaded symlinks (which
-	// point into ~/.ccpm/share or ~/.claude, outside the profile) are skipped
-	// rather than failing the copy — they get re-linked just below by
-	// ApplyGlobals + the host cascade, exactly as a fresh `ccpm add` would.
-	if err := importFromProfile(srcProfile.Dir, dstDir, defaultclaude.AllTargets(), false, true); err != nil {
+	// Undo every store the clone may have written, so a failed clone leaves
+	// nothing under dst's name for a later profile to inherit.
+	rollback := func() {
+		_ = profilelife.Remove(dst)
 		_ = profile.Remove(dst)
+	}
+
+	// Copy the source's directory, its shared/profile-scoped asset links, and
+	// its name-keyed stores (settings/MCP fragments, manifest entries).
+	if err := importFromProfile(src, srcProfile.Dir, dst, dstDir, defaultclaude.AllTargets(), false, true); err != nil {
+		rollback()
 		return fmt.Errorf("copying profile assets: %w", err)
 	}
 	if err := settingsmerge.MaterializeAll(dstDir, dst, ""); err != nil {
-		_ = profile.Remove(dst)
+		rollback()
 		return fmt.Errorf("materializing clone settings: %w", err)
 	}
-	// Re-link the shared (global) and host-cascaded assets that were skipped
-	// above, so the clone is immediately launch-ready (mirrors `ccpm add`).
+	// Re-link the global and host-cascaded assets, so the clone is
+	// immediately launch-ready (mirrors `ccpm add`).
 	if err := profilesync.ApplyGlobals(dstDir, dst); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not apply shared assets to clone: %v\n", err)
 	}
 
+	// --no-auth keeps the source's auth method but copies no secrets.
 	authMethod := srcProfile.AuthMethod
-	if cloneNoAuth {
-		// Clone is asset-only; mark it with the source's intended auth method
-		// but don't copy secrets. The user re-authenticates separately.
-		authMethod = srcProfile.AuthMethod
-	} else if err := copyProfileAuth(src, srcProfile.Dir, dst, dstDir, srcProfile.AuthMethod); err != nil {
-		// Auth copy is best-effort: the clone's assets are already in place, so
-		// don't tear it down — just warn and let the user authenticate it.
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not copy credentials (run `ccpm auth refresh %s`): %v\n", dst, err)
+	if !cloneNoAuth {
+		if err := copyProfileAuth(src, srcProfile.Dir, dst, dstDir, srcProfile.AuthMethod); err != nil {
+			// Auth copy is best-effort: the clone's assets are already in place,
+			// so don't tear it down — just warn and let the user authenticate it.
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not copy credentials (run `ccpm auth refresh %s`): %v\n", dst, err)
+		}
 	}
 
-	// Register the clone under the global lock (re-loading config inside the
-	// lock so a concurrent command can't clobber the addition).
-	if err := withConfigLock(func() error {
-		freshCfg, err := config.Load()
-		if err != nil {
-			return fmt.Errorf("reloading config: %w", err)
+	cfg.AddProfile(dst, dstDir, authMethod)
+	if err := config.Save(cfg); err != nil {
+		// The clone never registered: drop the credentials copied for it too,
+		// as `ccpm add` does, so nothing orphaned outlives the failed clone.
+		if !cloneNoAuth {
+			_ = newKeystore().DeleteAPIKey(dst)
+			_ = deleteOAuthKeychain(dstDir)
 		}
-		freshCfg.AddProfile(dst, dstDir, authMethod)
-		return config.Save(freshCfg)
-	}); err != nil {
+		rollback()
 		return fmt.Errorf("saving config: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func runClone(cmd *cobra.Command, args []string) error {
 func copyProfileAuth(srcName, srcDir, dstName, dstDir, authMethod string) error {
 	switch authMethod {
 	case "api_key":
-		store := keystore.New()
+		store := newKeystore()
 		key, err := store.GetAPIKey(srcName)
 		if err != nil {
 			return fmt.Errorf("reading source API key: %w", err)
@@ -150,8 +150,8 @@ func copyProfileAuth(srcName, srcDir, dstName, dstDir, authMethod string) error 
 		// macOS/Windows OS-keychain OAuth entry, replayed under the clone's
 		// path-derived namespace.
 		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-			if kc, err := credentials.ReadMacKeychainOAuth(srcDir); err == nil && kc != nil && kc.Raw != "" {
-				if err := credentials.WriteMacKeychainOAuth(dstDir, kc.Raw); err != nil {
+			if kc, err := readOAuthKeychain(srcDir); err == nil && kc != nil && kc.Raw != "" {
+				if err := writeOAuthKeychain(dstDir, kc.Raw); err != nil {
 					return fmt.Errorf("replaying OAuth keychain entry: %w", err)
 				}
 			}

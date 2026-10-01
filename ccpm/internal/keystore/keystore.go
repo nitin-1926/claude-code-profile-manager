@@ -25,6 +25,9 @@ type Store interface {
 	GetAPIKey(profile string) (string, error)
 	DeleteAPIKey(profile string) error
 	GetOrCreateVaultMasterKey() ([]byte, error)
+	// DeleteVaultMasterKey removes the vault master key. Only `ccpm uninstall`
+	// calls it, after every vault file it encrypts is gone. Absent is not an error.
+	DeleteVaultMasterKey() error
 	// GetVaultMasterKey never creates a key: reads (vault restore) must not
 	// mint a new one, or existing backups become undecryptable.
 	GetVaultMasterKey() ([]byte, error)
@@ -86,6 +89,14 @@ func (s *SystemStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 	}
 
 	return key, nil
+}
+
+func (s *SystemStore) DeleteVaultMasterKey() error {
+	err := keyring.Delete(serviceVault, vaultAccount)
+	if err == keyring.ErrNotFound {
+		return nil
+	}
+	return err
 }
 
 func (s *SystemStore) GetVaultMasterKey() ([]byte, error) {
@@ -169,6 +180,11 @@ func (m *MemoryStore) GetOrCreateVaultMasterKey() ([]byte, error) {
 	}
 	m.data[serviceVault+"/"+vaultAccount] = base64.StdEncoding.EncodeToString(key)
 	return key, nil
+}
+
+func (m *MemoryStore) DeleteVaultMasterKey() error {
+	delete(m.data, serviceVault+"/"+vaultAccount)
+	return nil
 }
 
 func (m *MemoryStore) GetVaultMasterKey() ([]byte, error) {
