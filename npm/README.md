@@ -14,18 +14,32 @@ Claude Code reads its config from a single directory (`~/.claude`), so without c
 
 ## Install
 
+### CLI
+
 ```bash
 # npm
 npm i -g @ngcodes/ccpm
 
+# go
+go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
+
 # curl (macOS / Linux)
 curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install.sh | sh
 
-# go
-go install github.com/nitin-1926/claude-code-profile-manager/ccpm@latest
+# source
+git clone https://github.com/nitin-1926/claude-code-profile-manager.git
+cd claude-code-profile-manager/ccpm
+go build -o ccpm .
+./ccpm --version
 ```
 
-**Prefer a GUI?** There is also a native macOS desktop app; see the [desktop app docs](https://ccpm.dev/docs#desktop). It uses this CLI for write actions, so keep it installed.
+### Desktop (macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitin-1926/claude-code-profile-manager/main/scripts/install-desktop.sh | sh
+```
+
+A native app over the same engine. The installer picks your chip, verifies the checksum and puts **CCPM** in Applications, and the app updates itself from then on. A downloadable `.dmg` is coming soon. The app uses the `ccpm` CLI for changes, so install the CLI too. More in the [desktop app docs](https://ccpm.nitingupta.xyz/docs#desktop).
 
 ## Quick start
 
@@ -52,7 +66,7 @@ work       api_key   ✓ sk-ant-...7f2k   ★
 
 ## Changelog
 
-Release highlights and fixes: **[ccpm.dev/changelog](https://ccpm.dev/changelog)**.
+Release highlights and fixes: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nitingupta.xyz/changelog)**.
 
 ## Key features
 
@@ -103,7 +117,7 @@ Release highlights and fixes: **[ccpm.dev/changelog](https://ccpm.dev/changelog)
 | `ccpm uninstall`                                          | Remove all profiles, keychain entries, vault, and `~/.ccpm/`         |
 | `ccpm version`                                            | Print the version; `--check-latest` checks GitHub for a newer CLI release (opt-in) |
 
-Full command reference and guides: **[ccpm.dev/docs](https://ccpm.dev/docs)**.
+Full command reference and guides: **[ccpm.nitingupta.xyz/docs](https://ccpm.nitingupta.xyz/docs)**.
 
 `ccpm run` intercepts five flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan), `--no-statusline` (skip injecting the default status line for this launch), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
 
@@ -150,15 +164,6 @@ ccpm is 100% local. It never collects data or phones home, and it makes no netwo
 - **Windows without Developer Mode**: ccpm falls back to copying shared assets instead of symlinking and writes a marker at `~/.ccpm/.windows-copy-fallback`.
 - **Globally-cached MCP servers** cannot be isolated per profile (see the MCP auth model).
 - **Headless Linux**: `go-keyring` requires D-Bus and a secret service. API-key profiles need one running.
-
-## Build from source
-
-```bash
-git clone https://github.com/nitin-1926/claude-code-profile-manager.git
-cd claude-code-profile-manager/ccpm
-go build -o ccpm .
-./ccpm --version
-```
 
 ## Contributing
 
