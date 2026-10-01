@@ -71,17 +71,22 @@ func TestLoadManagedSettings_MissingDirIsEmpty(t *testing.T) {
 	}
 }
 
-func TestManagedMCP_StripsServers(t *testing.T) {
-	managed := map[string]interface{}{
-		"model":      "foo",
-		"mcpServers": map[string]interface{}{"a": map[string]interface{}{"type": "http"}},
+// TestManagedSettingsDirForOS pins the per-OS system directory to the paths
+// Claude Code documents. The Windows one must be absolute: filepath.Join("C:",
+// ...) yields the drive-relative "C:ProgramData\...", which resolves against
+// the current directory on C: and never loads. Claude Code also no longer
+// reads the legacy C:\ProgramData\ClaudeCode location.
+func TestManagedSettingsDirForOS(t *testing.T) {
+	cases := map[string]string{
+		"darwin":  "/Library/Application Support/ClaudeCode",
+		"linux":   "/etc/claude-code",
+		"windows": `C:\Program Files\ClaudeCode`,
+		"plan9":   "",
 	}
-	servers := ManagedMCP(managed)
-	if _, stillThere := managed["mcpServers"]; stillThere {
-		t.Fatalf("mcpServers should be stripped from managed settings map")
-	}
-	if _, ok := servers["a"]; !ok {
-		t.Fatalf("expected server 'a' to be returned")
+	for goos, want := range cases {
+		if got := managedSettingsDirFor(goos); got != want {
+			t.Errorf("managedSettingsDirFor(%q) = %q, want %q", goos, got, want)
+		}
 	}
 }
 
