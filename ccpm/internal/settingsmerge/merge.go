@@ -451,3 +451,49 @@ func profileMCPServers(profileName string, existing, prev map[string]interface{}
 	}
 	return merged, written, nil
 }
+
+// EffectiveMCP returns the mcpServers map MaterializeAll would write for the
+// profile, without writing it, plus the layer each server comes from:
+// "profile" (the profile's ccpm fragment, or a server added in a session),
+// "global" (share/mcp/global.json) or "host" (~/.claude.json). The desktop
+// app's profile compare uses it so its values and provenance cannot drift
+// from the merge itself.
+//
+// The layer is the highest-precedence source that defines the name, in the
+// order profileMCPServers applies them. Like it, only global.json and
+// <profileName>.json are read under share/mcp (the isolation invariant).
+func EffectiveMCP(profileDir, profileName string) (servers map[string]interface{}, layers map[string]string, err error) {
+	existing, err := LoadJSON(filepath.Join(profileDir, ".claude.json"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading profile .claude.json: %w", err)
+	}
+	servers, _, err = profileMCPServers(profileName, existing, loadMaterialized(profileDir).MCPServers)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The same reads profileMCPServers just made successfully.
+	host, _ := loadHostClaudeJSONMCP()
+	var global, frag map[string]interface{}
+	if mcpDir, err := share.MCPDir(); err == nil {
+		global, _ = LoadJSON(filepath.Join(mcpDir, "global.json"))
+		frag, _ = LoadJSON(filepath.Join(mcpDir, profileName+".json"))
+	}
+	layers = make(map[string]string, len(servers))
+	for name := range servers {
+		_, inFrag := frag[name]
+		_, inGlobal := global[name]
+		_, inHost := host[name]
+		switch {
+		case inFrag:
+			layers[name] = "profile"
+		case inGlobal:
+			layers[name] = "global"
+		case inHost:
+			layers[name] = "host"
+		default: // added in a session, kept from the profile's .claude.json
+			layers[name] = "profile"
+		}
+	}
+	return servers, layers, nil
+}
