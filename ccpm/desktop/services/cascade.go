@@ -149,11 +149,46 @@ func shadows(kind, name string, winner Layer, hostRoot, globalRoot string) []Lay
 	return out
 }
 
+// settingLayers are the three v1 settings docs, lowest → highest precedence.
+type settingLayers struct{ profile, host, share map[string]interface{} }
+
+func loadSettingLayers(profileDir, profile, hostRoot, base string) settingLayers {
+	var l settingLayers
+	l.profile, _ = settingsmerge.LoadJSON(filepath.Join(profileDir, "settings.json"))
+	l.host, _ = settingsmerge.LoadJSON(filepath.Join(hostRoot, "settings.json"))
+	l.share, _ = settingsmerge.LoadJSON(filepath.Join(base, "share", "settings", profile+".json"))
+	return l
+}
+
+// winner is the highest-precedence layer that sets the (nested) key path:
+// global fragment > host > profile, and profile when none of them does.
+func (l settingLayers) winner(path ...string) Layer {
+	switch {
+	case hasPath(l.share, path):
+		return LayerGlobal
+	case hasPath(l.host, path):
+		return LayerHost
+	}
+	return LayerProfile
+}
+
+func hasPath(doc map[string]interface{}, path []string) bool {
+	var v interface{} = doc
+	for _, k := range path {
+		obj, ok := v.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		if v, ok = obj[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func collectSettings(profileDir, profile, hostRoot, base string) ([]CascadeSetting, error) {
-	// the three v1 layers, lowest → highest precedence
-	profileS, _ := settingsmerge.LoadJSON(filepath.Join(profileDir, "settings.json"))
-	hostS, _ := settingsmerge.LoadJSON(filepath.Join(hostRoot, "settings.json"))
-	shareS, _ := settingsmerge.LoadJSON(filepath.Join(base, "share", "settings", profile+".json"))
+	layers := loadSettingLayers(profileDir, profile, hostRoot, base)
+	profileS, hostS, shareS := layers.profile, layers.host, layers.share
 
 	// effective values straight from the engine (single source of truth). A
 	// merge error is returned, not shown as a profile with no settings.
@@ -179,20 +214,10 @@ func collectSettings(profileDir, profile, hostRoot, base string) ([]CascadeSetti
 		if _, ok := shareS[k]; ok {
 			contributors = append(contributors, LayerGlobal)
 		}
-		// winner = highest precedence present (global fragment > host > profile)
-		winner := LayerProfile
-		for _, l := range contributors {
-			if l == LayerHost && winner == LayerProfile {
-				winner = LayerHost
-			}
-			if l == LayerGlobal {
-				winner = LayerGlobal
-			}
-		}
 		_, isObj := effective[k].(map[string]interface{})
 		out = append(out, CascadeSetting{
 			Key:          k,
-			Layer:        winner,
+			Layer:        layers.winner(k),
 			Contributors: contributors,
 			Value:        compactJSON(effective[k]),
 			Merged:       isObj && len(contributors) > 1,
