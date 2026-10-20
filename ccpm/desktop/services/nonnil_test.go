@@ -132,6 +132,18 @@ func TestCascadeNoNullArrays(t *testing.T) {
 	assertNoNullArrays(t, c, "assets", "settings")
 }
 
+func TestCompareNoNullArrays(t *testing.T) {
+	name := syntheticProfile(t)
+	c, err := NewCompare().Compare(name, name)
+	if err != nil {
+		t.Fatalf("Compare: %v", err)
+	}
+	assertNoNullArrays(t, c, "categories", "rows")
+	if len(c.Categories) == 0 {
+		t.Error("Compare of a known profile returned no categories")
+	}
+}
+
 func TestSettingsReturnsSlice(t *testing.T) {
 	name := syntheticProfile(t)
 	s, err := NewSettings().Get(name)
@@ -162,6 +174,15 @@ func TestUnknownProfileSafe(t *testing.T) {
 		t.Fatalf("Cascade.Get(ghost): %v", err)
 	}
 	assertNoNullArrays(t, c, "assets", "settings")
+
+	cmp, err := NewCompare().Compare(ghost, ghost)
+	if err != nil {
+		t.Fatalf("Compare(ghost): %v", err)
+	}
+	assertNoNullArrays(t, cmp, "categories")
+	if cmp.Message == "" {
+		t.Error("Compare(ghost) must say why nothing was compared")
+	}
 
 	u, err := NewUsage().Get(ghost, "all")
 	if err != nil {
