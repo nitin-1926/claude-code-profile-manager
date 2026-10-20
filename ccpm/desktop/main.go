@@ -20,6 +20,7 @@ func main() {
 	app := NewApp(updater)
 	profiles := services.NewProfiles()
 	cascade := services.NewCascade()
+	compare := services.NewCompare()
 	usage := services.NewUsage()
 	health := services.NewHealth()
 	mutate := services.NewMutate()
@@ -70,6 +71,7 @@ func main() {
 			app,
 			profiles,
 			cascade,
+			compare,
 			usage,
 			health,
 			mutate,
