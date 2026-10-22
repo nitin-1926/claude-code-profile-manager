@@ -311,7 +311,8 @@ func exportSrcProfile(t *testing.T, home string, write func(rel, content string)
 // assets behind the profile's symlinks, its settings/MCP fragments) and
 // leave out session history, which can hold pasted secrets. By default every
 // settings env value and MCP env/header value becomes a placeholder with its
-// key kept; import restores everything else as it was.
+// key kept; import restores everything else as it was and names the
+// placeholders to fill in.
 func TestExportImportBundleRoundTrip(t *testing.T) {
 	home, write := bundleSandbox(t)
 	bundle, exportOutput := exportSrcProfile(t, home, write, false)
@@ -348,6 +349,9 @@ func TestExportImportBundleRoundTrip(t *testing.T) {
 
 	setFlag(t, importBundleCmd, "profile", "dst")
 	setFlag(t, importBundleCmd, "trust-bundle", "true") // bundle carries MCP servers
+	var importOutput bytes.Buffer
+	importBundleCmd.SetOut(&importOutput)
+	t.Cleanup(func() { importBundleCmd.SetOut(nil) })
 	if err := runImportBundle(importBundleCmd, []string{bundle}); err != nil {
 		t.Fatalf("import-bundle: %v", err)
 	}
@@ -369,6 +373,24 @@ func TestExportImportBundleRoundTrip(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".ccpm-bundle")); !os.IsNotExist(err) {
 		t.Errorf("fragment staging dir left in the restored profile (err=%v)", err)
+	}
+
+	out := importOutput.String()
+	mcpFrag := filepath.Join(home, ".ccpm", "share", "mcp", "dst.json")
+	for _, want := range []string{
+		"ccpm settings set env.API_TOKEN <value> --profile dst",
+		`MCP server "gh" in ` + mcpFrag + `: env.GITHUB_TOKEN`,
+		`MCP server "web" in ` + mcpFrag + `: headers.Authorization`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("import output missing %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "env.API_TOKEN"); n != 1 {
+		t.Errorf("env.API_TOKEN listed %d times, want once (it sits in settings.json and the fragment):\n%s", n, out)
+	}
+	if strings.Contains(out, "EMPTY") {
+		t.Errorf("an empty value hides nothing and must not be reported:\n%s", out)
 	}
 }
 

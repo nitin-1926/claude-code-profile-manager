@@ -161,6 +161,9 @@ in the bundle and asks for confirmation, because each runs or takes effect on
 every 'ccpm run' of the profile. Without a TTY the import refuses unless
 --trust-bundle is passed.
 
+After restoring, ccpm lists every value the exporter stripped (it holds the
+placeholder ` + secretPlaceholder + `) and how to fill each one in.
+
 If the bundle did not include credentials (the default), authenticate the
 restored profile afterwards with 'ccpm auth refresh <name>'.`,
 	Args: cobra.ExactArgs(1),
@@ -448,6 +451,72 @@ func visitSecrets(file string, doc map[string]interface{}, fn func(s secretValue
 	}
 }
 
+// bundlePlaceholders lists every value in an extracted bundle that still
+// holds secretPlaceholder, i.e. what the exporter stripped. Never nil.
+func bundlePlaceholders(profileDir string) ([]secretValue, error) {
+	out := []secretValue{}
+	for _, file := range secretFiles {
+		doc, err := settingsmerge.LoadJSON(filepath.Join(profileDir, filepath.FromSlash(file)))
+		if err != nil {
+			return nil, err
+		}
+		visitSecrets(file, doc, func(s secretValue, m map[string]interface{}, key string) {
+			if m[key] == secretPlaceholder {
+				out = append(out, s)
+			}
+		})
+	}
+	return out, nil
+}
+
+// printPlaceholderFixes tells whoever restored profileName which stripped
+// values to fill in and how. Settings env, wherever it sat, is fixed by
+// `ccpm settings set`: the fragment layer wins over the profile's own
+// settings.json. MCP env/headers have no set command, so name the file.
+func printPlaceholderFixes(w io.Writer, holes []secretValue, profileName, profileDir string) error {
+	if len(holes) == 0 {
+		return nil
+	}
+	restored, err := bundleFragments(profileName)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "Values stripped when this bundle was exported hold %s. Fill them in:\n", secretPlaceholder)
+	seenEnv := map[string]bool{}
+	type serverKey struct{ path, project, server string }
+	var order []serverKey
+	fields := map[serverKey][]string{}
+	for _, h := range holes {
+		if h.Server == "" {
+			if !seenEnv[h.Key] {
+				seenEnv[h.Key] = true
+				fmt.Fprintf(w, "  ccpm settings set env.%s <value> --profile %s\n", h.Key, profileName)
+			}
+			continue
+		}
+		path := filepath.Join(profileDir, filepath.FromSlash(h.File))
+		if frag, ok := strings.CutPrefix(h.File, bundleFragmentsDir+"/"); ok {
+			path = restored[frag]
+		}
+		k := serverKey{path, h.Project, h.Server}
+		if _, ok := fields[k]; !ok {
+			order = append(order, k)
+		}
+		fields[k] = append(fields[k], h.Field+"."+h.Key)
+	}
+	for _, k := range order {
+		where := k.path
+		if k.project != "" {
+			where += " (project " + k.project + ")"
+		}
+		fmt.Fprintf(w, "  MCP server %q in %s: %s\n", k.server, where, strings.Join(fields[k], ", "))
+	}
+	if len(order) > 0 {
+		fmt.Fprintf(w, "Edit MCP values in the file named (the next `ccpm run %s` applies them), or re-add the server with `ccpm mcp add <server> --scope profile --profile %s` and --env KEY=VALUE / --header KEY=VALUE.\n", profileName, profileName)
+	}
+	return nil
+}
+
 // addFragmentsToTar carries the profile's share-store settings/MCP fragments
 // under bundleFragmentsDir. Missing fragments are simply absent.
 func addFragmentsToTar(tw *tar.Writer, profileName string, redacted *int) error {
@@ -677,6 +746,12 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 		_ = profile.Remove(name)
 		return err
 	}
+	// Read before restoreBundleFragments drops the staged fragments.
+	holes, err := bundlePlaceholders(dstDir)
+	if err != nil {
+		_ = profile.Remove(name)
+		return fmt.Errorf("inspecting bundle: %w", err)
+	}
 
 	fragments, err := restoreBundleFragments(dstDir, name)
 	undo := func() {
@@ -709,9 +784,13 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	green := color.New(color.FgGreen, color.Bold)
-	green.Printf("✓ Restored profile %q from %s\n", name, bundlePath)
-	fmt.Printf("Authenticate it with:\n  ccpm auth refresh %s\n", name)
+	w := cmd.OutOrStdout()
+	color.New(color.FgGreen, color.Bold).Fprintf(w, "✓ Restored profile %q from %s\n", name, bundlePath)
+	fmt.Fprintf(w, "Authenticate it with:\n  ccpm auth refresh %s\n", name)
+	// The profile is restored either way: a failure here only loses the hint.
+	if err := printPlaceholderFixes(w, holes, name, dstDir); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list the values to fill in: %v\n", err)
+	}
 	return nil
 }
 
