@@ -164,6 +164,9 @@ every 'ccpm run' of the profile. Without a TTY the import refuses unless
 After restoring, ccpm lists every value the exporter stripped (it holds the
 placeholder ` + secretPlaceholder + `) and how to fill each one in.
 
+--dry-run shows what the bundle would run and which values need filling in,
+and restores nothing. Add --json for machine-readable output.
+
 If the bundle did not include credentials (the default), authenticate the
 restored profile afterwards with 'ccpm auth refresh <name>'.`,
 	Args: cobra.ExactArgs(1),
@@ -179,6 +182,8 @@ func init() {
 
 	importBundleCmd.Flags().String("profile", "", "name for the restored profile (default: the bundle's original name)")
 	importBundleCmd.Flags().Bool("trust-bundle", false, "restore hooks, MCP servers, statusLine and env from the bundle without prompting (required when not on a TTY)")
+	importBundleCmd.Flags().Bool("dry-run", false, "list what the bundle would run and which values need filling in; restore nothing")
+	importBundleCmd.Flags().Bool("json", false, "with --dry-run: machine-readable JSON output")
 	rootCmd.AddCommand(importBundleCmd)
 }
 
@@ -578,16 +583,33 @@ func restoreBundleFragments(profileDir, profileName string) ([]string, error) {
 // shell command.
 var commandSettings = []string{"statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper"}
 
+// bundleRunnable is one item in a bundle that runs a command or changes
+// where Claude Code connects. Kind is "hook", "command", "env" or "mcp";
+// Source is the bundle file it sits in.
+type bundleRunnable struct {
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+	Detail string `json:"detail"`
+}
+
+func (r bundleRunnable) String() string {
+	kind := r.Kind
+	if kind == "mcp" {
+		kind = "mcp server"
+	}
+	return fmt.Sprintf("%-12s%s %s", kind, r.Source, r.Detail)
+}
+
 // bundleRunnables lists every item in an extracted bundle that runs a
 // command or can redirect Claude Code's traffic on the next `ccpm run`:
 // hook commands, command-valued settings (statusLine, apiKeyHelper, ...),
 // settings env keys, and MCP servers. Malformed JSON is an error, so an
-// unparseable file can't hide what it holds.
-func bundleRunnables(profileDir string) ([]string, error) {
+// unparseable file can't hide what it holds. Never nil.
+func bundleRunnables(profileDir string) ([]bundleRunnable, error) {
 	load := func(rel string) (map[string]interface{}, error) {
 		return settingsmerge.LoadJSON(filepath.Join(profileDir, filepath.FromSlash(rel)))
 	}
-	var out []string
+	out := []bundleRunnable{}
 	for _, rel := range []string{"settings.json", bundleFragmentsDir + "/settings.json"} {
 		doc, err := load(rel)
 		if err != nil {
@@ -606,7 +628,7 @@ func bundleRunnables(profileDir string) ([]string, error) {
 					if body == "" {
 						body, _ = hm["prompt"].(string)
 					}
-					out = append(out, fmt.Sprintf("hook        %s %s[%s]: %s", rel, event, matcher, body))
+					out = append(out, bundleRunnable{"hook", rel, fmt.Sprintf("%s[%s]: %s", event, matcher, body)})
 				}
 			}
 		}
@@ -619,10 +641,10 @@ func bundleRunnables(profileDir string) ([]string, error) {
 			if obj, isObj := v.(map[string]interface{}); isObj {
 				body, _ = obj["command"].(string)
 			}
-			out = append(out, fmt.Sprintf("command     %s %s: %s", rel, key, body))
+			out = append(out, bundleRunnable{"command", rel, key + ": " + body})
 		}
 		if env, _ := doc["env"].(map[string]interface{}); len(env) > 0 {
-			out = append(out, fmt.Sprintf("env         %s: %s", rel, strings.Join(slices.Sorted(maps.Keys(env)), ", ")))
+			out = append(out, bundleRunnable{"env", rel, strings.Join(slices.Sorted(maps.Keys(env)), ", ")})
 		}
 		servers, _ := doc["mcpServers"].(map[string]interface{})
 		out = append(out, mcpRunnables(rel, servers)...)
@@ -649,8 +671,8 @@ func bundleRunnables(profileDir string) ([]string, error) {
 	return out, nil
 }
 
-func mcpRunnables(src string, servers map[string]interface{}) []string {
-	var out []string
+func mcpRunnables(src string, servers map[string]interface{}) []bundleRunnable {
+	var out []bundleRunnable
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		def, _ := servers[name].(map[string]interface{})
 		var parts []string
@@ -666,7 +688,7 @@ func mcpRunnables(src string, servers map[string]interface{}) []string {
 		if env, _ := def["env"].(map[string]interface{}); len(env) > 0 {
 			parts = append(parts, "env="+strings.Join(slices.Sorted(maps.Keys(env)), ","))
 		}
-		out = append(out, fmt.Sprintf("mcp server  %s %s: %s", src, name, strings.Join(parts, " ")))
+		out = append(out, bundleRunnable{"mcp", src, name + ": " + strings.Join(parts, " ")})
 	}
 	return out
 }
@@ -686,7 +708,7 @@ func confirmBundleRunnables(cmd *cobra.Command, profileDir string) error {
 	w := cmd.ErrOrStderr()
 	fmt.Fprintln(w, "This bundle contains items that run commands or change where Claude Code connects, every time the restored profile runs:")
 	for _, it := range items {
-		fmt.Fprintln(w, "  "+it)
+		fmt.Fprintln(w, "  "+it.String())
 	}
 	if trust, _ := cmd.Flags().GetBool("trust-bundle"); trust {
 		fmt.Fprintln(w, "--trust-bundle: restoring them without prompting.")
@@ -719,6 +741,14 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 		base = strings.TrimSuffix(base, ".tgz")
 		base = strings.TrimSuffix(base, ".ccpm")
 		name = base
+	}
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	asJSON, _ := cmd.Flags().GetBool("json")
+	if asJSON && !dryRun {
+		return errors.New("--json works only with --dry-run")
+	}
+	if dryRun {
+		return previewBundle(cmd, bundlePath, name, asJSON)
 	}
 	if err := profile.ValidateName(name); err != nil {
 		return fmt.Errorf("derived profile name %q is invalid; pass --profile: %w", name, err)
@@ -790,6 +820,65 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 	// The profile is restored either way: a failure here only loses the hint.
 	if err := printPlaceholderFixes(w, holes, name, dstDir); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list the values to fill in: %v\n", err)
+	}
+	return nil
+}
+
+// bundlePreview is `import-bundle --dry-run --json` output: the profile name
+// the import would create, what the bundle runs, and what it left blank.
+type bundlePreview struct {
+	Name         string           `json:"name"`
+	Runnables    []bundleRunnable `json:"runnables"`
+	Placeholders []secretValue    `json:"placeholders"`
+}
+
+// previewBundle extracts the bundle to a scratch dir and reports what
+// importing it would run and which values need filling in. It never creates
+// a profile, writes a fragment or touches config, so it needs no trust.
+func previewBundle(cmd *cobra.Command, bundlePath, name string, asJSON bool) error {
+	tmp, err := os.MkdirTemp("", "ccpm-bundle-preview-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	if err := extractBundle(bundlePath, tmp); err != nil {
+		return err
+	}
+	p := bundlePreview{Name: name}
+	if p.Runnables, err = bundleRunnables(tmp); err != nil {
+		return fmt.Errorf("inspecting bundle: %w", err)
+	}
+	if p.Placeholders, err = bundlePlaceholders(tmp); err != nil {
+		return fmt.Errorf("inspecting bundle: %w", err)
+	}
+
+	w := cmd.OutOrStdout()
+	if asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(p)
+	}
+	fmt.Fprintf(w, "Dry run: nothing was restored. Importing would create profile %q.\n", name)
+	if len(p.Runnables) == 0 {
+		fmt.Fprintln(w, "The bundle has no hooks, MCP servers, command settings or env.")
+	} else {
+		fmt.Fprintln(w, "It would run these, or let them change where Claude Code connects, on every launch:")
+		for _, r := range p.Runnables {
+			fmt.Fprintln(w, "  "+r.String())
+		}
+	}
+	if len(p.Placeholders) > 0 {
+		fmt.Fprintf(w, "Values stripped by the exporter (they hold %s until you fill them in):\n", secretPlaceholder)
+		for _, h := range p.Placeholders {
+			where := h.File
+			if h.Server != "" {
+				where += " server " + h.Server
+			}
+			if h.Project != "" {
+				where += " (project " + h.Project + ")"
+			}
+			fmt.Fprintf(w, "  %s: %s.%s\n", where, h.Field, h.Key)
+		}
 	}
 	return nil
 }

@@ -456,6 +456,80 @@ func TestExportRefusesUnparseableSecretFile(t *testing.T) {
 	}
 }
 
+// --dry-run --json is what the desktop app shows as its trust preview before
+// importing with --trust-bundle: it must list what the bundle runs and which
+// values are placeholders, and restore nothing.
+func TestImportBundleDryRunJSON(t *testing.T) {
+	home, _ := bundleSandbox(t)
+	bundle := filepath.Join(home, "shared.ccpm.tar.gz")
+	writeBundle(t, bundle, map[string]string{
+		"settings.json":              `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"echo hi"}]}]},"env":{"API_TOKEN":"__CCPM_REDACTED__"}}`,
+		".ccpm-bundle/settings.json": `{"statusLine":{"type":"command","command":"status.sh"}}`,
+		".ccpm-bundle/mcp.json":      redactedMCP,
+	})
+	setFlag(t, importBundleCmd, "dry-run", "true")
+	setFlag(t, importBundleCmd, "json", "true")
+	var out bytes.Buffer
+	importBundleCmd.SetOut(&out)
+	t.Cleanup(func() { importBundleCmd.SetOut(nil) })
+
+	// No --trust-bundle and no TTY: a preview needs neither.
+	if err := runImportBundle(importBundleCmd, []string{bundle}); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	var p bundlePreview
+	if err := json.Unmarshal(out.Bytes(), &p); err != nil {
+		t.Fatalf("dry-run output is not JSON (%v):\n%s", err, out.String())
+	}
+	if p.Name != "shared" {
+		t.Errorf("name = %q, want the bundle's derived name %q", p.Name, "shared")
+	}
+	wantRunnables := []bundleRunnable{
+		{"hook", "settings.json", "SessionStart[]: echo hi"},
+		{"env", "settings.json", "API_TOKEN"},
+		{"command", ".ccpm-bundle/settings.json", "statusLine: status.sh"},
+		{"mcp", ".ccpm-bundle/mcp.json", "gh: cmd=npx args=[-y @modelcontextprotocol/server-github] env=GITHUB_TOKEN"},
+		{"mcp", ".ccpm-bundle/mcp.json", "web: url=https://mcp.example.com/mcp"},
+	}
+	if !reflect.DeepEqual(p.Runnables, wantRunnables) {
+		t.Errorf("runnables =\n%+v\nwant\n%+v", p.Runnables, wantRunnables)
+	}
+	wantHoles := []secretValue{
+		{File: "settings.json", Field: "env", Key: "API_TOKEN"},
+		{File: ".ccpm-bundle/mcp.json", Server: "gh", Field: "env", Key: "GITHUB_TOKEN"},
+		{File: ".ccpm-bundle/mcp.json", Server: "web", Field: "headers", Key: "Authorization"},
+	}
+	if !reflect.DeepEqual(p.Placeholders, wantHoles) {
+		t.Errorf("placeholders =\n%+v\nwant\n%+v", p.Placeholders, wantHoles)
+	}
+
+	cfg, _ := config.Load()
+	if _, ok := cfg.Profiles["shared"]; ok {
+		t.Error("dry run registered a profile")
+	}
+	for _, rel := range []string{".ccpm/profiles/shared", ".ccpm/share/mcp/shared.json", ".ccpm/share/settings/shared.json"} {
+		if _, err := os.Stat(filepath.Join(home, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("dry run wrote %s (err=%v)", rel, err)
+		}
+	}
+
+	// An empty bundle still yields arrays, never null: the desktop maps them.
+	empty := filepath.Join(home, "empty.ccpm.tar.gz")
+	writeBundle(t, empty, map[string]string{"skills/": ""})
+	out.Reset()
+	if err := runImportBundle(importBundleCmd, []string{empty}); err != nil {
+		t.Fatalf("dry run of an empty bundle: %v", err)
+	}
+	if s := out.String(); !strings.Contains(s, `"runnables": []`) || !strings.Contains(s, `"placeholders": []`) {
+		t.Errorf("empty bundle preview has null arrays:\n%s", s)
+	}
+
+	setFlag(t, importBundleCmd, "dry-run", "false")
+	if err := runImportBundle(importBundleCmd, []string{bundle}); err == nil || !strings.Contains(err.Error(), "--dry-run") {
+		t.Errorf("--json without --dry-run: error = %v, want one naming --dry-run", err)
+	}
+}
+
 // A shared bundle is untrusted: anything in it that runs a command or
 // redirects Claude Code's traffic on the next `ccpm run` must be shown and
 // confirmed. Without a TTY the import refuses unless --trust-bundle.
