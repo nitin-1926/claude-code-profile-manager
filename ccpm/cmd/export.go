@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +38,23 @@ var (
 	exportOut                string
 	exportIncludeCredentials bool
 	exportIncludeHistory     bool
+	exportIncludeSecrets     bool
 )
+
+// secretPlaceholder stands in for every secret-bearing value a default export
+// strips (settings env values, MCP server env and header values). The key
+// stays, so import can name what to fill in. Plain ASCII: JSON encoders that
+// escape <, > and & would otherwise mangle it on the next rewrite.
+const secretPlaceholder = "__CCPM_REDACTED__"
+
+// secretFiles are the archive names whose JSON can carry secret values.
+// Matched exactly: a skill may ship its own settings.json.
+var secretFiles = []string{
+	"settings.json",
+	".claude.json",
+	bundleFragmentsDir + "/settings.json",
+	bundleFragmentsDir + "/mcp.json",
+}
 
 // sessionData are top-level profile entries Claude Code writes as you work:
 // transcripts, todos, shell snapshots, prompt history. They can hold pasted
@@ -115,10 +133,16 @@ Left out by default:
   - Credentials. OS-keychain tokens are machine-bound, and .credentials.json /
     .claude.json hold secrets. Use --include-credentials only for a trusted
     same-user move (e.g. Linux machine migration).
+  - Secret values. Every settings env value (in settings.json and the ccpm
+    settings fragment) and every MCP server env and header value is replaced
+    with the placeholder ` + secretPlaceholder + `. The keys stay, so
+    'ccpm import-bundle' tells whoever restores it what to fill in. Use
+    --include-secrets to keep the real values for a move between your own
+    machines.
 
-A bundle made with either flag is sensitive: keep it private. Even a default
-bundle carries your hooks, MCP server definitions and settings env values, so
-review it before sharing.`,
+A bundle made with any of these flags is sensitive: keep it private. Even a
+default bundle carries your hooks and your MCP servers' commands, args and
+URLs, so review it before sharing.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeProfileNames,
 	RunE:              runExport,
@@ -147,6 +171,7 @@ func init() {
 	exportCmd.Flags().StringVarP(&exportOut, "output", "o", "", "output path (default: <profile>.ccpm.tar.gz)")
 	exportCmd.Flags().BoolVar(&exportIncludeCredentials, "include-credentials", false, "include credential files (sensitive — trusted same-user moves only)")
 	exportCmd.Flags().BoolVar(&exportIncludeHistory, "include-history", false, "include session history: transcripts, todos, shell snapshots (may contain pasted secrets)")
+	exportCmd.Flags().BoolVar(&exportIncludeSecrets, "include-secrets", false, "keep settings env and MCP env/header values instead of placeholders (sensitive — your own machines only)")
 	rootCmd.AddCommand(exportCmd)
 
 	importBundleCmd.Flags().String("profile", "", "name for the restored profile (default: the bundle's original name)")
@@ -189,6 +214,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// redacted counts stripped secret values; nil keeps them (--include-secrets).
+	var redacted *int
+	if !exportIncludeSecrets {
+		redacted = new(int)
+	}
+
 	var skippedHistory, skippedLinks []string
 	walkErr := filepath.Walk(p.Dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -228,10 +259,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
-		return addToTar(tw, path, info, arcName)
+		return addToTar(tw, path, info, arcName, redacted)
 	})
 	if walkErr == nil {
-		walkErr = addFragmentsToTar(tw, name)
+		walkErr = addFragmentsToTar(tw, name, redacted)
 	}
 	if walkErr != nil {
 		_ = tw.Close()
@@ -246,18 +277,23 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("finalizing gzip: %w", err)
 	}
 
-	green := color.New(color.FgGreen, color.Bold)
-	green.Printf("✓ Exported %q to %s\n", name, outPath)
+	w := cmd.OutOrStdout()
+	color.New(color.FgGreen, color.Bold).Fprintf(w, "✓ Exported %q to %s\n", name, outPath)
 	if len(skippedHistory) > 0 {
-		fmt.Printf("Session history left out (%s); pass --include-history to bundle it.\n", strings.Join(skippedHistory, ", "))
+		fmt.Fprintf(w, "Session history left out (%s); pass --include-history to bundle it.\n", strings.Join(skippedHistory, ", "))
 	}
 	if len(skippedLinks) > 0 {
-		fmt.Printf("Links outside the ccpm share store left out (e.g. ~/.claude host assets): %s\n", strings.Join(skippedLinks, ", "))
+		fmt.Fprintf(w, "Links outside the ccpm share store left out (e.g. ~/.claude host assets): %s\n", strings.Join(skippedLinks, ", "))
 	}
 	if !exportIncludeCredentials {
-		fmt.Println("Credentials were excluded. Restore, then run `ccpm auth refresh <name>`.")
+		fmt.Fprintln(w, "Credentials were excluded. Restore, then run `ccpm auth refresh <name>`.")
 	} else {
-		color.New(color.FgYellow).Println("Bundle contains credentials — keep it private.")
+		color.New(color.FgYellow).Fprintln(w, "Bundle contains credentials — keep it private.")
+	}
+	if redacted == nil {
+		color.New(color.FgYellow).Fprintln(w, "Bundle contains secret values (settings env, MCP env and headers) — keep it private.")
+	} else if *redacted > 0 {
+		fmt.Fprintf(w, "Replaced %d secret value(s) (settings env, MCP env and headers) with %s; keys kept. Pass --include-secrets to keep them (your own machines only).\n", *redacted, secretPlaceholder)
 	}
 	return nil
 }
@@ -268,13 +304,31 @@ func isWithinDir(root, path string) bool {
 }
 
 // addToTar writes one regular file or directory header (plus content) under
-// the archive name.
-func addToTar(tw *tar.Writer, path string, info os.FileInfo, name string) error {
+// the archive name. With redacted non-nil, a secretFiles entry has its secret
+// values replaced by secretPlaceholder first, and redacted counts them.
+func addToTar(tw *tar.Writer, path string, info os.FileInfo, name string, redacted *int) error {
 	hdr, err := tar.FileInfoHeader(info, "")
 	if err != nil {
 		return err
 	}
 	hdr.Name = name
+	if redacted != nil && !info.IsDir() && slices.Contains(secretFiles, name) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		data, n, err := redactSecrets(name, data)
+		if err != nil {
+			return fmt.Errorf("stripping secrets from %s: %w (fix the file, or pass --include-secrets to bundle it as is)", name, err)
+		}
+		*redacted += n
+		hdr.Size = int64(len(data))
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		_, err = tw.Write(data)
+		return err
+	}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
@@ -309,13 +363,94 @@ func addTreeToTar(tw *tar.Writer, root, prefix string) error {
 		if rel != "." {
 			name += "/" + filepath.ToSlash(rel)
 		}
-		return addToTar(tw, path, info, name)
+		return addToTar(tw, path, info, name, nil)
 	})
+}
+
+// redactSecrets replaces every secret value in data, the bundle file at
+// archive path file, with secretPlaceholder. Empty values and existing
+// placeholders hide nothing and are left alone. A file with nothing to strip
+// comes back byte-for-byte unchanged.
+func redactSecrets(file string, data []byte) ([]byte, int, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber() // numbers keep their original literal
+	var doc map[string]interface{}
+	if err := dec.Decode(&doc); err != nil {
+		return nil, 0, err
+	}
+	n := 0
+	visitSecrets(file, doc, func(_ secretValue, m map[string]interface{}, key string) {
+		switch m[key] {
+		case nil, "", secretPlaceholder:
+			return
+		}
+		m[key] = secretPlaceholder
+		n++
+	})
+	if n == 0 {
+		return data, 0, nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return nil, 0, err
+	}
+	return buf.Bytes(), n, nil
+}
+
+// secretValue locates one secret-bearing value in a bundle: a settings env
+// value (Server empty) or an MCP server's env or header value.
+type secretValue struct {
+	File    string `json:"file"`              // archive path, e.g. ".ccpm-bundle/mcp.json"
+	Project string `json:"project,omitempty"` // .claude.json project the server belongs to
+	Server  string `json:"server,omitempty"`  // MCP server name
+	Field   string `json:"field"`             // "env" or "headers"
+	Key     string `json:"key"`
+}
+
+// visitSecrets calls fn for every secret-bearing value in doc, the parsed
+// bundle file at archive path file: settings env values, and the env and
+// headers values of MCP servers (the same servers bundleRunnables lists).
+// fn gets the map holding the value so it can rewrite it in place.
+func visitSecrets(file string, doc map[string]interface{}, fn func(s secretValue, m map[string]interface{}, key string)) {
+	visitServers := func(project string, servers map[string]interface{}) {
+		for _, name := range slices.Sorted(maps.Keys(servers)) {
+			def, _ := servers[name].(map[string]interface{})
+			for _, field := range []string{"env", "headers"} {
+				m, _ := def[field].(map[string]interface{})
+				for _, k := range slices.Sorted(maps.Keys(m)) {
+					fn(secretValue{File: file, Project: project, Server: name, Field: field, Key: k}, m, k)
+				}
+			}
+		}
+	}
+	switch file {
+	case bundleFragmentsDir + "/mcp.json":
+		visitServers("", doc)
+	case "settings.json", bundleFragmentsDir + "/settings.json":
+		env, _ := doc["env"].(map[string]interface{})
+		for _, k := range slices.Sorted(maps.Keys(env)) {
+			fn(secretValue{File: file, Field: "env", Key: k}, env, k)
+		}
+		servers, _ := doc["mcpServers"].(map[string]interface{})
+		visitServers("", servers)
+	case ".claude.json":
+		servers, _ := doc["mcpServers"].(map[string]interface{})
+		visitServers("", servers)
+		projects, _ := doc["projects"].(map[string]interface{})
+		for _, proj := range slices.Sorted(maps.Keys(projects)) {
+			pm, _ := projects[proj].(map[string]interface{})
+			servers, _ := pm["mcpServers"].(map[string]interface{})
+			visitServers(proj, servers)
+		}
+	}
 }
 
 // addFragmentsToTar carries the profile's share-store settings/MCP fragments
 // under bundleFragmentsDir. Missing fragments are simply absent.
-func addFragmentsToTar(tw *tar.Writer, profileName string) error {
+func addFragmentsToTar(tw *tar.Writer, profileName string, redacted *int) error {
 	frags, err := bundleFragments(profileName)
 	if err != nil {
 		return err
@@ -331,7 +466,7 @@ func addFragmentsToTar(tw *tar.Writer, profileName string) error {
 		if !info.Mode().IsRegular() {
 			continue
 		}
-		if err := addToTar(tw, path, info, bundleFragmentsDir+"/"+archive); err != nil {
+		if err := addToTar(tw, path, info, bundleFragmentsDir+"/"+archive, redacted); err != nil {
 			return err
 		}
 	}
