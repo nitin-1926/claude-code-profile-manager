@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Boxes, Download, Plus } from 'lucide-react'
+import { Boxes, Download, Import, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/Toast'
 import { PromptModal } from '@/components/ui/Modal'
 import { validateProfileName } from '@/lib/validate'
 
-export function EmptyState() {
+export function EmptyState({ onImportBundle }: { onImportBundle: () => void }) {
   const [creating, setCreating] = useState(false)
   const toast = useToast()
 
@@ -40,6 +40,13 @@ export function EmptyState() {
           >
             <Download className="size-4" />
             Import existing ~/.claude config
+          </button>
+          <button
+            onClick={onImportBundle}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Import className="size-4" />
+            Import a profile bundle
           </button>
           <span className="mt-1 text-[11px] text-muted-foreground">
             sign-in completes in a Terminal window

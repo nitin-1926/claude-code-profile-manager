@@ -6,6 +6,8 @@ import { ProfileView } from './components/ProfileView'
 import { EmptyState } from './components/EmptyState'
 import { TitleBar } from './components/TitleBar'
 import { CliBanner } from './components/CliBanner'
+import { ImportBundleModal } from './components/BundleDialogs'
+import { useGuarded } from './lib/useGuarded'
 import { RefreshCw } from 'lucide-react'
 import { cn } from './lib/utils'
 
@@ -22,6 +24,15 @@ export default function App() {
   // the "hit refresh" advice on the error card actually does something.
   const [refreshCount, setRefreshCount] = useState(0)
   const refreshSeq = useRef(0)
+  // The bundle being imported. The import modal lives here, not in the
+  // sidebar or empty state, because a successful import swaps the empty
+  // state for the profile view and would unmount the modal mid-flow.
+  const [bundlePath, setBundlePath] = useState<string | null>(null)
+  const guardPick = useGuarded('Import')
+  const pickBundle = guardPick(async () => {
+    const path = await api.pickBundle()
+    if (path) setBundlePath(path)
+  })
 
   // Only the latest refresh applies: the watcher and a mutation can overlap,
   // and an older list resolving last would drop a just-cloned profile and
@@ -69,6 +80,17 @@ export default function App() {
       <TitleBar right={state.status === 'ready' && state.profiles.length > 0 ? refreshButton : undefined} />
       <CliBanner />
       <div className="flex min-h-0 flex-1">{renderBody()}</div>
+      <ImportBundleModal
+        key={bundlePath ?? ''}
+        path={bundlePath}
+        names={state.status === 'ready' ? state.profiles.map((p) => p.name) : []}
+        onClose={() => setBundlePath(null)}
+        onImported={async (name) => {
+          // Select only once the refreshed list holds the new profile.
+          await refresh()
+          setSelected(name)
+        }}
+      />
     </div>
   )
 
@@ -85,7 +107,7 @@ export default function App() {
       )
     }
     if (state.profiles.length === 0) {
-      return <EmptyState />
+      return <EmptyState onImportBundle={pickBundle} />
     }
     const active = state.profiles.find((p) => p.name === selected) ?? state.profiles[0]
     const names = state.profiles.map((p) => p.name)
@@ -97,6 +119,7 @@ export default function App() {
           onSelect={setSelected}
           names={names}
           onMutated={() => void refresh()}
+          onImportBundle={pickBundle}
         />
         <main className="flex min-w-0 flex-1 flex-col bg-background">
           <ProfileView
