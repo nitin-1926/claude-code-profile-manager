@@ -29,6 +29,9 @@ import {
   SetPermissionMode as MSetMode,
   SetEnv as MSetEnv,
   UnsetEnv as MUnsetEnv,
+  ExportProfile as MExportProfile,
+  PreviewBundle as MPreviewBundle,
+  ImportBundle as MImportBundle,
 } from '../../wailsjs/go/services/MutateService'
 import {
   Sessions as HistorySessions,
@@ -47,10 +50,11 @@ import {
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
 import { Check as UpdaterCheck, Install as UpdaterInstall, Version as UpdaterVersion } from '../../wailsjs/go/services/Updater'
-import { PickDirectory } from '../../wailsjs/go/main/App'
+import { PickBundle, PickDirectory, PickExportPath } from '../../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 import type {
   Block,
+  BundlePreview,
   Cascade,
   CmdResult,
   DesktopPrefs,
@@ -126,6 +130,9 @@ export const api = {
     get: (name: string) => SettingsGet(name) as unknown as Promise<SettingKV[]>,
   },
   pickDirectory: () => PickDirectory() as unknown as Promise<string>,
+  // Native save / open dialogs; resolve to '' when cancelled.
+  pickExportPath: (profile: string) => PickExportPath(profile) as unknown as Promise<string>,
+  pickBundle: () => PickBundle() as unknown as Promise<string>,
   mutate: {
     clone: (src: string, dst: string) => MClone(src, dst) as unknown as Promise<CmdResult>,
     rename: (oldName: string, newName: string) => MRename(oldName, newName) as unknown as Promise<CmdResult>,
@@ -159,6 +166,12 @@ export const api = {
       MSetMode(mode, profile) as unknown as Promise<CmdResult>,
     setEnv: (kv: string, profile: string) => MSetEnv(kv, profile) as unknown as Promise<CmdResult>,
     unsetEnv: (key: string, profile: string) => MUnsetEnv(key, profile) as unknown as Promise<CmdResult>,
+    exportProfile: (name: string, path: string, includeSecrets: boolean) =>
+      MExportProfile(name, path, includeSecrets) as unknown as Promise<CmdResult>,
+    // Restores nothing: what the bundle runs and which values are placeholders.
+    previewBundle: (path: string) => MPreviewBundle(path) as unknown as Promise<BundlePreview>,
+    // Passes --trust-bundle: call only after the user confirmed previewBundle's list.
+    importBundle: (path: string, name: string) => MImportBundle(path, name) as unknown as Promise<CmdResult>,
   },
   updater: {
     check: () => UpdaterCheck() as unknown as Promise<UpdateInfo>,
