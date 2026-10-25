@@ -97,7 +97,7 @@ Release highlights and fixes: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nit
 | `ccpm diff <a> <b>`                                       | Compare two profiles (assets, settings keys, env names, MCP, plugins) |
 | `ccpm sync`                                               | Re-apply global installs into one or all profiles                    |
 | `ccpm doctor`                                             | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes symlinks) |
-| `ccpm export / import-bundle`                             | Export a profile to a portable `.tar.gz` and restore it elsewhere    |
+| `ccpm export / import-bundle`                             | Share a profile as a `.tar.gz` (secret values stripped) and restore it |
 | `ccpm consolidate`                                        | Audit (and optionally `--fix`) asset drift across scopes             |
 | `ccpm default fingerprint update / check`                 | Record or diff the `~/.claude` drift baseline                        |
 | `ccpm trust add / remove / list`                          | Grant/revoke trust for project `.claude/` hooks, permissions, MCP    |

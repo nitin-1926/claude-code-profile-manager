@@ -174,7 +174,7 @@ make desktop-dev   # hot-reload dev window
 | `ccpm sync`                   | Re-apply global installs into one or all profiles (`--dry-run` to preview)               |
 | `ccpm doctor`                 | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes dangling symlinks)     |
 | `ccpm consolidate`            | Audit (and optionally `--fix`) asset drift across host, share, and profile scopes        |
-| `ccpm export <name>`          | Export a profile to a portable `.tar.gz` (credentials excluded by default)               |
+| `ccpm export <name>`          | Export a profile to a shareable `.tar.gz` (credentials and secret values left out)       |
 | `ccpm import-bundle <file>`   | Restore a profile from an export bundle                                                  |
 | `ccpm shell-init`             | Print the shell hook (auto-detects zsh / bash / fish / powershell)                       |
 | `ccpm completion <shell>`     | Generate a shell completion script (bash / zsh / fish / powershell)                      |
@@ -318,21 +318,25 @@ Any of those flags prints a static report instead of the dashboard. Each run rea
 
 ### Backup & migrate profiles
 
-`ccpm export` bundles a profile (its skills, agents, commands, rules and hooks, its settings and MCP fragments, and plugin metadata) into a single `.tar.gz` you can copy to another machine and restore with `ccpm import-bundle`. Session history (transcripts, todos, shell snapshots) is left out unless you pass `--include-history`. `ccpm clone` duplicates a profile in place.
+`ccpm export` bundles a profile (its skills, agents, commands, rules and hooks, its settings and MCP fragments, and plugin metadata) into a single `.tar.gz` you can share with a team or copy to another machine, and restore with `ccpm import-bundle`. Secret values are stripped by default: every settings `env` value and every MCP server `env` and header value is replaced with the placeholder `__CCPM_REDACTED__`, and the key stays so the importer knows what to fill in. Session history (transcripts, todos, shell snapshots) is left out unless you pass `--include-history`. `ccpm clone` duplicates a profile in place.
 
 | Command                                            | Description                                                                              |
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `ccpm export <name> [-o file.tar.gz]`              | Export a profile to a portable bundle (credentials **excluded** by default)              |
 | `ccpm export <name> --include-history`             | Include session history (may contain secrets you pasted into a session)                  |
 | `ccpm export <name> --include-credentials`         | Include credential files (sensitive, trusted same-user moves only)                       |
+| `ccpm export <name> --include-secrets`             | Keep real env and MCP header values (sensitive, your own machines only)                  |
 | `ccpm import-bundle <file.tar.gz> [--profile <p>]` | Restore a profile from a bundle (path-traversal-safe; `--profile` overrides the name)    |
 | `ccpm import-bundle <file.tar.gz> --trust-bundle`  | Restore hooks, MCP servers, command settings and env without asking (needed without a terminal) |
+| `ccpm import-bundle <file.tar.gz> --dry-run [--json]` | Show what the bundle would run and which values need filling in; restores nothing        |
 | `ccpm clone <src> <new>`                           | Duplicate a profile, copying assets, settings, and credentials                           |
 | `ccpm clone <src> <new> --no-auth`                 | Clone assets/settings only; leave the new profile unauthenticated                        |
 
 Credentials are NOT included in an export by default: OS-keychain tokens are machine-bound, and `.credentials.json` / `.claude.json` hold secrets you usually don't want in a shareable file. Use `--include-credentials` only for a trusted same-user move (e.g. a Linux machine migration). When a restored or cloned profile has no credentials, authenticate it afterward with `ccpm auth refresh <name>`.
 
-Treat a bundle from someone else as untrusted code. Before restoring, `ccpm import-bundle` lists every hook, MCP server, command-running setting and env key in it and asks you to confirm.
+Treat a bundle from someone else as untrusted code. Before restoring, `ccpm import-bundle` lists every hook, MCP server, command-running setting and env key in it and asks you to confirm. After restoring, it lists each stripped value and how to fill it in: `ccpm settings set env.<KEY> <value> --profile <name>` for settings env, and the MCP fragment file to edit for MCP env and headers. A bundle still carries your MCP servers' commands, args and URLs, so review it before sharing.
+
+The desktop app does the same from the **Export** button on a profile and the **Import** button beside **+** in the sidebar, showing the bundle's runnable items and placeholders before it imports.
 
 > **OAuth clone caveat**: a cloned OAuth profile shares the source account's tokens, so when Claude rotates the refresh token in one, the other goes stale. For a clone you'll use long-term against the same account, prefer `--no-auth` and run `ccpm auth refresh <new>` to give it its own login. API-key clones have no such caveat.
 
