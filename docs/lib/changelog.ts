@@ -32,6 +32,24 @@ export type ChangelogSeries = {
 
 export const CHANGELOG: ChangelogSeries[] = [
   {
+    series: "0.9.x",
+    summary:
+      "Share a profile with your team without sharing your secrets, compare any two profiles side by side, and run Claude Code in a terminal inside the desktop app.",
+    releases: [
+      {
+        date: "2026-10-26",
+        title: "Share a profile with your team",
+        categories: ["Added", "Security"],
+        bullets: [
+          "`ccpm export` now makes a bundle you can hand to a teammate: every settings `env` value and every MCP server `env` and header value is replaced with the placeholder `__CCPM_REDACTED__`, with the key kept. The export tells you how many values it replaced. Pass `--include-secrets` to keep the real values when moving between your own machines.",
+          "After `ccpm import-bundle` restores a profile, it lists each placeholder and how to fill it in: `ccpm settings set env.<KEY> <value> --profile <name>` for settings env, and the MCP fragment file to edit for MCP env and headers.",
+          "`ccpm import-bundle --dry-run` shows what a bundle would run and which values need filling in, without restoring anything. Add `--json` for scripts.",
+          "The desktop app can export a profile (with an option to include secret values for your own machines) and import a bundle, showing its hooks, MCP servers, command settings and placeholder keys for you to review before it imports.",
+        ],
+      },
+    ],
+  },
+  {
     series: "0.7.x",
     summary:
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
