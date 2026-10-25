@@ -275,6 +275,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if walkErr != nil {
 		_ = tw.Close()
 		_ = gz.Close()
+		// Close before removing: Windows refuses to delete a file that is still
+		// open, which would leave a partial bundle behind.
+		_ = out.Close()
 		_ = os.Remove(outPath)
 		return fmt.Errorf("archiving profile: %w", walkErr)
 	}
