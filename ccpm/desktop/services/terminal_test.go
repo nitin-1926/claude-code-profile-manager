@@ -4,6 +4,7 @@ package services
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -16,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
 
 // These tests run /bin/sh, cat and sleep in the PTY. They never run ccpm or
@@ -346,5 +349,82 @@ func TestMergePath(t *testing.T) {
 	}
 	if got := mergePath("", "/a"); got != "/a" {
 		t.Errorf("mergePath from an empty PATH = %q", got)
+	}
+}
+
+// resumeFixture registers a synthetic profile holding one indexed session,
+// "sess1", whose transcript records cwd.
+func resumeFixture(t *testing.T, cwd string) string {
+	t.Helper()
+	name := syntheticProfile(t)
+	proj := filepath.Join(profileDir(name), "projects", usage.EncodeCwd(cwd))
+	if err := os.MkdirAll(proj, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := json.Marshal(cwd)
+	withCwd := func(line string) string { return strings.Replace(line, `"cwd":"/repo"`, `"cwd":`+string(q), 1) }
+	body := withCwd(userLine(t, "u1", "sess1", "hello", "2026-01-02T00:00:00Z")) +
+		withCwd(asstLine(t, "a1", "u1", "sess1", "msg_1", "hi", "2026-01-02T00:00:01Z", false))
+	if err := os.WriteFile(filepath.Join(proj, "sess1.jsonl"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHistory().Sessions(name); err != nil {
+		t.Fatalf("indexing: %v", err)
+	}
+	return name
+}
+
+func TestResumeOpensAnEmbeddedTerminalInTheSessionsCwd(t *testing.T) {
+	cwd := t.TempDir()
+	name := resumeFixture(t, cwd)
+	ts, _ := testTerminal(t, "/bin/sh", "-c", `printf 'pwd=%s\n' "$PWD"`)
+	var gotProfile string
+	var gotArgs []string
+	real := ts.command
+	ts.command = func(p string, a []string) (*exec.Cmd, error) {
+		gotProfile, gotArgs = p, a
+		return real(p, a)
+	}
+	h := NewHistory()
+	h.Terminal = ts
+
+	s, err := h.Resume(name, "sess1")
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if gotProfile != name || !slices.Equal(gotArgs, []string{"--", "--resume", "sess1"}) {
+		t.Errorf("ran ccpm run %s %q, want run %s -- --resume sess1", gotProfile, gotArgs, name)
+	}
+	if s.Cwd != cwd || s.Profile != name || s.Title != "resume sess1" {
+		t.Errorf("Resume returned %+v", s)
+	}
+	exited(t, ts, s.ID)
+	if out, _ := scrollback(t, ts, s.ID); !strings.Contains(out, "pwd="+cwd) {
+		t.Errorf("the session did not run in its cwd: %q", out)
+	}
+}
+
+func TestResumeRefusesAMissingOrHostileCwd(t *testing.T) {
+	nl := filepath.Join(t.TempDir(), "a\nb")
+	if err := os.MkdirAll(nl, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for cwd, want := range map[string]string{
+		filepath.Join(t.TempDir(), "gone"): "that session's directory no longer exists",
+		// Exists, so the stat passes: the refusal has to come from the
+		// control-character funnel in Start.
+		nl: errControlChar,
+	} {
+		name := resumeFixture(t, cwd)
+		ts := NewTerminal()
+		ts.command = func(string, []string) (*exec.Cmd, error) {
+			t.Fatalf("Resume spawned a process for cwd %q", cwd)
+			return nil, nil
+		}
+		h := NewHistory()
+		h.Terminal = ts
+		if _, err := h.Resume(name, "sess1"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Resume with cwd %q: err = %v, want %q", cwd, err, want)
+		}
 	}
 }

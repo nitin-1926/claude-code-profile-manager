@@ -88,6 +88,10 @@ type HistoryService struct {
 	// race the map exists to close — and the bound is reached during ordinary
 	// typing, because every debounced-away search leaves one behind.
 	tombstoneOrder []string
+
+	// Terminal runs Resume. Set once in main; nil in tests that only exercise
+	// Resume's validation, which all happens before it is needed.
+	Terminal *TerminalService
 }
 
 // searchRun is one in-flight scan. Compared by pointer identity, which is why
@@ -349,22 +353,19 @@ func (s *HistoryService) ToolBody(profile, sessionID, relPath, turnUUID string, 
 // defence-in-depth on top of shellQuote, not a replacement for it.
 var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
-// Resume relaunches a past session in Terminal, in the directory it was
-// started from.
-//
-// This lives on HistoryService rather than MutateService so that issue #8
-// (embedded terminal) re-points one method body and the frontend never changes.
-func (s *HistoryService) Resume(profile, sessionID string) CmdResult {
+// Resume reopens a past session in an embedded terminal, in the directory it
+// was started from, and returns that terminal so the UI can switch to it.
+func (s *HistoryService) Resume(profile, sessionID string) (TerminalSession, error) {
 	if !safeSessionID.MatchString(sessionID) {
-		return CmdResult{Error: "refusing to resume an implausible session id"}
+		return TerminalSession{}, errors.New("refusing to resume an implausible session id")
 	}
 	dir := profileDir(profile)
 	if dir == "" {
-		return CmdResult{Error: "unknown profile: " + profile}
+		return TerminalSession{}, errors.New("unknown profile: " + profile)
 	}
 	e := transcript.LoadIndex(dir).Entries[sessionID]
 	if e == nil {
-		return CmdResult{Error: "no transcript on disk for this session"}
+		return TerminalSession{}, errors.New("no transcript on disk for this session")
 	}
 
 	// The session's FIRST cwd, which is what the sidecar records and what the
@@ -375,14 +376,17 @@ func (s *HistoryService) Resume(profile, sessionID string) CmdResult {
 	workdir := e.Cwd
 	if workdir != "" {
 		if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
-			// Short-circuiting the && would otherwise leave the user staring at
-			// a lone `cd: no such file` in a fresh Terminal window.
-			return CmdResult{Error: "that session's directory no longer exists: " + workdir}
+			// Checked here, not left to Start, so the message names the
+			// session's directory rather than a generic missing path.
+			return TerminalSession{}, errors.New("that session's directory no longer exists: " + workdir)
 		}
 	}
 
+	if s.Terminal == nil {
+		return TerminalSession{}, errors.New("the embedded terminal is not available")
+	}
 	// `--` so a future ccpm flag can never collide with a claude one.
-	return NewMutate().terminal(workdir, "run", profile, "--", "--resume", sessionID)
+	return s.Terminal.Start(profile, workdir, []string{"--", "--resume", sessionID})
 }
 
 // forgetTombstoneLocked removes a consumed tombstone. Caller holds s.mu.
