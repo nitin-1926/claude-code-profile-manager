@@ -543,6 +543,63 @@ export namespace services {
 		}
 	}
 	
+	export class TerminalSession {
+	    id: string;
+	    profile: string;
+	    cwd: string;
+	    title: string;
+	    running: boolean;
+	    exitCode: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TerminalSession(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.profile = source["profile"];
+	        this.cwd = source["cwd"];
+	        this.title = source["title"];
+	        this.running = source["running"];
+	        this.exitCode = source["exitCode"];
+	    }
+	}
+	export class TerminalAttach {
+	    session: TerminalSession;
+	    data: string;
+	    seq: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TerminalAttach(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session = this.convertValues(source["session"], TerminalSession);
+	        this.data = source["data"];
+	        this.seq = source["seq"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class UpdateInfo {
 	    available: boolean;
 	    current: string;

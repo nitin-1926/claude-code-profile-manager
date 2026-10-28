@@ -5,7 +5,7 @@ import {transcript} from '../models';
 
 export function CancelSearch(arg1:string):Promise<void>;
 
-export function Resume(arg1:string,arg2:string):Promise<services.CmdResult>;
+export function Resume(arg1:string,arg2:string):Promise<services.TerminalSession>;
 
 export function Search(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<transcript.SearchResult>;
 

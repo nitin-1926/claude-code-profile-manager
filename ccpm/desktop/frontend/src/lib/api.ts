@@ -44,6 +44,14 @@ import {
   Set as StatusLineSet,
   Reset as StatusLineReset,
 } from '../../wailsjs/go/services/StatusLineService'
+import {
+  Start as TerminalStart,
+  List as TerminalList,
+  Attach as TerminalAttachFn,
+  Write as TerminalWrite,
+  Resize as TerminalResize,
+  Close as TerminalClose,
+} from '../../wailsjs/go/services/TerminalService'
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
 import { Check as UpdaterCheck, Install as UpdaterInstall, Version as UpdaterVersion } from '../../wailsjs/go/services/Updater'
@@ -64,6 +72,9 @@ import type {
   SearchResult,
   SettingKV,
   StatusLineConfig,
+  TerminalAttach,
+  TerminalChunk,
+  TerminalSession,
   UpdateInfo,
   UpdateProgress,
   Usage,
@@ -109,6 +120,25 @@ export const api = {
       HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
     cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
     resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<CmdResult>,
+  },
+  // Embedded terminals. Sessions live in Go and outlive any view: a view
+  // attaches (scrollback + seq), then follows onData, dropping chunks whose
+  // seq <= the attach seq.
+  terminal: {
+    start: (profile: string, cwd: string, args: string[]) =>
+      TerminalStart(profile, cwd, args) as unknown as Promise<TerminalSession>,
+    list: () => TerminalList() as unknown as Promise<TerminalSession[]>,
+    attach: (id: string) => TerminalAttachFn(id) as unknown as Promise<TerminalAttach>,
+    write: (id: string, data: string) => TerminalWrite(id, data) as unknown as Promise<void>,
+    resize: (id: string, cols: number, rows: number) =>
+      TerminalResize(id, cols, rows) as unknown as Promise<void>,
+    close: (id: string) => TerminalClose(id) as unknown as Promise<void>,
+    onData: (id: string, cb: (c: TerminalChunk) => void): (() => void) =>
+      EventsOn(`terminal:data:${id}`, cb as (...args: unknown[]) => void),
+    onExit: (id: string, cb: (code: number) => void): (() => void) =>
+      EventsOn(`terminal:exit:${id}`, cb as (...args: unknown[]) => void),
+    // Fires when any session starts, exits, or closes.
+    onChanged: (cb: () => void): (() => void) => EventsOn('terminal:changed', cb),
   },
   statusline: {
     get: (profile: string) => StatusLineGet(profile) as unknown as Promise<StatusLineConfig>,
