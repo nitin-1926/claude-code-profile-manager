@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
-import type { HistorySession, SearchHit } from '@/types'
+import type { HistorySession, SearchHit, TerminalSession } from '@/types'
 import { humanTokens, money, tildePath, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { GitBranch, Play, Search } from 'lucide-react'
-import { useToast } from '@/components/ui/Toast'
 import { useGuarded } from '@/lib/useGuarded'
 import { TranscriptReader } from '@/components/history/TranscriptReader'
 import { SearchResults } from '@/components/history/SearchResults'
@@ -28,7 +27,14 @@ type Reading = {
   relPath: string
 }
 
-export function HistoryTab({ profile }: { profile: string }) {
+export function HistoryTab({
+  profile,
+  onResume,
+}: {
+  profile: string
+  /** Called with the embedded terminal a Resume started, to switch to it. */
+  onResume: (t: TerminalSession) => void
+}) {
   const [sessions, setSessions] = useState<HistorySession[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -181,6 +187,7 @@ export function HistoryTab({ profile }: { profile: string }) {
           total={sessions.length}
           filtering={query.trim().length > 0}
           profile={profile}
+          onResume={onResume}
           onOpen={(s) => openReader({ session: s, origin: { kind: 'list' }, relPath: '' })}
         />
       )}
@@ -223,12 +230,14 @@ function SessionList({
   total,
   filtering,
   profile,
+  onResume,
   onOpen,
 }: {
   sessions: HistorySession[]
   total: number
   filtering: boolean
   profile: string
+  onResume: (t: TerminalSession) => void
   onOpen: (s: HistorySession) => void
 }) {
   if (total === 0) {
@@ -269,6 +278,7 @@ function SessionList({
             s={s}
             last={i === sessions.length - 1}
             profile={profile}
+            onResume={onResume}
             onOpen={() => onOpen(s)}
           />
         ))}
@@ -284,19 +294,21 @@ function SessionRow({
   s,
   last,
   profile,
+  onResume,
   onOpen,
 }: {
   s: HistorySession
   last: boolean
   profile: string
+  onResume: (t: TerminalSession) => void
   onOpen: () => void
 }) {
   const openable = s.openable
-  const toast = useToast()
   const guard = useGuarded('Resume')
 
-  // Resume opens a Terminal window; a double click opened two on the same
-  // session. useGuarded only reports rejections, it does not gate re-entry.
+  // Resume starts a terminal; a double click started two on the same session.
+  // useGuarded only reports rejections (a refused resume rejects with the
+  // reason), it does not gate re-entry.
   const [resuming, setResuming] = useState(false)
 
   const resume = guard(async () => {
@@ -309,16 +321,9 @@ function SessionRow({
     }
   })
 
-  const doResume = async () => {
-    const r = await api.history.resume(profile, s.id)
-    if (r.ok) {
-      // Name the directory: `claude --resume` scopes by cwd, so seeing where it
-      // landed is how a wrong target becomes visible rather than silent.
-      toast({ kind: 'info', title: 'Resuming in Terminal', desc: r.output })
-    } else {
-      toast({ kind: 'error', title: 'Could not resume', desc: r.error || r.output })
-    }
-  }
+  // The terminal tab names the directory it runs in: `claude --resume` scopes
+  // by cwd, so seeing where it landed is how a wrong target becomes visible.
+  const doResume = async () => onResume(await api.history.resume(profile, s.id))
   return (
     // Not role="button": ARIA forbids focusable descendants inside one, and the
     // Resume button lives in here. The row's own click target is the real
@@ -373,8 +378,8 @@ function SessionRow({
         <span className="text-[11px] text-muted-foreground">{timeAgo(s.lastTs)}</span>
         {openable && (
           <button
-            title="Resume this session in Terminal"
-            aria-label="Resume this session in Terminal"
+            title="Resume this session in a terminal"
+            aria-label="Resume this session in a terminal"
             onClick={resume}
             disabled={resuming}
             className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 group-hover:opacity-100"

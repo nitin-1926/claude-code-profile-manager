@@ -119,7 +119,9 @@ export const api = {
     search: (profile: string, query: string, token: string, includeToolResults: boolean) =>
       HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
     cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
-    resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<CmdResult>,
+    // Opens the session in an embedded terminal and resolves to it; validation
+    // failures reject.
+    resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<TerminalSession>,
   },
   // Embedded terminals. Sessions live in Go and outlive any view: a view
   // attaches (scrollback + seq), then follows onData, dropping chunks whose

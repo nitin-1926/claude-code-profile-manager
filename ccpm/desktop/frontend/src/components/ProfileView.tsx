@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import type { CmdResult, Profile } from '@/types'
+import { lazy, Suspense, useState } from 'react'
+import type { CmdResult, Profile, TerminalSession } from '@/types'
 import { tildePath, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useCommand } from '@/lib/useCommand'
+import { useGuarded } from '@/lib/useGuarded'
 import { useToast } from '@/components/ui/Toast'
 import { PromptModal, ConfirmModal } from '@/components/ui/Modal'
 import { validateProfileName } from '@/lib/validate'
@@ -28,10 +29,14 @@ const TABS = [
   { id: 'Settings', enabled: true },
   { id: 'Usage', enabled: true },
   { id: 'History', enabled: true },
+  { id: 'Terminal', enabled: true },
   { id: 'Health', enabled: true },
 ] as const
 
 type Dialog = null | 'clone' | 'rename' | 'delete'
+
+// Lazy: xterm is most of the bundle and only this tab needs it.
+const TerminalTab = lazy(() => import('./tabs/TerminalTab').then((m) => ({ default: m.TerminalTab })))
 
 export function ProfileView({
   profile,
@@ -50,7 +55,14 @@ export function ProfileView({
 }) {
   const [tab, setTab] = useState<string>('Overview')
   const [dialog, setDialog] = useState<Dialog>(null)
+  // The terminal to show when the Terminal tab opens: the one Run or a
+  // History resume just started.
+  const [termFocus, setTermFocus] = useState<string | null>(null)
+  // Disables Run while Start is pending; a double click otherwise started two
+  // sessions.
+  const [starting, setStarting] = useState(false)
   const toast = useToast()
+  const guard = useGuarded('Run')
   const { run } = useCommand()
 
   // Select the new name only after the refreshed list contains it. Selecting
@@ -62,11 +74,20 @@ export function ProfileView({
     if (ok) onSelect(next)
   }
 
-  async function launch() {
-    const r = await api.mutate.launch(profile.name)
-    if (r.ok) toast({ kind: 'info', title: 'Launching in Terminal', desc: r.output })
-    else toast({ kind: 'error', title: 'Launch failed', desc: r.error || r.output })
+  function openTerminal(t: TerminalSession) {
+    setTermFocus(t.id)
+    setTab('Terminal')
   }
+
+  const launch = guard(async () => {
+    if (starting) return
+    setStarting(true)
+    try {
+      openTerminal(await api.terminal.start(profile.name, '', []))
+    } finally {
+      setStarting(false)
+    }
+  })
 
   async function openFolder() {
     const r = await api.mutate.openFolder(profile.name)
@@ -94,7 +115,14 @@ export function ProfileView({
           )}
 
           <div className="ml-auto flex items-center gap-1.5">
-            <ActionButton primary icon={Play} label="Run" title="Launch Claude Code with this profile" onClick={launch} />
+            <ActionButton
+              primary
+              icon={Play}
+              label="Run"
+              title="Launch Claude Code with this profile"
+              onClick={launch}
+              disabled={starting}
+            />
             <ActionButton icon={Copy} label="Clone" title="Clone this profile" onClick={() => setDialog('clone')} />
             <IconButton icon={FolderOpen} title="Open profile folder" onClick={openFolder} />
             <IconButton icon={Pencil} title="Rename profile" onClick={() => setDialog('rename')} />
@@ -153,7 +181,12 @@ export function ProfileView({
           {tab === 'Permissions' && <PermissionsTab profile={profile.name} onMutated={onMutated} />}
           {tab === 'Settings' && <SettingsTab profile={profile.name} onMutated={onMutated} />}
           {tab === 'Usage' && <UsageTab profile={profile.name} />}
-          {tab === 'History' && <HistoryTab profile={profile.name} />}
+          {tab === 'History' && <HistoryTab profile={profile.name} onResume={openTerminal} />}
+          {tab === 'Terminal' && (
+            <Suspense fallback={null}>
+              <TerminalTab profile={profile.name} focus={termFocus} />
+            </Suspense>
+          )}
           {tab === 'Health' && <HealthTab />}
         </ErrorBoundary>
       </div>
@@ -208,19 +241,22 @@ function ActionButton({
   title,
   primary,
   onClick,
+  disabled,
 }: {
   icon: LucideIcon
   label: string
   title: string
   primary?: boolean
   onClick: () => void
+  disabled?: boolean
 }) {
   return (
     <button
       title={title}
       onClick={onClick}
+      disabled={disabled}
       className={cn(
-        'inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50',
         primary
           ? 'bg-primary text-primary-foreground hover:bg-primary/90'
           : 'border border-border text-foreground hover:bg-accent',
