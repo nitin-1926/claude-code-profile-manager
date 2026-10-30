@@ -342,6 +342,35 @@ func TestTerminalEnv(t *testing.T) {
 	}
 }
 
+// An app launched from a Claude Code terminal inherits that session's markers;
+// the embedded claude must not, or it runs as the parent's child (transcripts
+// off, the parent's messaging socket and token in hand).
+func TestTerminalChildDoesNotInheritClaudeSessionMarkers(t *testing.T) {
+	name := syntheticProfile(t)
+	for _, k := range claudeSessionMarkers {
+		t.Setenv(k, "leaked")
+	}
+	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1") // user config, must pass through
+	ts, _ := testTerminal(t, "/usr/bin/env")
+	s := start(t, ts, name)
+	exited(t, ts, s.ID)
+	out, _ := scrollback(t, ts, s.ID)
+	seen := map[string]string{}
+	for _, line := range strings.Split(out, "\r\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			seen[k] = v
+		}
+	}
+	for _, k := range claudeSessionMarkers {
+		if v, ok := seen[k]; ok {
+			t.Errorf("child inherited %s=%s", k, v)
+		}
+	}
+	if seen["CLAUDE_CODE_USE_BEDROCK"] != "1" {
+		t.Errorf("CLAUDE_CODE_USE_BEDROCK did not reach the child (env: %q)", out)
+	}
+}
+
 func TestMergePath(t *testing.T) {
 	got := mergePath("/usr/bin:/opt/homebrew/bin", "/opt/homebrew/bin", "", ".", "/Users/a/.local/bin", "/usr/bin")
 	if want := "/usr/bin:/opt/homebrew/bin:/Users/a/.local/bin"; got != want {

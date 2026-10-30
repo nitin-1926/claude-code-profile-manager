@@ -373,12 +373,39 @@ func terminalTitle(args []string) string {
 	return "claude"
 }
 
-// terminalEnv is env (the process environment when nil) plus what a terminal
-// needs and a Finder-launched app lacks.
+// claudeSessionMarkers are what a running Claude Code puts in its children's
+// environment. An app started from a Claude Code terminal inherits them, and
+// passing them on makes every embedded claude a "child" of that session: it
+// turns transcript saving off and is handed the parent's messaging socket and
+// token. Named one by one, not CLAUDE_CODE_*: users configure claude through
+// that prefix too (CLAUDE_CODE_USE_BEDROCK). CLAUDE_CONFIG_DIR is replaced by
+// `ccpm run` anyway; dropped so the child never sees another profile's.
+var claudeSessionMarkers = []string{
+	"CLAUDECODE",
+	"CLAUDE_PID",
+	"CLAUDE_EFFORT",
+	"CLAUDE_CONFIG_DIR",
+	"CLAUDE_CODE_BRIDGE_SESSION_ID",
+	"CLAUDE_CODE_CHILD_SESSION",
+	"CLAUDE_CODE_ENTRYPOINT",
+	"CLAUDE_CODE_EXECPATH",
+	"CLAUDE_CODE_MESSAGING_SOCKET",
+	"CLAUDE_CODE_MESSAGING_TOKEN",
+	"CLAUDE_CODE_SESSION_ATTENDED",
+	"CLAUDE_CODE_SESSION_ID",
+}
+
+// terminalEnv is env (the process environment when nil) without any inherited
+// Claude Code session markers, plus what a terminal needs and a
+// Finder-launched app lacks.
 func terminalEnv(env []string) []string {
 	if env == nil {
 		env = os.Environ()
 	}
+	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(claudeSessionMarkers, k)
+	})
 	env = append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
 	// A GUI app gets no locale, and without one claude's TUI falls back to
 	// ASCII or prints mojibake. Terminal.app sets this too.
