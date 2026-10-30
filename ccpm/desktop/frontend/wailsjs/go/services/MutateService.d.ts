@@ -18,8 +18,6 @@ export function ImportInTerminal():Promise<services.CmdResult>;
 
 export function InstallPlugin(arg1:string,arg2:string):Promise<services.CmdResult>;
 
-export function Launch(arg1:string):Promise<services.CmdResult>;
-
 export function OpenFolder(arg1:string):Promise<services.CmdResult>;
 
 export function Remove(arg1:string):Promise<services.CmdResult>;

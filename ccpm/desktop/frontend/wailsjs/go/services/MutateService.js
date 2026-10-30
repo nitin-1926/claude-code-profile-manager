@@ -34,10 +34,6 @@ export function InstallPlugin(arg1, arg2) {
   return window['go']['services']['MutateService']['InstallPlugin'](arg1, arg2);
 }
 
-export function Launch(arg1) {
-  return window['go']['services']['MutateService']['Launch'](arg1);
-}
-
 export function OpenFolder(arg1) {
   return window['go']['services']['MutateService']['OpenFolder'](arg1);
 }

@@ -12,7 +12,6 @@ import {
   Rename as MRename,
   Remove as MRemove,
   OpenFolder as MOpenFolder,
-  Launch as MLaunch,
   CreateInTerminal as MCreate,
   ImportInTerminal as MImport,
   AddAsset as MAddAsset,
@@ -163,7 +162,6 @@ export const api = {
     rename: (oldName: string, newName: string) => MRename(oldName, newName) as unknown as Promise<CmdResult>,
     remove: (name: string) => MRemove(name) as unknown as Promise<CmdResult>,
     openFolder: (name: string) => MOpenFolder(name) as unknown as Promise<CmdResult>,
-    launch: (name: string) => MLaunch(name) as unknown as Promise<CmdResult>,
     createInTerminal: (name: string) => MCreate(name) as unknown as Promise<CmdResult>,
     importInTerminal: () => MImport() as unknown as Promise<CmdResult>,
     addAsset: (kind: string, path: string, profile: string) =>
