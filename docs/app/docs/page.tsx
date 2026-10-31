@@ -49,7 +49,9 @@ export default async function DocsPage() {
             JSON, the <a href="#statusline">status line</a> layout, and the
             usage notch),{" "}
             <strong>Usage</strong>, <strong>History</strong> (browse, read and
-            search this profile&apos;s past Claude Code sessions), and{" "}
+            search this profile&apos;s past Claude Code sessions, and resume
+            one), <strong>Terminal</strong> (a real terminal inside the app
+            where Run and Resume open Claude Code sessions), and{" "}
             <strong>Health</strong>{" "}
             (<code>ccpm doctor</code>). Clone, rename,
             delete, open, and run from the toolbar; the view auto-refreshes when
