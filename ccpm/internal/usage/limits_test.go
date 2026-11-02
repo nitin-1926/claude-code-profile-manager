@@ -169,3 +169,83 @@ func TestLabelFor(t *testing.T) {
 		t.Errorf("unknown key = %q, want the raw key back", got)
 	}
 }
+
+// The encoding trap: the stored scale is 0-100 and is never sniffed, a value
+// over 100 is real, resets_at 0 is "unreported" rather than "resets now", and a
+// reset that already passed means the figure describes a dead window.
+func TestWindowNormalisation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	cases := []struct {
+		name    string
+		w       LimitWindow
+		used    float64
+		expired bool
+	}{
+		{"ordinary", LimitWindow{UsedPercentage: 82, ResetsAt: now.Unix() + 60}, 82, false},
+		{"a fraction is a small percentage, not 80%", LimitWindow{UsedPercentage: 0.8, ResetsAt: now.Unix() + 60}, 0.8, false},
+		{"overage", LimitWindow{UsedPercentage: 104, ResetsAt: now.Unix() + 60}, 104, false},
+		{"unreported reset", LimitWindow{UsedPercentage: 82, ResetsAt: 0}, 82, false},
+		{"reset is exactly now", LimitWindow{UsedPercentage: 82, ResetsAt: now.Unix()}, 0, true},
+		{"stale reset", LimitWindow{UsedPercentage: 82, ResetsAt: now.Unix() - 3600}, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.w.UsedAt(now); got != c.used {
+				t.Errorf("UsedAt = %v, want %v", got, c.used)
+			}
+			if got := c.w.Expired(now); got != c.expired {
+				t.Errorf("Expired = %v, want %v", got, c.expired)
+			}
+		})
+	}
+}
+
+func TestOverview(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	future := now.Unix() + 3600
+
+	t.Run("no reading is both windows unknown", func(t *testing.T) {
+		o := Limits{}.Overview(now)
+		if len(o.Windows) != 2 || o.Windows[0].Known || o.Windows[1].Known || o.Closest != "" {
+			t.Errorf("got %+v", o)
+		}
+	})
+	t.Run("closest is the higher window", func(t *testing.T) {
+		o := Limits{Windows: []LimitWindow{
+			{Key: KeyFiveHour, UsedPercentage: 40, ResetsAt: future},
+			{Key: KeySevenDay, UsedPercentage: 90, ResetsAt: future},
+		}}.Overview(now)
+		if o.Closest != KeySevenDay {
+			t.Errorf("Closest = %q", o.Closest)
+		}
+	})
+	t.Run("an expired window is unknown and cannot be closest", func(t *testing.T) {
+		o := Limits{Windows: []LimitWindow{
+			{Key: KeyFiveHour, UsedPercentage: 99, ResetsAt: now.Unix() - 1},
+			{Key: KeySevenDay, UsedPercentage: 10, ResetsAt: future},
+		}}.Overview(now)
+		if o.Windows[0].Known || o.Closest != KeySevenDay {
+			t.Errorf("got %+v", o)
+		}
+	})
+	t.Run("a window Claude Code did not report is still listed", func(t *testing.T) {
+		o := Limits{Windows: []LimitWindow{{Key: KeySevenDay, UsedPercentage: 10, ResetsAt: future}}}.Overview(now)
+		if len(o.Windows) != 2 || o.Windows[0].Key != KeyFiveHour || o.Windows[0].Known {
+			t.Errorf("got %+v", o)
+		}
+	})
+}
+
+func TestFormatRenewal(t *testing.T) {
+	loc := time.FixedZone("test", 5*3600)
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, loc) // a Wednesday
+	if got := FormatRenewal(0, now); got != "" {
+		t.Errorf("unreported = %q", got)
+	}
+	if got := FormatRenewal(time.Date(2026, 11, 4, 15, 45, 0, 0, loc).Unix(), now); got != "15:45" {
+		t.Errorf("same day = %q", got)
+	}
+	if got := FormatRenewal(time.Date(2026, 11, 7, 9, 5, 0, 0, loc).Unix(), now); got != "Sat 09:05" {
+		t.Errorf("another day = %q", got)
+	}
+}

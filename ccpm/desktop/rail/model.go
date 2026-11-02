@@ -67,10 +67,7 @@ func FillFraction(usedPercentage float64) float64 {
 // passed has rolled over: until the next reading arrives it is empty, not
 // still at the figure it reached before. ResetsAt 0 means no reset clock.
 func usedNow(w services.LimitWindowDTO, now time.Time) float64 {
-	if w.ResetsAt > 0 && w.ResetsAt <= now.Unix() {
-		return 0
-	}
-	return w.UsedPercentage
+	return usage.LimitWindow{UsedPercentage: w.UsedPercentage, ResetsAt: w.ResetsAt}.UsedAt(now)
 }
 
 // BuildModel turns the service-layer limits into a drawable frame.
