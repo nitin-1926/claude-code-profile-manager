@@ -249,3 +249,36 @@ func TestFormatRenewal(t *testing.T) {
 		t.Errorf("another day = %q", got)
 	}
 }
+
+func TestMarkSessionEnd(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	payload := `{"session_id":"abc","transcript_path":"/p/projects/x/abc.jsonl","cwd":"/r","permission_mode":"default","hook_event_name":"SessionEnd","reason":"prompt_input_exit"}`
+
+	dir := t.TempDir()
+	if err := MarkSessionEnd(dir, []byte(payload), now); err != nil {
+		t.Fatal(err)
+	}
+	want := SessionEnd{SessionID: "abc", TranscriptPath: "/p/projects/x/abc.jsonl", EndedAt: now.Unix()}
+	if got := LoadSessionEnd(dir); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+
+	for name, ignored := range map[string]string{
+		"a manual run pipes nothing": ``,
+		"not JSON":                   `hello`,
+		"another hook event":         `{"session_id":"abc","hook_event_name":"Stop"}`,
+		"no session id":              `{"hook_event_name":"SessionEnd"}`,
+		"/clear keeps the session":   `{"session_id":"abc","hook_event_name":"SessionEnd","reason":"clear"}`,
+		"/resume keeps the session":  `{"session_id":"abc","hook_event_name":"SessionEnd","reason":"resume"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := MarkSessionEnd(dir, []byte(ignored), now); err != nil {
+				t.Fatal(err)
+			}
+			if got := LoadSessionEnd(dir); got != (SessionEnd{}) {
+				t.Errorf("recorded %+v", got)
+			}
+		})
+	}
+}

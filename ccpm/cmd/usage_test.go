@@ -2,10 +2,52 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
+
+// A real SessionEnd payload leaves the marker the desktop app reacts to; the same
+// command run any other way must not, or a manual sync would read as a session
+// ending.
+func TestUsageSyncMarksOnlyARealSessionEnd(t *testing.T) {
+	scratchConfig(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := cfg.Profiles["work"].Dir
+
+	run := func(stdin string) {
+		t.Helper()
+		c := &cobra.Command{}
+		c.SetIn(strings.NewReader(stdin))
+		if err := runUsageSync(c, []string{"work"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("")
+	if got := usage.LoadSessionEnd(dir); got != (usage.SessionEnd{}) {
+		t.Errorf("a manual sync recorded %+v", got)
+	}
+
+	run(`{"session_id":"abc","transcript_path":"/x/abc.jsonl","hook_event_name":"SessionEnd","reason":"other"}`)
+	got := usage.LoadSessionEnd(dir)
+	if got.SessionID != "abc" || got.TranscriptPath != "/x/abc.jsonl" || got.EndedAt == 0 {
+		t.Errorf("hook run recorded %+v", got)
+	}
+	// Written in the watched store, where the watcher can see it.
+	if _, err := os.Stat(filepath.Join(usage.Dir(dir), "session-end.json")); err != nil {
+		t.Error(err)
+	}
+}
 
 func TestHumanTokens(t *testing.T) {
 	cases := []struct {

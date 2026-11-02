@@ -168,8 +168,8 @@ func sortedProfileNames(cfg *config.Config) []string {
 }
 
 func runUsageSync(cmd *cobra.Command, args []string) error {
-	// Swallow whatever the hook pipes on stdin (the SessionEnd JSON payload).
-	_, _ = io.Copy(io.Discard, cmd.InOrStdin())
+	// The hook pipes the SessionEnd JSON payload on stdin.
+	payload, _ := io.ReadAll(cmd.InOrStdin())
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -184,6 +184,9 @@ func runUsageSync(cmd *cobra.Command, args []string) error {
 		name = cfg.DefaultProfile
 	}
 	if p, ok := cfg.Profiles[name]; ok {
+		// Marker first: SessionEnd hooks share a 1.5s budget by default, and a
+		// Sync over a large profile can outlast it and get killed.
+		_ = usage.MarkSessionEnd(p.Dir, payload, time.Now())
 		_, _, _ = usage.Sync(p.Dir)
 	}
 	return nil
