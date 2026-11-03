@@ -311,19 +311,7 @@ func baseName(p string) string {
 	return p
 }
 
-// humanTokens renders a token count compactly (175, 12.3K, 4.20M, 1.10B).
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000_000:
-		return fmt.Sprintf("%.2fB", float64(n)/1e9)
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.2fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1e3)
-	default:
-		return strconv.FormatInt(n, 10)
-	}
-}
+func humanTokens(n int64) string { return usage.HumanTokens(n) }
 
 // humanInt renders a plain integer with thousands separators.
 func humanInt(n int64) string {

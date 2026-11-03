@@ -12,8 +12,10 @@ package usage
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
@@ -63,6 +65,20 @@ func (t Tokens) Minus(o Tokens) Tokens {
 		Output:        t.Output - o.Output,
 		CacheCreation: t.CacheCreation - o.CacheCreation,
 		CacheRead:     t.CacheRead - o.CacheRead,
+	}
+}
+
+// HumanTokens renders a token count compactly (175, 12.3K, 4.20M, 1.10B).
+func HumanTokens(n int64) string {
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.2fB", float64(n)/1e9)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.2fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(n)/1e3)
+	default:
+		return strconv.FormatInt(n, 10)
 	}
 }
 

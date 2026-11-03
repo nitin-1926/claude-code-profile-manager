@@ -133,6 +133,64 @@ func usageAsstLine(t *testing.T, uuid, msgID, model string, in, out int64) strin
 	})
 }
 
+// SessionUsage answers for one session, subagents included, and leaves no
+// history.json behind: its caller reacts to the watcher that covers that file.
+func TestSessionUsage(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSessionTranscript(t, dir, "/repo", "parent",
+		usageAsstLine(t, "a1", "msg_p", "claude-opus-5", 100, 10),
+	)
+	subs := filepath.Join(dir, "projects", usage.EncodeCwd("/repo"), "parent", "subagents")
+	writeJSONL(t, subs, "agent-a.jsonl", usageAsstLine(t, "s1", "msg_s1", "claude-opus-5", 1000, 100))
+
+	e, err := SessionUsage(dir, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Tokens().Total(); got != 1210 {
+		t.Errorf("tokens = %d, want the parent and its subagent", got)
+	}
+	if e.Cost() <= 0 {
+		t.Errorf("cost = %v, want an estimate", e.Cost())
+	}
+	if _, err := os.Stat(IndexPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("wrote the sidecar (stat err: %v)", err)
+	}
+}
+
+// The path comes from a marker file, and a profile directory can be restored from
+// elsewhere, so nothing but this profile's own regular transcript may be read.
+func TestSessionUsageRefusesOtherPaths(t *testing.T) {
+	dir := t.TempDir()
+	real := writeSessionTranscript(t, dir, "/repo", "real", usageAsstLine(t, "a1", "m", "claude-opus-5", 1, 1))
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(real), "link.jsonl")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	notes := filepath.Join(filepath.Dir(real), "notes.txt")
+	if err := os.WriteFile(notes, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, p := range map[string]string{
+		"empty":     "",
+		"relative":  "real.jsonl",
+		"outside":   outside,
+		"traversal": filepath.Join(dir, "projects", "..", "..", "outside.jsonl"),
+		"symlink":   link,
+		"not jsonl": notes,
+		"missing":   filepath.Join(filepath.Dir(real), "gone.jsonl"),
+	} {
+		if _, err := SessionUsage(dir, p); err == nil {
+			t.Errorf("%s: read %q", name, p)
+		}
+	}
+}
+
 // TestBuildIndexFoldsSubagentTokensIntoTheParent pins the folding that exists
 // because subagent lines carry the PARENT's sessionId — internal/usage already
 // bills their tokens to this session, so a History row that skipped them read
