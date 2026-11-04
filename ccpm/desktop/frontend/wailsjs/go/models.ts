@@ -124,6 +124,9 @@ export namespace services {
 	    railMain: string;
 	    railProfiles: Record<string, boolean>;
 	    theme: string;
+	    notifySessionEnd: boolean;
+	    limitAlerts: boolean;
+	    limitAlertThreshold: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DesktopPrefs(source);
@@ -138,6 +141,9 @@ export namespace services {
 	        this.railMain = source["railMain"];
 	        this.railProfiles = source["railProfiles"];
 	        this.theme = source["theme"];
+	        this.notifySessionEnd = source["notifySessionEnd"];
+	        this.limitAlerts = source["limitAlerts"];
+	        this.limitAlertThreshold = source["limitAlertThreshold"];
 	    }
 	}
 	export class McpView {

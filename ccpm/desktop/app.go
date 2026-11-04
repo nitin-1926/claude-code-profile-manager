@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"context"
@@ -24,11 +25,17 @@ type App struct {
 	watchRoots []string
 	updater    *services.Updater
 	rail       *rail.Controller
+	alerts     *services.Alerts
+	// notifyErr is why this process cannot post notifications at all. Set once
+	// in startup, before anything that reads it.
+	notifyErr error
 }
 
 // NewApp creates a new App application struct
 func NewApp(updater *services.Updater) *App {
-	return &App{updater: updater, rail: rail.New()}
+	a := &App{updater: updater, rail: rail.New()}
+	a.alerts = services.NewAlerts(a.postNotification)
+	return a
 }
 
 // startup saves the runtime context, hands it to the updater, and starts the
@@ -36,6 +43,9 @@ func NewApp(updater *services.Updater) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.updater.Ctx = ctx
+	// Wails' own channel table is created here, so the other notification calls
+	// must not run if this failed: it refuses a process with no bundle identifier.
+	a.notifyErr = runtime.InitializeNotifications(ctx)
 	a.startWatcher()
 	a.startRail()
 }
@@ -97,6 +107,47 @@ func (a *App) applyRailPrefs() {
 	// Hover mode still shows the panel; the reveal is what hover drives. The
 	// master switch is the only thing that takes it off screen entirely.
 	a.rail.SetVisible(prefs.RailOn && len(shown) > 0)
+
+	// Here because this already runs on every file change and on the minute tick,
+	// the two things alerts need. Last, so a transcript read never delays a redraw.
+	a.alerts.Check(prefs, time.Now())
+}
+
+// RequestNotificationPermission asks macOS to let CCPM post notifications. macOS
+// only shows its sheet while the answer is undecided, so this is safe to repeat,
+// and it may wait a long time on a person, which bound methods can afford. False
+// means notifications are off for this app, which settings tells the user.
+func (a *App) RequestNotificationPermission() bool {
+	if a.notifyErr != nil {
+		return false
+	}
+	granted, err := runtime.RequestNotificationAuthorization(a.ctx)
+	return err == nil && granted
+}
+
+// postNotification is the app's one delivery path. It goes through Wails'
+// UNUserNotificationCenter wrapper rather than `osascript display notification`:
+// `wails build` ad-hoc signs the bundle precisely so this works, whereas osascript
+// posts as Script Editor, whose notifications stay silently off until someone
+// enables them for an app they never opened.
+//
+// Detached because the permission call can wait on a person. A denied or failed
+// post is a quiet no-op: the user opted out, and nothing here can fix it.
+func (a *App) postNotification(title, body string) {
+	go func() {
+		if !a.RequestNotificationPermission() {
+			return
+		}
+		// A fresh identifier each time: macOS can silently drop a reused one.
+		err := runtime.SendNotification(a.ctx, runtime.NotificationOptions{
+			ID:    fmt.Sprintf("ccpm-%d", time.Now().UnixNano()),
+			Title: title,
+			Body:  body,
+		})
+		if err != nil {
+			runtime.LogWarningf(a.ctx, "notification not delivered: %v", err)
+		}
+	}()
 }
 
 // onSecondInstanceLaunch runs when the single-instance lock turns away another

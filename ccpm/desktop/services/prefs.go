@@ -4,6 +4,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -80,7 +81,16 @@ type DesktopPrefs struct {
 	// native panel and cannot read the frontend's CSS custom properties or its
 	// localStorage, so the theme has to reach Go through the preferences file.
 	Theme string `json:"theme"`
+	// NotifySessionEnd and LimitAlerts are the opt-in notifications, off until
+	// asked for. LimitAlertThreshold is the percentage a limit window warns at.
+	NotifySessionEnd    bool `json:"notifySessionEnd"`
+	LimitAlerts         bool `json:"limitAlerts"`
+	LimitAlertThreshold int  `json:"limitAlertThreshold"`
 }
+
+// DefaultLimitAlertThreshold is the early warning: the useful moment is before
+// the limit, not at it.
+const DefaultLimitAlertThreshold = 80
 
 // DefaultPrefs is what a machine with no preferences file gets. Hover rather
 // than always-on so the rail introduces itself without immediately occupying
@@ -99,6 +109,8 @@ func DefaultPrefs() DesktopPrefs {
 		RailMain:     RailMainFiveHour,
 		RailProfiles: map[string]bool{},
 		Theme:        ThemeGraphite,
+
+		LimitAlertThreshold: DefaultLimitAlertThreshold,
 	}
 }
 
@@ -142,6 +154,10 @@ func (p DesktopPrefs) normalize() DesktopPrefs {
 	case ThemeGraphite, ThemeMidnight, ThemeLight:
 	default:
 		p.Theme = ThemeGraphite
+	}
+	// 100 is not a threshold: reaching the limit has its own alert.
+	if p.LimitAlertThreshold < 1 || p.LimitAlertThreshold > 99 {
+		p.LimitAlertThreshold = DefaultLimitAlertThreshold
 	}
 	return p
 }
@@ -247,6 +263,29 @@ func (s *PrefsService) SetNotch(p DesktopPrefs) (DesktopPrefs, error) {
 		cur.RailEdge = p.RailEdge
 		cur.RailPercent = p.RailPercent
 		cur.RailMain = p.RailMain
+	})
+}
+
+// SetAlerts stores only the notification settings from p, merging under the lock
+// the way SetNotch does.
+//
+// Turning on the session-end notification also turns on usage tracking: the
+// marker it reacts to comes from the SessionEnd hook, and `ccpm run` only installs
+// that hook under usage_tracking, which defaults off. Without this the switch
+// would look on and never fire. It goes through the CLI because config.json writes
+// hold its lock, and a failure leaves the preference off so the user hears why.
+// Turning the notification back off leaves usage tracking alone: it has its own
+// uses, and it may have been on already.
+func (s *PrefsService) SetAlerts(p DesktopPrefs) (DesktopPrefs, error) {
+	if p.NotifySessionEnd && !LoadPrefs().NotifySessionEnd {
+		if r := runCCPM("config", "set", "usage_tracking", "true"); !r.OK {
+			return LoadPrefs(), errors.New(r.Error)
+		}
+	}
+	return s.update(func(cur *DesktopPrefs) {
+		cur.NotifySessionEnd = p.NotifySessionEnd
+		cur.LimitAlerts = p.LimitAlerts
+		cur.LimitAlertThreshold = p.LimitAlertThreshold
 	})
 }
 

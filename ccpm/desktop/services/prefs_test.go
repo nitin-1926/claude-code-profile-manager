@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -52,6 +53,124 @@ func TestPrefsDefaultsWhenAbsent(t *testing.T) {
 	}
 	if got.RailProfiles == nil {
 		t.Error("default RailProfiles is nil; callers would panic on assignment")
+	}
+}
+
+// Everything that can interrupt someone is off until they ask for it, including
+// on a desktop.json written before these keys existed.
+func TestNotificationsDefaultOff(t *testing.T) {
+	base := withTempHome(t)
+	for _, p := range []DesktopPrefs{LoadPrefs(), func() DesktopPrefs {
+		if err := os.MkdirAll(base, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(base, "desktop.json"), []byte(`{"railEdge":"top"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return LoadPrefs()
+	}()} {
+		if p.NotifySessionEnd || p.LimitAlerts {
+			t.Errorf("notifications on by default: %+v", p)
+		}
+		if p.LimitAlertThreshold != DefaultLimitAlertThreshold {
+			t.Errorf("threshold = %d, want %d", p.LimitAlertThreshold, DefaultLimitAlertThreshold)
+		}
+	}
+}
+
+func TestLimitAlertThresholdNormalizes(t *testing.T) {
+	for in, want := range map[int]int{1: 1, 80: 80, 99: 99, 0: 80, -5: 80, 100: 80, 500: 80} {
+		if got := (DesktopPrefs{LimitAlertThreshold: in}).normalize().LimitAlertThreshold; got != want {
+			t.Errorf("threshold %d normalized to %d, want %d", in, got, want)
+		}
+	}
+}
+
+// Turning on the session-end notification must install what it depends on, once,
+// through the CLI. fakeCCPM records each call rather than touching a real config.
+func TestSetAlertsEnablesUsageTrackingOnce(t *testing.T) {
+	withTempHome(t)
+	calls := filepath.Join(t.TempDir(), "calls")
+	fakeCCPM(t, `echo "$@" >> `+calls)
+	s := NewPrefs()
+
+	got, err := s.SetAlerts(DesktopPrefs{LimitAlerts: true, LimitAlertThreshold: 90})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LimitAlerts || got.LimitAlertThreshold != 90 {
+		t.Errorf("not stored: %+v", got)
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Error("limit alerts alone must not touch usage tracking")
+	}
+
+	if _, err := s.SetAlerts(DesktopPrefs{NotifySessionEnd: true, LimitAlertThreshold: 90}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetAlerts(DesktopPrefs{NotifySessionEnd: true, LimitAlertThreshold: 70}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "config set usage_tracking true\n" {
+		t.Errorf("calls = %q, want exactly one enable", got)
+	}
+
+	// Off again leaves tracking alone: it may have been on before this.
+	if _, err := s.SetAlerts(DesktopPrefs{LimitAlertThreshold: 70}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(calls); strings.Count(string(data), "\n") != 1 {
+		t.Errorf("turning off called the CLI: %q", data)
+	}
+}
+
+// A switch that looks on but can never fire is worse than an error.
+func TestSetAlertsLeavesSessionEndOffWhenTheCLIFails(t *testing.T) {
+	withTempHome(t)
+	fakeCCPM(t, `exit 1`)
+	s := NewPrefs()
+
+	got, err := s.SetAlerts(DesktopPrefs{NotifySessionEnd: true, LimitAlertThreshold: 80})
+	if err == nil {
+		t.Fatal("want the CLI's failure back")
+	}
+	if got.NotifySessionEnd || LoadPrefs().NotifySessionEnd {
+		t.Error("preference stored despite the failure")
+	}
+}
+
+// Each section sends a whole copy read earlier, so neither may put back what the
+// other just changed.
+func TestSetAlertsAndSetNotchLeaveEachOtherAlone(t *testing.T) {
+	withTempHome(t)
+	s := NewPrefs()
+	stale := LoadPrefs()
+
+	if _, err := s.SetAlerts(DesktopPrefs{LimitAlerts: true, LimitAlertThreshold: 90}); err != nil {
+		t.Fatal(err)
+	}
+	stale.RailEdge = RailEdgeTop
+	got, err := s.SetNotch(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LimitAlerts || got.LimitAlertThreshold != 90 {
+		t.Errorf("a notch write reset the alerts: %+v", got)
+	}
+
+	stale = got
+	stale.RailEdge = RailEdgeLeft
+	stale.LimitAlerts = false
+	got, err = s.SetAlerts(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RailEdge != RailEdgeTop {
+		t.Errorf("an alerts write moved the notch to %q", got.RailEdge)
 	}
 }
 

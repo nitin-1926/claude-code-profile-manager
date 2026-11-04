@@ -5,3 +5,7 @@
 export function PickDirectory() {
   return window['go']['main']['App']['PickDirectory']();
 }
+
+export function RequestNotificationPermission() {
+  return window['go']['main']['App']['RequestNotificationPermission']();
+}
