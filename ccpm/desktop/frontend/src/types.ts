@@ -171,6 +171,8 @@ export interface LimitWindow {
   usedPercentage: number
   /** Unix seconds; 0 when Claude Code reported no reset clock. */
   resetsAt: number
+  /** The reset has passed with no newer reading: show unknown, not the old figure. */
+  expired: boolean
 }
 
 export interface ProfileLimits {
@@ -183,6 +185,8 @@ export interface ProfileLimits {
   /** Unix seconds the reading was captured. Always show this; the numbers are not live. */
   capturedAt: number
   windows: LimitWindow[]
+  /** Key of the window nearest its limit; empty when neither has a current reading. */
+  closest: string
 }
 
 /** How the notch reveals itself. Whether it shows at all is `railOn`. */

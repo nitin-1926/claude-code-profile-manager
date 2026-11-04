@@ -40,6 +40,14 @@ export function money(n: number): string {
   return '$' + (n / 1_000_000).toFixed(1) + 'M'
 }
 
+/** A window's renewal in local time: "15:45" today, "Sat 15:45" otherwise. Matches the CLI. */
+export function renewal(unixSeconds: number): string {
+  const at = new Date(unixSeconds * 1000)
+  const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (at.toDateString() === new Date().toDateString()) return time
+  return `${at.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`
+}
+
 /** Minutes → "2h 45m" / "45m". */
 export function humanMinutes(min: number): string {
   const m = Math.max(0, Math.round(min))
