@@ -6,7 +6,7 @@ import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
 import { All as LimitsAll, Get as LimitsGet } from '../../wailsjs/go/services/LimitsService'
-import { Get as PrefsGet, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
+import { Get as PrefsGet, SetAlerts, SetNotch, SetRailProfile } from '../../wailsjs/go/services/PrefsService'
 import {
   Clone as MClone,
   Rename as MRename,
@@ -47,7 +47,7 @@ import {
 import { Get as DetailsGet } from '../../wailsjs/go/services/DetailsService'
 import { Get as SettingsGet } from '../../wailsjs/go/services/SettingsService'
 import { Check as UpdaterCheck, Install as UpdaterInstall, Version as UpdaterVersion } from '../../wailsjs/go/services/Updater'
-import { PickDirectory } from '../../wailsjs/go/main/App'
+import { PickDirectory, RequestNotificationPermission } from '../../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 import type {
   Block,
@@ -88,6 +88,7 @@ export const api = {
   prefs: {
     get: () => PrefsGet() as unknown as Promise<DesktopPrefs>,
     setNotch: (p: DesktopPrefs) => SetNotch(p as never) as unknown as Promise<DesktopPrefs>,
+    setAlerts: (p: DesktopPrefs) => SetAlerts(p as never) as unknown as Promise<DesktopPrefs>,
     setRailProfile: (name: string, enabled: boolean) =>
       SetRailProfile(name, enabled) as unknown as Promise<DesktopPrefs>,
   },
@@ -126,6 +127,7 @@ export const api = {
     get: (name: string) => SettingsGet(name) as unknown as Promise<SettingKV[]>,
   },
   pickDirectory: () => PickDirectory() as unknown as Promise<string>,
+  requestNotificationPermission: () => RequestNotificationPermission() as unknown as Promise<boolean>,
   mutate: {
     clone: (src: string, dst: string) => MClone(src, dst) as unknown as Promise<CmdResult>,
     rename: (oldName: string, newName: string) => MRename(oldName, newName) as unknown as Promise<CmdResult>,

@@ -206,6 +206,11 @@ export interface DesktopPrefs {
   /** Explicit choices only — a profile absent from this map is enabled. */
   railProfiles: Record<string, boolean>
   theme: string
+  /** Opt-in notifications, off until asked for. */
+  notifySessionEnd: boolean
+  limitAlerts: boolean
+  /** Percentage a limit window warns at, 1-99. */
+  limitAlertThreshold: number
 }
 
 // --- History -------------------------------------------------------------
