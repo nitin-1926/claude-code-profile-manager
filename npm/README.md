@@ -93,7 +93,7 @@ Release highlights and fixes: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nit
 | `ccpm set-default [name]` / `ccpm unset-default`          | Pin or clear the default profile for direct `claude` launches        |
 | `ccpm prompt`                                             | Print the active profile name for a shell prompt (PS1 / starship)    |
 | `ccpm statusline configure`                               | Choose which status line segments show, and on which of its two rows |
-| `ccpm usage [name]`                                       | Token usage from a profile's transcripts (dashboard; `--plain`, `--json`) |
+| `ccpm usage [name]`                                       | Token usage from a profile's transcripts (dashboard; `--plain`, `--json`); `--all` adds every profile's plan limits side by side |
 | `ccpm diff <a> <b>`                                       | Compare two profiles (assets, settings keys, env names, MCP, plugins) |
 | `ccpm sync`                                               | Re-apply global installs into one or all profiles                    |
 | `ccpm doctor`                                             | Health check: env, auth, drift, symlinks, cascade (`--fix` prunes symlinks) |
