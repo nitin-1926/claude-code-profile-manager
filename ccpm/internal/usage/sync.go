@@ -1,13 +1,17 @@
 package usage
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/lock"
 )
@@ -53,10 +57,15 @@ func Sync(profileDir string) (*Sessions, *Daily, error) {
 			newFiles[k] = v
 		}
 
+		ported := loadPorted(profileDir)
 		visited := make(map[string]bool, len(st.Files))
 		walkErr := WalkTranscripts(profileDir, func(abs, rel string) error {
 			visited[rel] = true
-			ns, ferr := ingestFile(abs, st.Files[rel], sess, day)
+			prev := st.Files[rel]
+			if base := ported[rel]; prev.Offset < base {
+				prev = FileState{Offset: base}
+			}
+			ns, ferr := ingestFile(abs, prev, sess, day)
 			if ferr != nil {
 				// Unreadable right now (e.g. native claude mid-write); leave the
 				// cursor untouched and retry on the next sync.
@@ -191,3 +200,61 @@ func ingestFile(path string, prev FileState, sess *Sessions, day *Daily) (FileSt
 // recentWindow is how many trailing dedup keys are carried across a sync
 // boundary per transcript.
 const recentWindow = 128
+
+// portedPath records, for each transcript copied in from another profile, the
+// byte offset the copy ended at. Everything below that offset was spent on the
+// source profile's account, so it never counts here.
+//
+// It is a sidecar rather than a seeded cursor in state.json because a
+// storeVersion bump discards state.json and re-ingests every transcript from
+// zero, which would hand this profile all of those tokens. LoadBlocks also reads
+// transcripts directly without consulting cursors, and needs the same floor.
+func portedPath(profileDir string) string { return filepath.Join(Dir(profileDir), "ported.json") }
+
+// loadPorted reads the sidecar, keyed like State.Files. A missing or unreadable
+// file yields an empty map.
+func loadPorted(profileDir string) map[string]int64 {
+	var m map[string]int64
+	if _, err := loadJSON(portedPath(profileDir), &m); err != nil || m == nil {
+		return map[string]int64{}
+	}
+	return m
+}
+
+// Adopt installs files copied from another profile under <profileDir>/projects,
+// keyed by slash-separated projects-relative path, and records where each
+// transcript ends so only lines appended afterwards count toward this profile.
+//
+// It holds the usage lock and writes the files and the sidecar in one
+// transaction: a Sync running between the two would ingest the whole copy. A
+// path that already exists is refused rather than overwritten.
+//
+// Measured against Claude Code 2.1.318: a resume only appends, and appends no
+// message id already in the file, so the offset alone is a complete boundary and
+// no dedup keys need seeding. A trailing line with no newline stays above the
+// offset, matching how ingest treats a line still being written.
+func Adopt(profileDir string, files map[string][]byte) error {
+	if err := os.MkdirAll(Dir(profileDir), config.DirPerm); err != nil {
+		return err
+	}
+	return lock.Guard(lockPath(profileDir), lock.DefaultTimeout, func() error {
+		ported := loadPorted(profileDir)
+		changes := make([]atomicwrite.FileChange, 0, len(files)+1)
+		for slashRel, data := range files {
+			rel := filepath.FromSlash(slashRel)
+			full := filepath.Join(profileDir, "projects", rel)
+			if _, err := os.Lstat(full); err == nil {
+				return fmt.Errorf("%s already exists", slashRel)
+			}
+			if strings.HasSuffix(rel, ".jsonl") {
+				ported[rel] = int64(bytes.LastIndexByte(data, '\n') + 1)
+			}
+			changes = append(changes, atomicwrite.WriteFile(full, data, config.FilePerm))
+		}
+		b, err := json.MarshalIndent(ported, "", "  ")
+		if err != nil {
+			return err
+		}
+		return atomicwrite.Apply(append(changes, atomicwrite.WriteFile(portedPath(profileDir), b, config.FilePerm)))
+	})
+}
