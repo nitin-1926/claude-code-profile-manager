@@ -19,9 +19,11 @@ import (
 )
 
 var (
-	sessionsAll   bool
-	sessionsJSON  bool
-	sessionsLimit int
+	sessionsAll      bool
+	sessionsJSON     bool
+	sessionsLimit    int
+	sessionsPortFrom string
+	sessionsPortTo   string
 )
 
 var sessionsCmd = &cobra.Command{
@@ -44,12 +46,36 @@ same files native Claude Code writes; ccpm does not mutate them.`,
 	RunE: runSessionsList,
 }
 
+var sessionsPortCmd = &cobra.Command{
+	Use:   "port <id> --from <profile> --to <profile>",
+	Short: "Copy a session into another profile so it can be resumed there",
+	Long: `Copy a session's transcript and subagent transcripts into another profile, under
+the same project directory, and print the command that resumes it there.
+
+The original stays in the source profile. From then on the two copies continue
+separately, and the resumed conversation runs under the target profile's account,
+skills, MCP servers and billing. Tokens already spent stay with the source profile:
+only what is added after the port counts toward the target's usage.
+
+Switching accounts starts a cold cache, so the next message re-sends the whole
+conversation and costs more than a normal turn. /rewind checkpoints stay behind
+with the source profile.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSessionsPort,
+}
+
 func init() {
 	sessionsListCmd.Flags().BoolVar(&sessionsAll, "all", false, "list sessions across every project in this profile")
 	sessionsListCmd.Flags().BoolVar(&sessionsJSON, "json", false, "machine-readable JSON output")
 	sessionsListCmd.Flags().IntVar(&sessionsLimit, "limit", 20, "show at most N most-recent sessions (0 = no limit)")
 
-	sessionsCmd.AddCommand(sessionsListCmd)
+	sessionsPortCmd.Flags().StringVar(&sessionsPortFrom, "from", "", "profile the session is in")
+	sessionsPortCmd.Flags().StringVar(&sessionsPortTo, "to", "", "profile to copy it into")
+	sessionsPortCmd.Flags().BoolVar(&sessionsJSON, "json", false, "machine-readable JSON output")
+	_ = sessionsPortCmd.MarkFlagRequired("from")
+	_ = sessionsPortCmd.MarkFlagRequired("to")
+
+	sessionsCmd.AddCommand(sessionsListCmd, sessionsPortCmd)
 	rootCmd.AddCommand(sessionsCmd)
 }
 
@@ -171,6 +197,84 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		color.New(color.Faint).Printf("  (showing %d of %d — use --limit 0 for all)\n", shown, total)
 	}
 	return nil
+}
+
+func runSessionsPort(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	from, exists := cfg.Profiles[sessionsPortFrom]
+	if !exists {
+		return fmt.Errorf("profile %q not found", sessionsPortFrom)
+	}
+	to, exists := cfg.Profiles[sessionsPortTo]
+	if !exists {
+		return fmt.Errorf("profile %q not found", sessionsPortTo)
+	}
+
+	res, err := transcript.Port(
+		transcript.Scope{Profile: sessionsPortFrom, Dir: from.Dir},
+		transcript.Scope{Profile: sessionsPortTo, Dir: to.Dir},
+		args[0],
+	)
+	if err != nil {
+		return err
+	}
+	next := resumeCommand(res, sessionsPortTo)
+
+	if sessionsJSON {
+		data, err := json.MarshalIndent(map[string]any{
+			"session_id":     res.SessionID,
+			"from":           sessionsPortFrom,
+			"to":             sessionsPortTo,
+			"cwd":            res.Cwd,
+			"cwd_missing":    res.CwdMissing,
+			"already_ported": res.AlreadyPorted,
+			"next_command":   next,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if res.AlreadyPorted {
+		fmt.Printf("Profile %s already has this session.\n", sessionsPortTo)
+	} else {
+		fmt.Printf("Copied session %s from %s to %s. The original stays in %s.\n",
+			terminalSafe(res.SessionID), sessionsPortFrom, sessionsPortTo, sessionsPortFrom)
+	}
+	if res.CwdMissing {
+		fmt.Printf("Its directory no longer exists: %s\nRecreate it to resume in the same place, or resume from the directory you are working in:\n",
+			terminalSafe(res.Cwd))
+	} else {
+		fmt.Println("Continue it with:")
+	}
+	fmt.Printf("\n  %s\n", terminalSafe(next))
+	return nil
+}
+
+// resumeCommand is the exact command that continues a ported session. A cwd that
+// no longer exists gets no cd, since that would stop the command before it runs.
+func resumeCommand(res transcript.PortResult, profile string) string {
+	run := "ccpm run " + shellArg(profile) + " -- --resume " + shellArg(res.SessionID)
+	if res.Cwd == "" || res.CwdMissing {
+		return run
+	}
+	return "cd " + shellArg(res.Cwd) + " && " + run
+}
+
+// shellArg quotes s for a POSIX shell unless it is already plain. A cwd comes out
+// of transcript content, and this command is meant to be pasted.
+func shellArg(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:@", r))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sessionStarted is the session's first transcript timestamp, falling back to
