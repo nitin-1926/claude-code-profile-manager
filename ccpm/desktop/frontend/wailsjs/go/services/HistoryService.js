@@ -6,6 +6,10 @@ export function CancelSearch(arg1) {
   return window['go']['services']['HistoryService']['CancelSearch'](arg1);
 }
 
+export function OpenInProfile(arg1, arg2, arg3) {
+  return window['go']['services']['HistoryService']['OpenInProfile'](arg1, arg2, arg3);
+}
+
 export function Resume(arg1, arg2) {
   return window['go']['services']['HistoryService']['Resume'](arg1, arg2);
 }

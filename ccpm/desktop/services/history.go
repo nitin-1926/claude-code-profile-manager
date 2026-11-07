@@ -368,10 +368,9 @@ func (s *HistoryService) Resume(profile, sessionID string) CmdResult {
 	}
 
 	// The session's FIRST cwd, which is what the sidecar records and what the
-	// transcript's own directory encodes. `claude --resume` scopes its session
-	// set by the current directory, so resuming from a later cwd — 7 of 25
-	// measured sessions drifted, some ending in a subdirectory — lands in a
-	// project that has no such session while every guard here still passes.
+	// transcript's own directory encodes. A session's cwd drifts (7 of 25 measured
+	// sessions did), and its tools and project context belong where it started.
+	// `claude --resume <id>` itself accepts any directory, as of Claude Code 2.1.318.
 	workdir := e.Cwd
 	if workdir != "" {
 		if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
@@ -383,6 +382,30 @@ func (s *HistoryService) Resume(profile, sessionID string) CmdResult {
 
 	// `--` so a future ccpm flag can never collide with a claude one.
 	return NewMutate().terminal(workdir, "run", profile, "--", "--resume", sessionID)
+}
+
+// OpenInProfile continues a session under another profile: it copies the
+// transcript across, then resumes it there. Always a direct user action.
+func (s *HistoryService) OpenInProfile(source, target, sessionID string) CmdResult {
+	if !safeSessionID.MatchString(sessionID) {
+		return CmdResult{Error: "refusing to port an implausible session id"}
+	}
+	from, to := profileDir(source), profileDir(target)
+	if from == "" {
+		return CmdResult{Error: "unknown profile: " + source}
+	}
+	if to == "" {
+		return CmdResult{Error: "unknown profile: " + target}
+	}
+	_, err := transcript.Port(
+		transcript.Scope{Profile: source, Dir: from},
+		transcript.Scope{Profile: target, Dir: to},
+		sessionID,
+	)
+	if err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	return s.Resume(target, sessionID)
 }
 
 // forgetTombstoneLocked removes a consumed tombstone. Caller holds s.mu.
