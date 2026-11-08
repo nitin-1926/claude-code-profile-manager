@@ -38,6 +38,7 @@ import {
   Search as HistorySearch,
   CancelSearch as HistoryCancelSearch,
   Resume as HistoryResume,
+  OpenInProfile as HistoryOpenInProfile,
 } from '../../wailsjs/go/services/HistoryService'
 import {
   Get as StatusLineGet,
@@ -109,6 +110,8 @@ export const api = {
       HistorySearch(profile, query, token, includeToolResults) as unknown as Promise<SearchResult>,
     cancelSearch: (token: string) => HistoryCancelSearch(token) as unknown as Promise<void>,
     resume: (profile: string, id: string) => HistoryResume(profile, id) as unknown as Promise<CmdResult>,
+    openInProfile: (source: string, target: string, id: string) =>
+      HistoryOpenInProfile(source, target, id) as unknown as Promise<CmdResult>,
   },
   statusline: {
     get: (profile: string) => StatusLineGet(profile) as unknown as Promise<StatusLineConfig>,
