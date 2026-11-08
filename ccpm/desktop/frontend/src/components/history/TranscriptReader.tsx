@@ -3,7 +3,7 @@ import { api } from '@/lib/api'
 import type { HistoryPage, HistorySession, Turn } from '@/types'
 import { cn } from '@/lib/utils'
 import { tildePath, timeAgo } from '@/lib/format'
-import { ArrowLeft, ChevronDown, ChevronUp, List } from 'lucide-react'
+import { ArrowLeft, ArrowRightLeft, ChevronDown, ChevronUp, List } from 'lucide-react'
 import { TurnView } from './Turn'
 
 /** Turns fetched per page. The largest transcript on disk decodes to ~10k. */
@@ -15,6 +15,7 @@ export function TranscriptReader({
   turnUuid,
   relPath = '',
   onBack,
+  onOpenInProfile,
 }: {
   profile: string
   session: HistorySession
@@ -28,6 +29,7 @@ export function TranscriptReader({
    */
   relPath?: string
   onBack: () => void
+  onOpenInProfile: () => void
 }) {
   const [page, setPage] = useState<HistoryPage | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -231,6 +233,13 @@ export function TranscriptReader({
           <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
             {timeAgo(session.lastTs)}
           </span>
+          <button
+            onClick={onOpenInProfile}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ArrowRightLeft className="size-3.5" />
+            Open in profile…
+          </button>
         </div>
         <p className="mt-1 truncate text-[11px] text-muted-foreground">
           {session.cwd ? tildePath(session.cwd) : '—'}
