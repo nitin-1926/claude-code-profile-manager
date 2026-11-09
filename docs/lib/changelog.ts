@@ -32,6 +32,23 @@ export type ChangelogSeries = {
 
 export const CHANGELOG: ChangelogSeries[] = [
   {
+    series: "0.9.x",
+    summary: "Continue any past session under another profile, from the CLI or the History tab.",
+    releases: [
+      {
+        date: "2026-11-04",
+        title: "Open a session in another profile",
+        categories: ["Added"],
+        bullets: [
+          "`ccpm sessions port <id> --from <A> --to <B>` copies a session into another profile and prints the exact command that continues it there. The original stays where it was, and the two copies continue separately.",
+          "The History tab has an \"Open in profile…\" action on every session and in the reader. It lists your other profiles by headroom, with their 5-hour and 7-day usage, renewal times and how old each reading is, and one click continues the session in the profile you pick. It never switches on its own.",
+          "When the profile you are in is at or near a limit, the dialog leads with that, and it states the tradeoffs up front: the cold cache on the new account, usage credits as the option that keeps you on the same account, and `/rewind` checkpoints staying behind.",
+          "Usage stays accurate across a handoff. Tokens already spent stay with the source profile, and only what is added after the copy counts toward the target.",
+        ],
+      },
+    ],
+  },
+  {
     series: "0.7.x",
     summary:
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
