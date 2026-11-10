@@ -34,6 +34,14 @@ type ProfileConfig struct {
 	CreatedAt  string            `json:"created_at"`
 	LastUsed   string            `json:"last_used"`
 	Env        map[string]string `json:"env,omitempty"`
+	// KeyEnv marks a third-party provider profile and names the variable its
+	// keystore key launches under. Empty means an ordinary profile, whose key
+	// (if any) launches as ANTHROPIC_API_KEY.
+	KeyEnv string `json:"key_env,omitempty"`
+	// Preset is the internal/presets id the profile was created from, for
+	// display. Launches read Env and KeyEnv only, so a profile outlives a preset
+	// dropped by a later release.
+	Preset string `json:"preset,omitempty"`
 	// StatusLine overrides Settings.StatusLine for sessions launched under this
 	// profile. nil means "no override" — fall back to the global default.
 	StatusLine *StatusLineLayout `json:"statusline,omitempty"`
@@ -264,6 +272,10 @@ func Save(cfg *Config) error {
 	}
 	return nil
 }
+
+// CustomEndpoint reports whether the profile sends requests somewhere other
+// than Anthropic's API, so Anthropic's price table says nothing about its cost.
+func (p ProfileConfig) CustomEndpoint() bool { return p.Env["ANTHROPIC_BASE_URL"] != "" }
 
 func (c *Config) AddProfile(name, dir, authMethod string) {
 	c.Profiles[name] = ProfileConfig{

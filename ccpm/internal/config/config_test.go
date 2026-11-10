@@ -4,8 +4,43 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// A config written before provider presets existed must load and save without
+// gaining the new fields, and its profile must not read as a provider profile.
+func TestConfigWithoutKeyEnvIsUnchanged(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	path := filepath.Join(tmp, ".ccpm", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"version":"1","default_profile":"work","profiles":{"work":{"name":"work","dir":"/d","auth_method":"api_key","created_at":"a","last_used":"b","env":{"FOO":"bar"}}}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Profiles["work"]
+	if p.KeyEnv != "" || p.Preset != "" || p.CustomEndpoint() {
+		t.Fatalf("old profile read as a provider: %+v", p)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(data); strings.Contains(s, "key_env") || strings.Contains(s, "preset") {
+		t.Fatalf("save added provider fields to an ordinary profile:\n%s", s)
+	}
+}
 
 func TestLoadNonExistent(t *testing.T) {
 	// Override home to a temp dir so Load() reads from a non-existent path
