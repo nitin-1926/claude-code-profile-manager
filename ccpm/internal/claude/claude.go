@@ -6,8 +6,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
+
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/presets"
 )
 
 // FindBinary resolves the claude executable. Discovery order is tuned to
@@ -117,13 +120,19 @@ func Spawn(profileDir string, extraEnv ...string) error {
 // from ccpm so a stray value in the parent or profile env can't redirect the
 // launch at the ccpm layer.
 //
+// keyEnv is set for a third-party provider profile and names the variable its
+// key travels in. Such a launch inherits nothing that routes or authenticates
+// (presets.RoutingEnv) and blanks the other credential variable, as OpenRouter
+// and Ollama require: an Anthropic key exported in the parent shell must not
+// reach a third party. Empty keyEnv is an ordinary profile.
+//
 // Each layer REPLACES the keys it sets rather than appending a duplicate:
 // syscall.Exec hands the slice to the child verbatim, and Node (npm-installed
 // claude) reads the first occurrence of a key while Bun reads the last. An
 // appended duplicate meant `ccpm run B` from a shell with CLAUDE_CONFIG_DIR
 // already exported (after `ccpm use A`, or inside a Claude Bash tool) launched
 // on A's directory.
-func execEnv(profileDir, apiKey string, profileEnv, extraEnv map[string]string) (bin, absProfileDir string, env []string, err error) {
+func execEnv(profileDir, keyEnv, apiKey string, profileEnv, extraEnv map[string]string) (bin, absProfileDir string, env []string, err error) {
 	bin, err = FindBinary()
 	if err != nil {
 		return "", "", nil, err
@@ -135,10 +144,17 @@ func execEnv(profileDir, apiKey string, profileEnv, extraEnv map[string]string) 
 	}
 
 	ccpmEnv := map[string]string{"CLAUDE_CONFIG_DIR": absProfileDir}
-	if apiKey != "" {
+	env = os.Environ()
+	if keyEnv != "" {
+		env = slices.DeleteFunc(env, func(kv string) bool {
+			k, _, _ := strings.Cut(kv, "=")
+			return presets.RoutingEnv(k)
+		})
+		ccpmEnv["ANTHROPIC_API_KEY"], ccpmEnv["ANTHROPIC_AUTH_TOKEN"] = "", ""
+		ccpmEnv[keyEnv] = apiKey
+	} else if apiKey != "" {
 		ccpmEnv["ANTHROPIC_API_KEY"] = apiKey
 	}
-	env = os.Environ()
 	env = overrideEnv(env, profileEnv)
 	env = overrideEnv(env, ccpmEnv)
 	env = overrideEnv(env, extraEnv)
