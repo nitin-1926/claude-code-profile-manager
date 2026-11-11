@@ -9,6 +9,7 @@ import (
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/atomicwrite"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/presets"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/share"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/trust"
 )
@@ -308,10 +309,40 @@ func profileSettings(profileDir, profileName string, prev map[string]interface{}
 	// wrote them there before discovering Claude Code reads from .claude.json.
 	// Dropping the key here makes the cleanup part of the normal rebuild.
 	delete(ccpm, "mcpServers")
+
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading config: %w", err)
+	}
+	provider := cfg.Profiles[profileName].KeyEnv != ""
+	if provider {
+		stripProviderConflicts(ccpm)
+	}
+
 	user := userOwned(existing, prev, ccpm)
 	delete(user, "mcpServers")
+	if provider {
+		stripProviderConflicts(user)
+	}
 
 	return DeepMerge(user, ccpm), stripEqual(ccpm, user), nil
+}
+
+// stripProviderConflicts removes what would override a provider profile's
+// launch env. Claude Code applies settings.json `env` over its process env, and
+// set-default writes a real ANTHROPIC_API_KEY into the host settings every
+// profile inherits, so without this an Anthropic key could reach a third party
+// and a host ANTHROPIC_BASE_URL could carry the provider's key somewhere else.
+func stripProviderConflicts(settings map[string]interface{}) {
+	delete(settings, "apiKeyHelper")
+	env, ok := settings["env"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	maps.DeleteFunc(env, func(k string, _ interface{}) bool { return presets.RoutingEnv(k) })
+	if len(env) == 0 {
+		delete(settings, "env")
+	}
 }
 
 // MaterializeAll computes the profile's settings.json and .claude.json
