@@ -17,6 +17,7 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/presets"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/vault"
 )
 
@@ -157,6 +158,15 @@ func runAuthRefresh(cmd *cobra.Command, args []string) error {
 		}
 
 	case "api_key":
+		// A provider that takes no key has nothing to prompt for; re-storing the
+		// placeholder also repairs a clone made with --no-auth.
+		if preset, err := presets.Get(p.Preset); err == nil && !preset.KeyRequired {
+			if err := newKeystore().SetAPIKey(name, preset.KeyValue); err != nil {
+				return fmt.Errorf("storing key: %w", err)
+			}
+			green.Printf("✓ Profile %q is ready: %s needs no key\n", name, preset.Label)
+			return nil
+		}
 		fmt.Print("Enter new API key: ")
 		var key string
 		if term.IsTerminal(int(os.Stdin.Fd())) {

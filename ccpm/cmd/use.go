@@ -72,6 +72,13 @@ func runUse(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("profile %q not found", name)
 	}
 
+	// `ccpm use` exports only CLAUDE_CONFIG_DIR, so a bare `claude` in that shell
+	// would have neither the provider's endpoint nor its key and would offer an
+	// Anthropic login instead.
+	if p.KeyEnv != "" {
+		return fmt.Errorf("profile %q uses a third-party provider, which `ccpm use` can't set up. Launch it with `ccpm run %s`", name, name)
+	}
+
 	maybeNudgeDefaultDrift(cfg)
 
 	// Materialize shared settings/MCP before activating. No project layer —

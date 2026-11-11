@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -102,6 +103,12 @@ func runClone(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg.AddProfile(dst, dstDir, authMethod)
+	// A provider's key without its endpoint would launch against Anthropic.
+	if srcProfile.KeyEnv != "" {
+		c := cfg.Profiles[dst]
+		c.KeyEnv, c.Preset, c.Env = srcProfile.KeyEnv, srcProfile.Preset, maps.Clone(srcProfile.Env)
+		cfg.Profiles[dst] = c
+	}
 	if err := config.Save(cfg); err != nil {
 		// The clone never registered: drop the credentials copied for it too,
 		// as `ccpm add` does, so nothing orphaned outlives the failed clone.

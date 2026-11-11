@@ -91,6 +91,13 @@ func applySetDefault(name string) error {
 		return fmt.Errorf("profile %q not found", name)
 	}
 
+	// An API-key default lives in ~/.claude/settings.json, which every ccpm
+	// profile inherits, so a provider default would send all of them to that
+	// provider. Refuse before any of the side effects below.
+	if p.KeyEnv != "" {
+		return fmt.Errorf("profile %q uses a third-party provider and can't be the machine default: that would route every profile through it. Launch it with `ccpm run %s`", name, name)
+	}
+
 	yellow := color.New(color.FgYellow)
 
 	// Capture whatever has accumulated in the default slot (and ~/.claude.json

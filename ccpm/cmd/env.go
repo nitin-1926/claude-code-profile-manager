@@ -39,8 +39,9 @@ parent shell, and is itself replaced by any one-shot
 ` + "`ccpm run --ccpm-env KEY=VAL`" + ` override. Use it for per-profile base URLs,
 proxy settings, or CLAUDE_CODE_* knobs.
 
-CLAUDE_CONFIG_DIR and ANTHROPIC_API_KEY are reserved — ccpm always computes
-those — and cannot be set here.`,
+CLAUDE_CONFIG_DIR and ANTHROPIC_API_KEY are reserved: ccpm always computes
+those, so they cannot be set here. On a profile created with --preset, neither
+can the variable its provider key travels in (ANTHROPIC_AUTH_TOKEN).`,
 	}
 
 	setCmd := &cobra.Command{
@@ -100,6 +101,11 @@ func runEnvSet(state *envState, args []string) error {
 	cfg, p, err := loadProfile(state.profile)
 	if err != nil {
 		return err
+	}
+	// Reserved per profile, not globally: an ordinary profile behind a gateway
+	// may legitimately carry its own ANTHROPIC_AUTH_TOKEN here.
+	if _, has := pairs[p.KeyEnv]; has {
+		return fmt.Errorf("%q is reserved on this provider profile (sourced from the keystore). Update it with `ccpm auth refresh %s`", p.KeyEnv, state.profile)
 	}
 	if p.Env == nil {
 		p.Env = map[string]string{}
