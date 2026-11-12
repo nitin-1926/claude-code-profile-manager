@@ -9,3 +9,7 @@ export function Get(arg1) {
 export function List() {
   return window['go']['services']['Profiles']['List']();
 }
+
+export function Presets() {
+  return window['go']['services']['Profiles']['Presets']();
+}

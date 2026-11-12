@@ -106,6 +106,19 @@ func TestUsageNoNullArrays(t *testing.T) {
 	}
 }
 
+func TestPresetsNoNullArrays(t *testing.T) {
+	got := NewProfiles().Presets()
+	assertNoNullArrays(t, map[string]any{"presets": got}, "presets")
+	if len(got) == 0 {
+		t.Fatal("no presets offered")
+	}
+	for _, p := range got {
+		if p.ID == "" || p.Label == "" || p.SourceURL == "" {
+			t.Errorf("incomplete preset: %+v", p)
+		}
+	}
+}
+
 func TestLimitsNoNullArrays(t *testing.T) {
 	name := syntheticProfile(t)
 	l, err := NewLimits().Get(name)

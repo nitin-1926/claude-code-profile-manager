@@ -372,10 +372,31 @@ export namespace services {
 	
 	
 	
+	export class Preset {
+	    id: string;
+	    label: string;
+	    description: string;
+	    sourceUrl: string;
+	    keyRequired: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Preset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.description = source["description"];
+	        this.sourceUrl = source["sourceUrl"];
+	        this.keyRequired = source["keyRequired"];
+	    }
+	}
 	export class Profile {
 	    name: string;
 	    dir: string;
 	    authMethod: string;
+	    preset: string;
 	    createdAt: string;
 	    lastUsed: string;
 	    isDefault: boolean;
@@ -390,6 +411,7 @@ export namespace services {
 	        this.name = source["name"];
 	        this.dir = source["dir"];
 	        this.authMethod = source["authMethod"];
+	        this.preset = source["preset"];
 	        this.createdAt = source["createdAt"];
 	        this.lastUsed = source["lastUsed"];
 	        this.isDefault = source["isDefault"];

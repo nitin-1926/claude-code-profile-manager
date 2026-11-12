@@ -14,10 +14,19 @@ export interface Profile {
   name: string
   dir: string
   authMethod: string
+  preset: string
   createdAt: string
   lastUsed: string
   isDefault: boolean
   counts: AssetCounts
+}
+
+export interface Preset {
+  id: string
+  label: string
+  description: string
+  sourceUrl: string
+  keyRequired: boolean
 }
 
 export type Layer = 'host' | 'global' | 'profile'

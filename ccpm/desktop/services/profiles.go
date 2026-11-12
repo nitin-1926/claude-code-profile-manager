@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/presets"
 )
 
 // AssetCounts is a quick per-profile tally for the overview/list, counted by
@@ -30,10 +31,20 @@ type Profile struct {
 	Name       string      `json:"name"`
 	Dir        string      `json:"dir"`
 	AuthMethod string      `json:"authMethod"`
+	Preset     string      `json:"preset"`
 	CreatedAt  string      `json:"createdAt"`
 	LastUsed   string      `json:"lastUsed"`
 	IsDefault  bool        `json:"isDefault"`
 	Counts     AssetCounts `json:"counts"`
+}
+
+// Preset is a third-party provider the new-profile flow offers.
+type Preset struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	SourceURL   string `json:"sourceUrl"`
+	KeyRequired bool   `json:"keyRequired"`
 }
 
 // Profiles is the bound service for reading profile data.
@@ -61,6 +72,15 @@ func (s *Profiles) List() ([]Profile, error) {
 	return out, nil
 }
 
+// Presets returns the provider presets, in the table's order.
+func (s *Profiles) Presets() []Preset {
+	out := []Preset{}
+	for _, p := range presets.All() {
+		out = append(out, Preset{ID: p.ID, Label: p.Label, Description: p.Description, SourceURL: p.SourceURL, KeyRequired: p.KeyRequired})
+	}
+	return out
+}
+
 // Get returns a single profile by name, or nil if it is not registered.
 func (s *Profiles) Get(name string) (*Profile, error) {
 	cfg, err := config.Load()
@@ -80,6 +100,7 @@ func toDTO(name string, pc config.ProfileConfig, defaultProfile string) Profile 
 		Name:       name,
 		Dir:        pc.Dir,
 		AuthMethod: pc.AuthMethod,
+		Preset:     pc.Preset,
 		CreatedAt:  pc.CreatedAt,
 		LastUsed:   pc.LastUsed,
 		IsDefault:  name == defaultProfile,
