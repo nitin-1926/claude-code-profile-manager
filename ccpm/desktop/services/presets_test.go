@@ -117,3 +117,35 @@ func TestCostIsUnknownOnCustomEndpoint(t *testing.T) {
 		t.Errorf("custom endpoint: usage=%v blocks=%v history=%v unknown=%v", u, b, h, unknown)
 	}
 }
+
+// An API-key profile holds no subscription tier and will never report limits, so
+// it reads "does not report limits", not "no reading yet" or an error.
+func TestLimitsOnAPIKeyProfileSayItWillNotReport(t *testing.T) {
+	name := syntheticProfile(t)
+	if l, err := NewLimits().Get(name); err != nil || l.Reason != ReasonNoData {
+		t.Fatalf("oauth profile: reason=%q err=%v", l.Reason, err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Profiles[name]
+	p.AuthMethod = "api_key"
+	cfg.Profiles[name] = p
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	l, err := NewLimits().Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Available || l.Reason != ReasonNotSubscribed {
+		t.Errorf("api-key profile: %+v", l)
+	}
+	assertNoNullArrays(t, l, "windows")
+	all, err := NewLimits().All()
+	if err != nil || len(all) != 1 || all[0].Reason != ReasonNotSubscribed {
+		t.Errorf("All: %+v, %v", all, err)
+	}
+}

@@ -64,7 +64,7 @@ func (s *LimitsService) Get(profile string) (ProfileLimits, error) {
 	if !ok {
 		return emptyLimits(profile, ReasonNoData), nil
 	}
-	return limitsFor(profile, pc.Dir), nil
+	return limitsForProfile(profile, pc), nil
 }
 
 // All returns every configured profile's windows, name-sorted so the rail's
@@ -83,9 +83,20 @@ func (s *LimitsService) All() ([]ProfileLimits, error) {
 
 	out := make([]ProfileLimits, 0, len(names))
 	for _, name := range names {
-		out = append(out, limitsFor(name, cfg.Profiles[name].Dir))
+		out = append(out, limitsForProfile(name, cfg.Profiles[name]))
 	}
 	return out, nil
+}
+
+// limitsForProfile is limitsFor with what the profile's config knows and its
+// .claude.json can't say: an API-key profile holds no subscription tier, yet it
+// will never report limits, so "no reading yet" would wait forever.
+func limitsForProfile(name string, pc config.ProfileConfig) ProfileLimits {
+	l := limitsFor(name, pc.Dir)
+	if !l.Available && pc.AuthMethod == "api_key" {
+		l.Reason = ReasonNotSubscribed
+	}
+	return l
 }
 
 func limitsFor(profile, dir string) ProfileLimits {
