@@ -138,6 +138,13 @@ func (s *HistoryService) Sessions(profile string) ([]HistorySession, error) {
 		return out, nil
 	}
 
+	// A session on another endpoint can't be priced from Anthropic's table; the
+	// row hides a zero cost rather than showing a wrong one.
+	unpriced := false
+	if cfg, err := config.Load(); err == nil {
+		unpriced = cfg.Profiles[profile].CustomEndpoint()
+	}
+
 	ix, _ := transcript.BuildIndex(dir) // a build error still yields a usable index
 	records := map[string]*usage.SessionRecord{}
 	if sess, _, err := usage.Load(dir); err == nil && sess != nil {
@@ -152,6 +159,9 @@ func (s *HistoryService) Sessions(profile string) ([]HistorySession, error) {
 			Turns: e.Turns, FirstTS: e.FirstTS, LastTS: e.LastTS,
 			Tokens: e.Tokens().Total(), Cost: e.Cost(),
 			Openable: transcriptExists(dir, e.RelPath),
+		}
+		if unpriced {
+			row.Cost = 0
 		}
 		if r := records[id]; r != nil {
 			row.Responses = r.Messages

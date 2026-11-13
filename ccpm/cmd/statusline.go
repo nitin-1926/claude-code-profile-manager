@@ -122,6 +122,12 @@ func runStatusLineRender(cmd *cobra.Command, args []string) error {
 	profile := statusLineProfileName(cfg)
 	now := time.Now()
 
+	// Claude Code prices a session from Anthropic's rates, which say nothing
+	// about what another endpoint charges.
+	if cfg != nil && cfg.Profiles[profile].CustomEndpoint() {
+		in.Cost.TotalCostUSD = 0
+	}
+
 	// Claude Code renders each printed line as its own row.
 	layout := statusline.Resolve(cfg, profile)
 	for _, row := range renderStatusLine(in, profile, now, statusLineColorEnabled(), layout) {

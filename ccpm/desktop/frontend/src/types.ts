@@ -86,6 +86,7 @@ export interface Usage {
   totals: UsageTokens
   messages: number
   cost: number
+  costUnknown: boolean
   byDay: UsageDay[]
   byModel: UsageNamed[]
   byProject: UsageNamed[]

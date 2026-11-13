@@ -298,3 +298,18 @@ func TestAuthRefreshRestoresPlaceholderWithoutPrompting(t *testing.T) {
 		t.Errorf("keystore = %q, %v", got, err)
 	}
 }
+
+// Claude Code's own session cost uses Anthropic's rates, which are meaningless
+// for another endpoint, so only an Anthropic-bound profile shows it.
+func TestStatusLineHidesCostOnCustomEndpoint(t *testing.T) {
+	lc := lifecycleSandbox(t)
+	lc.addProvider(t, "router")
+	lc.addProfile(t, "plain", "api_key")
+	const payload = `{"model":{"display_name":"m"},"cost":{"total_cost_usd":1.5}}`
+	if out := renderVia(t, "router", payload); strings.Contains(out, "$") {
+		t.Errorf("provider status line shows a cost: %q", out)
+	}
+	if out := renderVia(t, "plain", payload); !strings.Contains(out, "$1.50") {
+		t.Errorf("ordinary status line lost its cost: %q", out)
+	}
+}

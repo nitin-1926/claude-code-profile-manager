@@ -82,18 +82,23 @@ export function UsageTab({ profile }: { profile: string }) {
         </div>
       )}
 
-      {active && <ActiveBlockCard block={active} />}
+      {active && <ActiveBlockCard block={active} costUnknown={data?.costUnknown ?? false} />}
 
       {data && data.totals.total > 0 && (
         <>
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label="Cost (est.)" value={money(data.cost)} accent />
+            <Stat label="Cost (est.)" value={data.costUnknown ? 'Unknown' : money(data.cost)} accent />
             <Stat label="Total" value={humanTokens(data.totals.total)} />
             <Stat label="Input" value={humanTokens(data.totals.input)} />
             <Stat label="Output" value={humanTokens(data.totals.output)} />
             <Stat label="Cache read" value={humanTokens(data.totals.cacheRead)} />
             <Stat label="Messages" value={humanTokens(data.messages)} />
           </div>
+          {data.costUnknown && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              This profile uses another endpoint, which sets its own prices. Check your provider's dashboard for cost.
+            </p>
+          )}
 
           <section className="mt-7">
             <SectionLabel>Activity</SectionLabel>
@@ -122,7 +127,7 @@ export function UsageTab({ profile }: { profile: string }) {
 
 // ActiveBlockCard is the live "current 5-hour block" monitor: cost/tokens so
 // far, burn rate, time left in the window, and the projected end-of-block cost.
-function ActiveBlockCard({ block }: { block: Block }) {
+function ActiveBlockCard({ block, costUnknown }: { block: Block; costUnknown: boolean }) {
   const pct = Math.min(100, Math.max(0, ((300 - block.remainingMinutes) / 300) * 100))
   return (
     <div className="mb-5 rounded-xl border border-primary/30 bg-primary/5 p-4">
@@ -138,10 +143,10 @@ function ActiveBlockCard({ block }: { block: Block }) {
         <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <BlockStat label="Cost so far" value={money(block.cost)} accent />
+        <BlockStat label="Cost so far" value={costUnknown ? 'Unknown' : money(block.cost)} accent />
         <BlockStat label="Tokens" value={humanTokens(block.total)} />
-        <BlockStat label="Burn" value={`${money(block.costPerHour)}/hr`} />
-        <BlockStat label="Projected" value={money(block.projectedCost)} />
+        <BlockStat label="Burn" value={costUnknown ? 'Unknown' : `${money(block.costPerHour)}/hr`} />
+        <BlockStat label="Projected" value={costUnknown ? 'Unknown' : money(block.projectedCost)} />
       </div>
     </div>
   )

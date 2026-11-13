@@ -672,6 +672,7 @@ export namespace services {
 	    totals: UsageTokens;
 	    messages: number;
 	    cost: number;
+	    costUnknown: boolean;
 	    byDay: UsageDay[];
 	    byModel: UsageNamed[];
 	    byProject: UsageNamed[];
@@ -689,6 +690,7 @@ export namespace services {
 	        this.totals = this.convertValues(source["totals"], UsageTokens);
 	        this.messages = source["messages"];
 	        this.cost = source["cost"];
+	        this.costUnknown = source["costUnknown"];
 	        this.byDay = this.convertValues(source["byDay"], UsageDay);
 	        this.byModel = this.convertValues(source["byModel"], UsageNamed);
 	        this.byProject = this.convertValues(source["byProject"], UsageNamed);
