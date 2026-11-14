@@ -72,6 +72,7 @@ Release highlights and fixes: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nit
 
 - **Parallel sessions**: run different Claude Code accounts in different terminals at the same time.
 - **OAuth + API key** per profile, with credentials in the OS keychain.
+- **Provider presets**: `ccpm add <name> --preset <id>` runs a profile on Ollama, OpenRouter, DeepSeek, Z.ai, Kimi or DeepInfra with that provider's own API key and billing. Each provider's compatibility is its own claim, and some Claude Code features may behave differently; `ccpm preset list` links each provider's page.
 - **Per-profile assets**: skills, agents, commands, rules, hooks, plugins, MCP servers, and settings install globally, per-profile, or per-project.
 - **MCP transports**: stdio, HTTP, SSE. `ccpm mcp auth <server> --profile <p>` completes OAuth in the right profile.
 - **Permissions and hooks** without hand-editing JSON.
@@ -83,6 +84,8 @@ Release highlights and fixes: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nit
 | Command                                                   | Description                                                          |
 | --------------------------------------------------------- | -------------------------------------------------------------------- |
 | `ccpm add <name>`                                         | Create a new profile (OAuth or API key) via an interactive wizard    |
+| `ccpm add <name> --preset <id>`                           | Create a profile on a third-party provider, with its own API key     |
+| `ccpm preset list`                                        | List the provider presets and link each provider's page              |
 | `ccpm run <name> [args...]`                               | Launch claude with the profile (unknown flags forward to claude)     |
 | `ccpm use <name>`                                         | Set the profile for the current shell session                        |
 | `ccpm list` / `ls`                                        | List profiles with auth status (`--json` for machine-readable output) |

@@ -87,6 +87,7 @@ Release notes live on the docs site: **[ccpm.nitingupta.xyz/changelog](https://c
 
 - **Parallel sessions**: run different Claude Code accounts side-by-side, fully isolated.
 - **OAuth + API key** per profile, with credentials in the OS keychain.
+- **Provider presets**: `ccpm add <name> --preset <id>` runs a profile on Ollama, OpenRouter, DeepSeek, Z.ai, Kimi or DeepInfra with that provider's own key.
 - **Per-profile assets**: skills, agents, commands, rules, hooks, plugins, MCP servers, and settings install globally, per-profile, or per-project.
 - **MCP transports**: stdio, HTTP, and SSE. Remote MCPs authenticate via `ccpm mcp auth` so OAuth tokens land in the right profile.
 - **Permissions and hooks** without hand-editing JSON.
@@ -159,6 +160,8 @@ make desktop-dev   # hot-reload dev window
 | Command                       | Description                                                                              |
 | ----------------------------- | ---------------------------------------------------------------------------------------- |
 | `ccpm add <name>`             | Create a new profile (interactive: import wizard + OAuth or API key)                     |
+| `ccpm add <name> --preset <id>` | Create a profile on a third-party provider (see [Provider presets](#provider-presets)) |
+| `ccpm preset list`            | List the provider presets                                                                |
 | `ccpm run <name> [...]`       | Launch Claude Code with a profile. Unknown flags forward to claude.                      |
 | `ccpm use <name>`             | Set the profile for the current shell session (requires `ccpm shell-init`)               |
 | `ccpm list` / `ls`            | List profiles with auth status (`--json` for machine-readable output)                    |
@@ -186,6 +189,33 @@ make desktop-dev   # hot-reload dev window
 Every command also accepts the global `--log-level debug|info|warn|error` flag (default `warn`); `debug` traces cascade adoption and lock activity to stderr.
 
 `ccpm run` intercepts five flags before forwarding to claude: `--ccpm-env KEY=VAL` (one-shot env override, repeatable), `--no-auto-adopt` (skip the host-asset cascade scan for this launch), `--no-statusline` (skip injecting the default status line for this launch), `--help`, `--version`. Use `--` to forward `--help` or `--version` to claude.
+
+### Provider presets
+
+A preset creates a profile that runs Claude Code against another provider. It carries the provider's base URL plus the provider's own API key, kept in your OS keychain. There is no proxy, and no Pro or Max login is involved.
+
+```bash
+ccpm preset list
+ccpm add router --preset openrouter          # prompts for the key
+printf '%s\n' "$KEY" | ccpm add router --preset openrouter   # scripted
+ccpm run router
+```
+
+| Id             | Provider                                                                                | Notes                                                 |
+| -------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `ollama`       | [Ollama (local)](https://docs.ollama.com/integrations/claude-code)                      | No key. Choose a model: `ccpm run <name> --model <m>` |
+| `ollama-cloud` | [Ollama Cloud](https://docs.ollama.com/integrations/claude-code)                        | Choose a model: `ccpm run <name> --model <m>`         |
+| `openrouter`   | [OpenRouter](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration)   | Guaranteed by OpenRouter on Anthropic's own provider  |
+| `deepseek`     | [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code)    | Maps Claude model names on its side                   |
+| `zai`          | [Z.ai GLM](https://docs.z.ai/devpack/tool/claude)                                       | GLM Coding Plan key                                   |
+| `kimi`         | [Moonshot Kimi](https://platform.kimi.ai/docs/guide/claude-code-kimi)                   | Ships the model settings from Kimi's page             |
+| `deepinfra`    | [DeepInfra](https://docs.deepinfra.com/integrations/anthropic)                          | Ships DeepInfra's recommended models                  |
+
+Each provider's compatibility is its own claim, and some Claude Code features may behave differently; its page is the reference. You pay that provider, under its terms.
+
+A provider profile launches with its own endpoint and key whatever your shell or `~/.claude/settings.json` holds. Change a model or endpoint with `ccpm env set` (for example `ccpm env set ANTHROPIC_MODEL=<model> --profile <name>`), and the key with `ccpm auth refresh`.
+
+Launch these profiles with `ccpm run`. `ccpm set-default` and `ccpm use` refuse them: a machine default would route every profile through the provider, and `ccpm use` can't carry the key. The desktop app's new-profile dialog offers the same presets. Its Usage tab shows cost as unknown for these profiles, because Anthropic's prices say nothing about another endpoint.
 
 ### Assets: skills, agents, commands, rules
 
@@ -280,7 +310,7 @@ Trust decides what ccpm's own view (`ccpm settings show`, the desktop app) takes
 | `ccpm env list --profile <p>`                          | List persisted env vars              |
 | `ccpm run <p> --ccpm-env KEY=VALUE` (repeatable)       | One-shot env override at launch time |
 
-`CLAUDE_CONFIG_DIR` and `ANTHROPIC_API_KEY` are reserved: ccpm always computes them and they cannot be set via `ccpm env`. Use `--ccpm-env` for a one-shot override.
+`CLAUDE_CONFIG_DIR` and `ANTHROPIC_API_KEY` are reserved: ccpm always computes them and they cannot be set via `ccpm env`. On a [provider preset](#provider-presets) profile, so is `ANTHROPIC_AUTH_TOKEN`. Use `--ccpm-env` for a one-shot override.
 
 ### Sessions
 
