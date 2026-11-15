@@ -284,6 +284,75 @@ func TestConcurrentPrefWritesKeepEveryEdit(t *testing.T) {
 	}
 }
 
+// DefaultPrefs is what the file is decoded on top of, so a file from before the
+// tray existed loads with it on, while an explicit off stays off.
+func TestTrayDefaultsOnAndExplicitOffStaysOff(t *testing.T) {
+	base := withTempHome(t)
+	if !LoadPrefs().TrayOn {
+		t.Error("no file: TrayOn should default to on")
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(base, "desktop.json")
+
+	if err := os.WriteFile(path, []byte(`{"railEdge":"top"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !LoadPrefs().TrayOn {
+		t.Error("upgraded file without trayOn: should load as on")
+	}
+
+	if err := os.WriteFile(path, []byte(`{"trayOn":false}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if LoadPrefs().TrayOn {
+		t.Error("explicit trayOn:false loaded as on")
+	}
+}
+
+// SetNotch copies named fields, so one missing from its list would be dropped
+// without an error and the switch would snap back.
+func TestSetNotchStoresTheTraySwitch(t *testing.T) {
+	withTempHome(t)
+	s := NewPrefs()
+	cur := LoadPrefs()
+	for _, want := range []bool{false, true} {
+		cur.TrayOn, cur.DockMeter = want, want
+		got, err := s.SetNotch(cur)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.TrayOn != want || got.DockMeter != want {
+			t.Errorf("SetNotch(%v) stored trayOn=%v dockMeter=%v", want, got.TrayOn, got.DockMeter)
+		}
+	}
+}
+
+// Off by default, and on stays on across a reload.
+func TestDockMeterDefaultsOff(t *testing.T) {
+	base := withTempHome(t)
+	if LoadPrefs().DockMeter {
+		t.Error("no file: DockMeter should default to off")
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(base, "desktop.json")
+	if err := os.WriteFile(path, []byte(`{"railEdge":"top"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if LoadPrefs().DockMeter {
+		t.Error("upgraded file without dockMeter: should load as off")
+	}
+	if err := os.WriteFile(path, []byte(`{"dockMeter":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !LoadPrefs().DockMeter {
+		t.Error("explicit dockMeter:true loaded as off")
+	}
+}
+
 // The notch section sends its whole copy of the preferences. A theme changed
 // after that copy was read must not be put back by the notch write.
 func TestSetNotchLeavesTheThemeAlone(t *testing.T) {
