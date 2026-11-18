@@ -32,6 +32,22 @@ export type ChangelogSeries = {
 
 export const CHANGELOG: ChangelogSeries[] = [
   {
+    series: "0.9.x",
+    summary:
+      "The desktop app reaches outside its window: run any profile from the menu bar, and watch your headroom on the Dock icon.",
+    releases: [
+      {
+        date: "2026-11-04",
+        title: "Menu bar and Dock",
+        categories: ["Added"],
+        bullets: [
+          "The desktop app now has a menu bar icon, on by default. It lists every profile with its 5-hour and 7-day usage when known, and clicking one runs it in a new Terminal window without opening the app. Show Window and Quit are there too, and a switch in Settings removes or restores the icon instantly.",
+          "An optional Dock meter, off by default, draws a bar over the Dock icon that drains as a limit window fills, on the same thresholds as the notch. It follows the notch's main ring, for your default profile, and shows the plain icon when there is no reading.",
+        ],
+      },
+    ],
+  },
+  {
     series: "0.7.x",
     summary:
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
