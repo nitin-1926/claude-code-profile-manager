@@ -5,6 +5,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -246,6 +247,81 @@ func (s *MutateService) SetEnv(kv, profile string) CmdResult {
 // UnsetEnv removes an env var from a profile.
 func (s *MutateService) UnsetEnv(key, profile string) CmdResult {
 	return runCCPM("env", "unset", "--profile", profile, "--", key)
+}
+
+// --- export / import bundles ---
+
+// ExportProfile writes profile name to a bundle at path. Secret values become
+// placeholders unless includeSecrets.
+func (s *MutateService) ExportProfile(name, path string, includeSecrets bool) CmdResult {
+	args := []string{"export", "--output=" + path}
+	if includeSecrets {
+		args = append(args, "--include-secrets")
+	}
+	return runCCPM(append(args, "--", name)...)
+}
+
+// BundleRunnable is one item a bundle would run, or that would change where
+// Claude Code connects. Kind is hook, command, env or mcp.
+type BundleRunnable struct {
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+	Detail string `json:"detail"`
+}
+
+// BundlePlaceholder is a value the exporter stripped: a settings env value
+// (Server empty) or an MCP server's env/header value.
+type BundlePlaceholder struct {
+	File    string `json:"file"`
+	Project string `json:"project"`
+	Server  string `json:"server"`
+	Field   string `json:"field"`
+	Key     string `json:"key"`
+}
+
+// BundlePreview is `ccpm import-bundle --dry-run --json`: the profile name
+// the bundle defaults to, what it runs, and what it left blank.
+type BundlePreview struct {
+	Name         string              `json:"name"`
+	Runnables    []BundleRunnable    `json:"runnables"`
+	Placeholders []BundlePlaceholder `json:"placeholders"`
+}
+
+// PreviewBundle lists what importing the bundle at path would run and which
+// values need filling in, without restoring anything: the trust preview
+// shown before ImportBundle passes --trust-bundle.
+func (s *MutateService) PreviewBundle(path string) (BundlePreview, error) {
+	p := BundlePreview{Runnables: []BundleRunnable{}, Placeholders: []BundlePlaceholder{}}
+	r, out := execCCPM(60*time.Second, "import-bundle", "--dry-run", "--json", "--", path)
+	if !r.OK {
+		// The CLI's own message names the problem; r.Error alone is often
+		// just "exit status 1".
+		msg := strings.TrimSpace(r.Output)
+		if msg == "" || outdatedCLI(r.Output) {
+			msg = r.Error
+		}
+		return p, fmt.Errorf("reading bundle: %s", msg)
+	}
+	if err := json.Unmarshal(out, &p); err != nil {
+		return p, fmt.Errorf("reading bundle: ccpm import-bundle --dry-run --json printed something that is not JSON: %w", err)
+	}
+	if p.Runnables == nil {
+		p.Runnables = []BundleRunnable{}
+	}
+	if p.Placeholders == nil {
+		p.Placeholders = []BundlePlaceholder{}
+	}
+	return p, nil
+}
+
+// ImportBundle restores the bundle at path as profile name. --trust-bundle is
+// passed because the UI has already shown PreviewBundle and the user
+// confirmed it; there is no TTY for the CLI to ask on.
+func (s *MutateService) ImportBundle(path, name string) CmdResult {
+	if err := profile.ValidateName(name); err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	return runCCPM("import-bundle", "--trust-bundle", "--profile", name, "--", path)
 }
 
 // terminal launches a new Terminal window running `<ccpm> <args...>`, optionally

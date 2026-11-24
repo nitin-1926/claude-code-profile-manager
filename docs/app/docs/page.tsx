@@ -1198,11 +1198,12 @@ ccpm auth restore personal`}
           <p>
             <code>ccpm export</code> bundles a profile (its skills, agents,
             commands, rules and hooks, its settings and MCP fragments, and plugin
-            metadata) into a single <code>.tar.gz</code> you can copy to another
-            machine and restore with <code>ccpm import-bundle</code>. Session
-            history (transcripts, todos, shell snapshots) is left out unless you
-            pass <code>--include-history</code>, since it can hold secrets you
-            pasted into a session. Use{" "}
+            metadata) into a single <code>.tar.gz</code> you can share with a
+            team or copy to another machine, and restore with{" "}
+            <code>ccpm import-bundle</code>. Session history (transcripts,
+            todos, shell snapshots) is left out unless you pass{" "}
+            <code>--include-history</code>, since it can hold secrets you pasted
+            into a session. Use{" "}
             <a href="#profiles-clone">ccpm clone</a> instead when you just want a
             second copy on the same machine.
           </p>
@@ -1211,8 +1212,24 @@ ccpm auth restore personal`}
             restoring, <code>ccpm import-bundle</code> lists every hook, MCP
             server, command-running setting and env key in it and asks you to
             confirm. Without a terminal it refuses unless you pass{" "}
-            <code>--trust-bundle</code>.
+            <code>--trust-bundle</code>. Add <code>--dry-run</code> (with{" "}
+            <code>--json</code> for scripts) to see that list without restoring
+            anything. In the desktop app, the <strong>Export</strong> button on
+            a profile and the <strong>Import</strong> button in the sidebar do
+            the same, with the list shown before you import.
           </p>
+          <Callout type="info" title="Secret values become placeholders">
+            By default every settings <code>env</code> value and every MCP
+            server <code>env</code> and header value is replaced with{" "}
+            <code>__CCPM_REDACTED__</code>. The keys stay, so after restoring,{" "}
+            <code>ccpm import-bundle</code> lists each one with how to fill it
+            in: <code>ccpm settings set env.&lt;KEY&gt; &lt;value&gt; --profile
+            &lt;name&gt;</code> for settings env, and the MCP fragment file to
+            edit for MCP env and headers. Pass <code>--include-secrets</code> to
+            keep the real values when moving between your own machines. A
+            bundle still carries your MCP servers&apos; commands, args and URLs,
+            so review it before sharing.
+          </Callout>
           <Callout type="warn" title="Credentials are excluded by default">
             OS-keychain tokens are machine-bound, and{" "}
             <code>.credentials.json</code> / <code>.claude.json</code> hold
@@ -1225,12 +1242,15 @@ ccpm auth restore personal`}
             .
           </Callout>
           <CodeBlock
-            code={`# export a profile (credentials excluded by default)
+            code={`# export a profile to share (credentials and secret values left out)
 ccpm export work
 ccpm export work -o ~/backups/work.ccpm.tar.gz
 
-# include session history and credentials for a trusted same-user move
-ccpm export work --include-history --include-credentials
+# keep everything for a trusted same-user move
+ccpm export work --include-history --include-credentials --include-secrets
+
+# see what a bundle would run before restoring it
+ccpm import-bundle ~/backups/work.ccpm.tar.gz --dry-run
 
 # restore on another machine (path-traversal-safe)
 ccpm import-bundle ~/backups/work.ccpm.tar.gz

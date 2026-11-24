@@ -6,7 +6,7 @@ import { useToast } from '@/components/ui/Toast'
 import { PromptModal } from '@/components/ui/Modal'
 import { validateProfileName } from '@/lib/validate'
 import type { Profile } from '@/types'
-import { Boxes, KeyRound, Plus, Sparkles } from 'lucide-react'
+import { Boxes, Import, KeyRound, Plus, Sparkles } from 'lucide-react'
 
 interface Props {
   profiles: Profile[]
@@ -14,9 +14,11 @@ interface Props {
   onSelect: (name: string) => void
   names: string[]
   onMutated: () => void
+  /** Pick a bundle file and open the import preview. */
+  onImportBundle: () => void
 }
 
-export function Sidebar({ profiles, selected, onSelect, names, onMutated }: Props) {
+export function Sidebar({ profiles, selected, onSelect, names, onMutated, onImportBundle }: Props) {
   const [creating, setCreating] = useState(false)
   const toast = useToast()
   return (
@@ -38,13 +40,22 @@ export function Sidebar({ profiles, selected, onSelect, names, onMutated }: Prop
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Profiles · {profiles.length}
         </span>
-        <button
-          onClick={() => setCreating(true)}
-          title="Create a new profile"
-          className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Plus className="size-3.5" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={onImportBundle}
+            title="Import a profile bundle"
+            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Import className="size-3.5" />
+          </button>
+          <button
+            onClick={() => setCreating(true)}
+            title="Create a new profile"
+            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
       </div>
 
       <PromptModal

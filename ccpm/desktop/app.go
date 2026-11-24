@@ -132,6 +132,34 @@ func (a *App) PickDirectory() string {
 	return dir
 }
 
+// PickExportPath opens a native save dialog for a profile bundle and returns
+// the chosen path (empty if cancelled).
+func (a *App) PickExportPath(profile string) string {
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export profile bundle",
+		DefaultFilename: profile + ".ccpm.tar.gz",
+	})
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+// PickBundle opens a native file picker for a profile bundle to import and
+// returns the chosen path (empty if cancelled).
+func (a *App) PickBundle() string {
+	// "gz", not "tar.gz": macOS matches a filter against the last extension
+	// only, so a "tar.gz" filter would grey out every bundle.
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   "Import a profile bundle",
+		Filters: []runtime.FileFilter{{DisplayName: "ccpm bundle (*.tar.gz, *.tgz)", Pattern: "*.gz;*.tgz"}},
+	})
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
 // notchVisibility maps the stored preferences onto the notch's tri-state. The
 // notch owns the whole reveal decision now, so it needs to know about "always"
 // as its own mode rather than inferring it from a hover flag being off. Off is

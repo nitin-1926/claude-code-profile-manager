@@ -95,6 +95,25 @@ func TestDetailsNoNullArrays(t *testing.T) {
 	}
 }
 
+// The import trust preview maps both lists; a CLI that prints null for one,
+// or fails outright, must still hand the frontend arrays.
+func TestBundlePreviewNoNullArrays(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fakeCCPM(t, `echo '{"name":"x","runnables":null,"placeholders":null}'`)
+	p, err := NewMutate().PreviewBundle("/tmp/x.ccpm.tar.gz")
+	if err != nil {
+		t.Fatalf("PreviewBundle: %v", err)
+	}
+	assertNoNullArrays(t, p, "runnables", "placeholders")
+
+	fakeCCPM(t, `echo 'Error: reading gzip: invalid header' >&2; exit 1`)
+	p, err = NewMutate().PreviewBundle("/tmp/x.ccpm.tar.gz")
+	if err == nil || !strings.Contains(err.Error(), "invalid header") {
+		t.Errorf("PreviewBundle on a CLI failure: error = %v, want the CLI's message", err)
+	}
+	assertNoNullArrays(t, p, "runnables", "placeholders")
+}
+
 func TestUsageNoNullArrays(t *testing.T) {
 	name := syntheticProfile(t)
 	for _, win := range []string{"all", "7d", "30d"} {

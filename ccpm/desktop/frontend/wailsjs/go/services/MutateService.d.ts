@@ -14,6 +14,10 @@ export function Clone(arg1:string,arg2:string):Promise<services.CmdResult>;
 
 export function CreateInTerminal(arg1:string):Promise<services.CmdResult>;
 
+export function ExportProfile(arg1:string,arg2:string,arg3:boolean):Promise<services.CmdResult>;
+
+export function ImportBundle(arg1:string,arg2:string):Promise<services.CmdResult>;
+
 export function ImportInTerminal():Promise<services.CmdResult>;
 
 export function InstallPlugin(arg1:string,arg2:string):Promise<services.CmdResult>;
@@ -21,6 +25,8 @@ export function InstallPlugin(arg1:string,arg2:string):Promise<services.CmdResul
 export function Launch(arg1:string):Promise<services.CmdResult>;
 
 export function OpenFolder(arg1:string):Promise<services.CmdResult>;
+
+export function PreviewBundle(arg1:string):Promise<services.BundlePreview>;
 
 export function Remove(arg1:string):Promise<services.CmdResult>;
 

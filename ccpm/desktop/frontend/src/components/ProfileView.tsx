@@ -7,7 +7,7 @@ import { useCommand } from '@/lib/useCommand'
 import { useToast } from '@/components/ui/Toast'
 import { PromptModal, ConfirmModal } from '@/components/ui/Modal'
 import { validateProfileName } from '@/lib/validate'
-import { Copy, FolderOpen, KeyRound, type LucideIcon, Pencil, Play, Trash2 } from 'lucide-react'
+import { Copy, FolderOpen, KeyRound, type LucideIcon, Pencil, Play, Trash2, Upload } from 'lucide-react'
 import { OverviewTab } from './tabs/OverviewTab'
 import { CascadeTab } from './tabs/CascadeTab'
 import { UsageTab } from './tabs/UsageTab'
@@ -18,6 +18,7 @@ import { McpPluginsTab } from './tabs/McpPluginsTab'
 import { PermissionsTab } from './tabs/PermissionsTab'
 import { SettingsTab } from './tabs/SettingsTab'
 import { ErrorBoundary } from './ui/ErrorBoundary'
+import { ExportModal } from './BundleDialogs'
 
 const TABS = [
   { id: 'Overview', enabled: true },
@@ -31,7 +32,7 @@ const TABS = [
   { id: 'Health', enabled: true },
 ] as const
 
-type Dialog = null | 'clone' | 'rename' | 'delete'
+type Dialog = null | 'clone' | 'rename' | 'delete' | 'export'
 
 export function ProfileView({
   profile,
@@ -96,6 +97,7 @@ export function ProfileView({
           <div className="ml-auto flex items-center gap-1.5">
             <ActionButton primary icon={Play} label="Run" title="Launch Claude Code with this profile" onClick={launch} />
             <ActionButton icon={Copy} label="Clone" title="Clone this profile" onClick={() => setDialog('clone')} />
+            <IconButton icon={Upload} title="Export profile to a shareable bundle" onClick={() => setDialog('export')} />
             <IconButton icon={FolderOpen} title="Open profile folder" onClick={openFolder} />
             <IconButton icon={Pencil} title="Rename profile" onClick={() => setDialog('rename')} />
             <IconButton icon={Trash2} title="Delete profile" danger onClick={() => setDialog('delete')} />
@@ -185,6 +187,7 @@ export function ProfileView({
           await mutateAndSelect('Rename', () => api.mutate.rename(profile.name, next), next)
         }}
       />
+      <ExportModal open={dialog === 'export'} profile={profile.name} onClose={() => setDialog(null)} />
       <ConfirmModal
         open={dialog === 'delete'}
         title={`Delete "${profile.name}"`}

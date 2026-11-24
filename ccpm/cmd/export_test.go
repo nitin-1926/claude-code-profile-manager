@@ -4,9 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -239,73 +241,292 @@ func setFlag(t *testing.T, cmd *cobra.Command, name, value string) {
 	t.Cleanup(func() { _ = f.Value.Set(old) })
 }
 
-// Export must carry what makes the profile work elsewhere (share-store
-// assets behind the profile's symlinks, its settings/MCP fragments) and
-// leave out session history, which can hold pasted secrets.
-func TestExportImportBundleRoundTrip(t *testing.T) {
-	home, write := bundleSandbox(t)
+// jsonEqual fails unless got and want decode to the same JSON value, so a
+// redacted file (re-encoded, keys sorted) compares by content.
+func jsonEqual(t *testing.T, label, got, want string) {
+	t.Helper()
+	var g, w interface{}
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Errorf("%s: not JSON (%v): %q", label, err, got)
+		return
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("%s: bad want: %v", label, err)
+	}
+	if !reflect.DeepEqual(g, w) {
+		t.Errorf("%s =\n%s\nwant\n%s", label, got, want)
+	}
+}
+
+// Real on-disk shapes: the materialized profile settings.json repeats the
+// fragment's env; `ccpm settings set env.X` writes the fragment and marks the
+// leaf path owned; `ccpm mcp add` writes {name: def} into the MCP fragment.
+const (
+	srcSettings = `{"model":"opus","env":{"API_TOKEN":"sk-live-123","EMPTY":""}}`
+	srcFragment = `{"model":"opus","env":{"API_TOKEN":"sk-live-123"}}`
+	srcOwned    = `{"keys":["env.API_TOKEN","model"]}`
+	srcMCP      = `{"gh":{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{"GITHUB_TOKEN":"ghp_secret"}},` +
+		`"web":{"type":"http","url":"https://mcp.example.com/mcp","headers":{"Authorization":"Bearer tok"}}}`
+
+	// The same files with every secret value stripped and everything else kept.
+	redactedSettings = `{"model":"opus","env":{"API_TOKEN":"__CCPM_REDACTED__","EMPTY":""}}`
+	redactedFragment = `{"model":"opus","env":{"API_TOKEN":"__CCPM_REDACTED__"}}`
+	redactedMCP      = `{"gh":{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{"GITHUB_TOKEN":"__CCPM_REDACTED__"}},` +
+		`"web":{"type":"http","url":"https://mcp.example.com/mcp","headers":{"Authorization":"__CCPM_REDACTED__"}}}`
+)
+
+// exportSrcProfile builds a profile "src" holding secrets in every place a
+// bundle carries them, exports it, and returns the bundle path and output.
+func exportSrcProfile(t *testing.T, home string, write func(rel, content string) string, includeSecrets bool) (string, string) {
+	t.Helper()
 	src := filepath.Join(home, ".ccpm", "profiles", "src")
-	write(".ccpm/profiles/src/settings.json", `{"model":"opus"}`)
+	write(".ccpm/profiles/src/settings.json", srcSettings)
 	write(".ccpm/profiles/src/projects/-repo/session.jsonl", `{"pasted":"sk-secret"}`)
 	write(".ccpm/profiles/src/todos/t.json", `[]`)
 	write(".ccpm/share/skills/foo/SKILL.md", "skill body")
 	write(".ccpm/share/agents/bar.md", "agent body")
 	write("private/id_rsa", "KEY")
-	write(".ccpm/share/settings/src.json", `{"model":"opus"}`)
-	write(".ccpm/share/settings/src.owned.json", `{"keys":["model"]}`)
-	write(".ccpm/share/mcp/src.json", `{"srv":{"command":"srv-bin"}}`)
+	write(".ccpm/share/settings/src.json", srcFragment)
+	write(".ccpm/share/settings/src.owned.json", srcOwned)
+	write(".ccpm/share/mcp/src.json", srcMCP)
 	symlinkOrSkip(t, filepath.Join(home, ".ccpm", "share", "skills", "foo"), filepath.Join(src, "skills", "foo"))
 	symlinkOrSkip(t, filepath.Join(home, ".ccpm", "share", "agents", "bar.md"), filepath.Join(src, "agents", "bar.md"))
 	symlinkOrSkip(t, filepath.Join(home, "private"), filepath.Join(src, "skills", "escape"))
 	registerProfile(t, "src", src)
 
 	bundle := filepath.Join(home, "src.ccpm.tar.gz")
-	oldOut := exportOut
-	exportOut = bundle
-	t.Cleanup(func() { exportOut = oldOut })
+	oldOut, oldSecrets := exportOut, exportIncludeSecrets
+	exportOut, exportIncludeSecrets = bundle, includeSecrets
+	t.Cleanup(func() { exportOut, exportIncludeSecrets = oldOut, oldSecrets })
+	var out bytes.Buffer
+	exportCmd.SetOut(&out)
+	t.Cleanup(func() { exportCmd.SetOut(nil) })
 	if err := runExport(exportCmd, []string{"src"}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
+	return bundle, out.String()
+}
+
+// Export must carry what makes the profile work elsewhere (share-store
+// assets behind the profile's symlinks, its settings/MCP fragments) and
+// leave out session history, which can hold pasted secrets. By default every
+// settings env value and MCP env/header value becomes a placeholder with its
+// key kept; import restores everything else as it was and names the
+// placeholders to fill in.
+func TestExportImportBundleRoundTrip(t *testing.T) {
+	home, write := bundleSandbox(t)
+	bundle, exportOutput := exportSrcProfile(t, home, write, false)
 
 	got := bundleEntries(t, bundle)
 	for name, want := range map[string]string{
 		"skills/foo/SKILL.md":              "skill body",
 		"agents/bar.md":                    "agent body",
-		".ccpm-bundle/settings.json":       `{"model":"opus"}`,
-		".ccpm-bundle/settings.owned.json": `{"keys":["model"]}`,
-		".ccpm-bundle/mcp.json":            `{"srv":{"command":"srv-bin"}}`,
+		".ccpm-bundle/settings.owned.json": srcOwned, // no values: byte-identical
 	} {
 		if got[name] != want {
 			t.Errorf("bundle %s = %q, want %q", name, got[name], want)
 		}
 	}
-	for name := range got {
+	jsonEqual(t, "bundle settings.json", got["settings.json"], redactedSettings)
+	jsonEqual(t, "bundle .ccpm-bundle/settings.json", got[".ccpm-bundle/settings.json"], redactedFragment)
+	jsonEqual(t, "bundle .ccpm-bundle/mcp.json", got[".ccpm-bundle/mcp.json"], redactedMCP)
+	for name, content := range got {
 		if strings.HasPrefix(name, "projects") || strings.HasPrefix(name, "todos") {
 			t.Errorf("bundle carries session data %s", name)
 		}
 		if strings.HasPrefix(name, "skills/escape") {
 			t.Errorf("bundle followed a symlink outside the share store: %s", name)
 		}
+		for _, secret := range []string{"sk-live-123", "ghp_secret", "Bearer tok"} {
+			if strings.Contains(content, secret) {
+				t.Errorf("bundle %s still carries secret %q", name, secret)
+			}
+		}
+	}
+	if !strings.Contains(exportOutput, "Replaced 4 secret value(s)") || !strings.Contains(exportOutput, "--include-secrets") {
+		t.Errorf("export summary does not report the 4 stripped values and the flag:\n%s", exportOutput)
 	}
 
 	setFlag(t, importBundleCmd, "profile", "dst")
-	setFlag(t, importBundleCmd, "trust-bundle", "true") // bundle carries an MCP server
+	setFlag(t, importBundleCmd, "trust-bundle", "true") // bundle carries MCP servers
+	var importOutput bytes.Buffer
+	importBundleCmd.SetOut(&importOutput)
+	t.Cleanup(func() { importBundleCmd.SetOut(nil) })
 	if err := runImportBundle(importBundleCmd, []string{bundle}); err != nil {
 		t.Fatalf("import-bundle: %v", err)
 	}
 	dst := filepath.Join(home, ".ccpm", "profiles", "dst")
-	for rel, want := range map[string]string{
-		".ccpm/share/settings/dst.json":          `{"model":"opus"}`,
-		".ccpm/share/settings/dst.owned.json":    `{"keys":["model"]}`,
-		".ccpm/share/mcp/dst.json":               `{"srv":{"command":"srv-bin"}}`,
-		".ccpm/profiles/dst/skills/foo/SKILL.md": "skill body",
-	} {
-		if b, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(rel))); err != nil || string(b) != want {
-			t.Errorf("restored %s = %q, %v; want %q", rel, b, err, want)
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join(home, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Errorf("restored %s: %v", rel, err)
 		}
+		return string(b)
+	}
+	jsonEqual(t, "restored dst.json", read(".ccpm/share/settings/dst.json"), redactedFragment)
+	jsonEqual(t, "restored mcp/dst.json", read(".ccpm/share/mcp/dst.json"), redactedMCP)
+	if b := read(".ccpm/share/settings/dst.owned.json"); b != srcOwned {
+		t.Errorf("restored owned keys = %q, want %q", b, srcOwned)
+	}
+	if b := read(".ccpm/profiles/dst/skills/foo/SKILL.md"); b != "skill body" {
+		t.Errorf("restored skill = %q", b)
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".ccpm-bundle")); !os.IsNotExist(err) {
 		t.Errorf("fragment staging dir left in the restored profile (err=%v)", err)
+	}
+
+	out := importOutput.String()
+	mcpFrag := filepath.Join(home, ".ccpm", "share", "mcp", "dst.json")
+	for _, want := range []string{
+		"ccpm settings set env.API_TOKEN <value> --profile dst",
+		`MCP server "gh" in ` + mcpFrag + `: env.GITHUB_TOKEN`,
+		`MCP server "web" in ` + mcpFrag + `: headers.Authorization`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("import output missing %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "env.API_TOKEN"); n != 1 {
+		t.Errorf("env.API_TOKEN listed %d times, want once (it sits in settings.json and the fragment):\n%s", n, out)
+	}
+	if strings.Contains(out, "EMPTY") {
+		t.Errorf("an empty value hides nothing and must not be reported:\n%s", out)
+	}
+}
+
+// --include-secrets is for moving between your own machines: the bundle
+// keeps every value exactly as it is on disk.
+func TestExportIncludeSecretsKeepsValues(t *testing.T) {
+	home, write := bundleSandbox(t)
+	bundle, exportOutput := exportSrcProfile(t, home, write, true)
+	got := bundleEntries(t, bundle)
+	for name, want := range map[string]string{
+		"settings.json":              srcSettings,
+		".ccpm-bundle/settings.json": srcFragment,
+		".ccpm-bundle/mcp.json":      srcMCP,
+	} {
+		if got[name] != want {
+			t.Errorf("bundle %s = %q, want it unchanged %q", name, got[name], want)
+		}
+	}
+	if !strings.Contains(exportOutput, "secret values") || !strings.Contains(exportOutput, "keep it private") {
+		t.Errorf("export with --include-secrets did not warn the bundle is sensitive:\n%s", exportOutput)
+	}
+}
+
+// --include-credentials bundles .claude.json, whose MCP servers (top level
+// and per project) carry env and headers too: those are still stripped
+// unless --include-secrets.
+func TestExportCredentialsStillStripsClaudeJSONSecrets(t *testing.T) {
+	home, write := bundleSandbox(t)
+	src := filepath.Join(home, ".ccpm", "profiles", "src")
+	write(".ccpm/profiles/src/.claude.json", `{"oauthAccount":{"emailAddress":"a@b.c"},`+
+		`"mcpServers":{"gh":{"type":"stdio","command":"npx","env":{"GITHUB_TOKEN":"ghp_secret"}}},`+
+		`"projects":{"/repo":{"mcpServers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"Bearer tok"}}}}}}`)
+	registerProfile(t, "src", src)
+	bundle := filepath.Join(home, "src.ccpm.tar.gz")
+	oldOut, oldCreds := exportOut, exportIncludeCredentials
+	exportOut, exportIncludeCredentials = bundle, true
+	t.Cleanup(func() { exportOut, exportIncludeCredentials = oldOut, oldCreds })
+	if err := runExport(exportCmd, []string{"src"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	jsonEqual(t, "bundle .claude.json", bundleEntries(t, bundle)[".claude.json"], `{"oauthAccount":{"emailAddress":"a@b.c"},`+
+		`"mcpServers":{"gh":{"type":"stdio","command":"npx","env":{"GITHUB_TOKEN":"__CCPM_REDACTED__"}}},`+
+		`"projects":{"/repo":{"mcpServers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"__CCPM_REDACTED__"}}}}}}`)
+}
+
+// A malformed file that may hold secrets must stop the export, not slip
+// into the bundle unredacted.
+func TestExportRefusesUnparseableSecretFile(t *testing.T) {
+	home, write := bundleSandbox(t)
+	src := filepath.Join(home, ".ccpm", "profiles", "src")
+	write(".ccpm/profiles/src/settings.json", `{"env":{"TOKEN":"sk-live"`)
+	registerProfile(t, "src", src)
+	bundle := filepath.Join(home, "src.ccpm.tar.gz")
+	oldOut := exportOut
+	exportOut = bundle
+	t.Cleanup(func() { exportOut = oldOut })
+	err := runExport(exportCmd, []string{"src"})
+	if err == nil || !strings.Contains(err.Error(), "--include-secrets") {
+		t.Fatalf("export of a malformed settings.json: error = %v, want a refusal naming --include-secrets", err)
+	}
+	if _, err := os.Stat(bundle); !os.IsNotExist(err) {
+		t.Errorf("a refused export left a bundle behind (err=%v)", err)
+	}
+}
+
+// --dry-run --json is what the desktop app shows as its trust preview before
+// importing with --trust-bundle: it must list what the bundle runs and which
+// values are placeholders, and restore nothing.
+func TestImportBundleDryRunJSON(t *testing.T) {
+	home, _ := bundleSandbox(t)
+	bundle := filepath.Join(home, "shared.ccpm.tar.gz")
+	writeBundle(t, bundle, map[string]string{
+		"settings.json":              `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"echo hi"}]}]},"env":{"API_TOKEN":"__CCPM_REDACTED__"}}`,
+		".ccpm-bundle/settings.json": `{"statusLine":{"type":"command","command":"status.sh"}}`,
+		".ccpm-bundle/mcp.json":      redactedMCP,
+	})
+	setFlag(t, importBundleCmd, "dry-run", "true")
+	setFlag(t, importBundleCmd, "json", "true")
+	var out bytes.Buffer
+	importBundleCmd.SetOut(&out)
+	t.Cleanup(func() { importBundleCmd.SetOut(nil) })
+
+	// No --trust-bundle and no TTY: a preview needs neither.
+	if err := runImportBundle(importBundleCmd, []string{bundle}); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	var p bundlePreview
+	if err := json.Unmarshal(out.Bytes(), &p); err != nil {
+		t.Fatalf("dry-run output is not JSON (%v):\n%s", err, out.String())
+	}
+	if p.Name != "shared" {
+		t.Errorf("name = %q, want the bundle's derived name %q", p.Name, "shared")
+	}
+	wantRunnables := []bundleRunnable{
+		{"hook", "settings.json", "SessionStart[]: echo hi"},
+		{"env", "settings.json", "API_TOKEN"},
+		{"command", ".ccpm-bundle/settings.json", "statusLine: status.sh"},
+		{"mcp", ".ccpm-bundle/mcp.json", "gh: cmd=npx args=[-y @modelcontextprotocol/server-github] env=GITHUB_TOKEN"},
+		{"mcp", ".ccpm-bundle/mcp.json", "web: url=https://mcp.example.com/mcp"},
+	}
+	if !reflect.DeepEqual(p.Runnables, wantRunnables) {
+		t.Errorf("runnables =\n%+v\nwant\n%+v", p.Runnables, wantRunnables)
+	}
+	wantHoles := []secretValue{
+		{File: "settings.json", Field: "env", Key: "API_TOKEN"},
+		{File: ".ccpm-bundle/mcp.json", Server: "gh", Field: "env", Key: "GITHUB_TOKEN"},
+		{File: ".ccpm-bundle/mcp.json", Server: "web", Field: "headers", Key: "Authorization"},
+	}
+	if !reflect.DeepEqual(p.Placeholders, wantHoles) {
+		t.Errorf("placeholders =\n%+v\nwant\n%+v", p.Placeholders, wantHoles)
+	}
+
+	cfg, _ := config.Load()
+	if _, ok := cfg.Profiles["shared"]; ok {
+		t.Error("dry run registered a profile")
+	}
+	for _, rel := range []string{".ccpm/profiles/shared", ".ccpm/share/mcp/shared.json", ".ccpm/share/settings/shared.json"} {
+		if _, err := os.Stat(filepath.Join(home, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("dry run wrote %s (err=%v)", rel, err)
+		}
+	}
+
+	// An empty bundle still yields arrays, never null: the desktop maps them.
+	empty := filepath.Join(home, "empty.ccpm.tar.gz")
+	writeBundle(t, empty, map[string]string{"skills/": ""})
+	out.Reset()
+	if err := runImportBundle(importBundleCmd, []string{empty}); err != nil {
+		t.Fatalf("dry run of an empty bundle: %v", err)
+	}
+	if s := out.String(); !strings.Contains(s, `"runnables": []`) || !strings.Contains(s, `"placeholders": []`) {
+		t.Errorf("empty bundle preview has null arrays:\n%s", s)
+	}
+
+	setFlag(t, importBundleCmd, "dry-run", "false")
+	if err := runImportBundle(importBundleCmd, []string{bundle}); err == nil || !strings.Contains(err.Error(), "--dry-run") {
+		t.Errorf("--json without --dry-run: error = %v, want one naming --dry-run", err)
 	}
 }
 

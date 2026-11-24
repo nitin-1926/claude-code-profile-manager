@@ -112,6 +112,29 @@ export interface CmdResult {
   ccpmPath: string
 }
 
+/** One item an import bundle would run, or that changes where Claude Code connects. */
+export interface BundleRunnable {
+  kind: 'hook' | 'command' | 'env' | 'mcp'
+  source: string
+  detail: string
+}
+
+/** A value the exporter stripped: settings env (server '') or an MCP server's env/header. */
+export interface BundlePlaceholder {
+  file: string
+  project: string
+  server: string
+  field: string
+  key: string
+}
+
+/** `ccpm import-bundle --dry-run --json`: the trust preview before importing. */
+export interface BundlePreview {
+  name: string
+  runnables: BundleRunnable[]
+  placeholders: BundlePlaceholder[]
+}
+
 export interface PermissionView {
   allow: string[]
   ask: string[]

@@ -26,6 +26,14 @@ export function CreateInTerminal(arg1) {
   return window['go']['services']['MutateService']['CreateInTerminal'](arg1);
 }
 
+export function ExportProfile(arg1, arg2, arg3) {
+  return window['go']['services']['MutateService']['ExportProfile'](arg1, arg2, arg3);
+}
+
+export function ImportBundle(arg1, arg2) {
+  return window['go']['services']['MutateService']['ImportBundle'](arg1, arg2);
+}
+
 export function ImportInTerminal() {
   return window['go']['services']['MutateService']['ImportInTerminal']();
 }
@@ -40,6 +48,10 @@ export function Launch(arg1) {
 
 export function OpenFolder(arg1) {
   return window['go']['services']['MutateService']['OpenFolder'](arg1);
+}
+
+export function PreviewBundle(arg1) {
+  return window['go']['services']['MutateService']['PreviewBundle'](arg1);
 }
 
 export function Remove(arg1) {

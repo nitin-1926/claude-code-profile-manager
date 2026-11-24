@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +38,23 @@ var (
 	exportOut                string
 	exportIncludeCredentials bool
 	exportIncludeHistory     bool
+	exportIncludeSecrets     bool
 )
+
+// secretPlaceholder stands in for every secret-bearing value a default export
+// strips (settings env values, MCP server env and header values). The key
+// stays, so import can name what to fill in. Plain ASCII: JSON encoders that
+// escape <, > and & would otherwise mangle it on the next rewrite.
+const secretPlaceholder = "__CCPM_REDACTED__"
+
+// secretFiles are the archive names whose JSON can carry secret values.
+// Matched exactly: a skill may ship its own settings.json.
+var secretFiles = []string{
+	"settings.json",
+	".claude.json",
+	bundleFragmentsDir + "/settings.json",
+	bundleFragmentsDir + "/mcp.json",
+}
 
 // sessionData are top-level profile entries Claude Code writes as you work:
 // transcripts, todos, shell snapshots, prompt history. They can hold pasted
@@ -115,10 +133,16 @@ Left out by default:
   - Credentials. OS-keychain tokens are machine-bound, and .credentials.json /
     .claude.json hold secrets. Use --include-credentials only for a trusted
     same-user move (e.g. Linux machine migration).
+  - Secret values. Every settings env value (in settings.json and the ccpm
+    settings fragment) and every MCP server env and header value is replaced
+    with the placeholder ` + secretPlaceholder + `. The keys stay, so
+    'ccpm import-bundle' tells whoever restores it what to fill in. Use
+    --include-secrets to keep the real values for a move between your own
+    machines.
 
-A bundle made with either flag is sensitive: keep it private. Even a default
-bundle carries your hooks, MCP server definitions and settings env values, so
-review it before sharing.`,
+A bundle made with any of these flags is sensitive: keep it private. Even a
+default bundle carries your hooks and your MCP servers' commands, args and
+URLs, so review it before sharing.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeProfileNames,
 	RunE:              runExport,
@@ -137,6 +161,12 @@ in the bundle and asks for confirmation, because each runs or takes effect on
 every 'ccpm run' of the profile. Without a TTY the import refuses unless
 --trust-bundle is passed.
 
+After restoring, ccpm lists every value the exporter stripped (it holds the
+placeholder ` + secretPlaceholder + `) and how to fill each one in.
+
+--dry-run shows what the bundle would run and which values need filling in,
+and restores nothing. Add --json for machine-readable output.
+
 If the bundle did not include credentials (the default), authenticate the
 restored profile afterwards with 'ccpm auth refresh <name>'.`,
 	Args: cobra.ExactArgs(1),
@@ -147,10 +177,13 @@ func init() {
 	exportCmd.Flags().StringVarP(&exportOut, "output", "o", "", "output path (default: <profile>.ccpm.tar.gz)")
 	exportCmd.Flags().BoolVar(&exportIncludeCredentials, "include-credentials", false, "include credential files (sensitive — trusted same-user moves only)")
 	exportCmd.Flags().BoolVar(&exportIncludeHistory, "include-history", false, "include session history: transcripts, todos, shell snapshots (may contain pasted secrets)")
+	exportCmd.Flags().BoolVar(&exportIncludeSecrets, "include-secrets", false, "keep settings env and MCP env/header values instead of placeholders (sensitive — your own machines only)")
 	rootCmd.AddCommand(exportCmd)
 
 	importBundleCmd.Flags().String("profile", "", "name for the restored profile (default: the bundle's original name)")
 	importBundleCmd.Flags().Bool("trust-bundle", false, "restore hooks, MCP servers, statusLine and env from the bundle without prompting (required when not on a TTY)")
+	importBundleCmd.Flags().Bool("dry-run", false, "list what the bundle would run and which values need filling in; restore nothing")
+	importBundleCmd.Flags().Bool("json", false, "with --dry-run: machine-readable JSON output")
 	rootCmd.AddCommand(importBundleCmd)
 }
 
@@ -187,6 +220,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 		if r, err := filepath.EvalSymlinks(d); err == nil {
 			shareRoot = r
 		}
+	}
+
+	// redacted counts stripped secret values; nil keeps them (--include-secrets).
+	var redacted *int
+	if !exportIncludeSecrets {
+		redacted = new(int)
 	}
 
 	var skippedHistory, skippedLinks []string
@@ -228,14 +267,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
-		return addToTar(tw, path, info, arcName)
+		return addToTar(tw, path, info, arcName, redacted)
 	})
 	if walkErr == nil {
-		walkErr = addFragmentsToTar(tw, name)
+		walkErr = addFragmentsToTar(tw, name, redacted)
 	}
 	if walkErr != nil {
 		_ = tw.Close()
 		_ = gz.Close()
+		// Close before removing: Windows refuses to delete a file that is still
+		// open, which would leave a partial bundle behind.
+		_ = out.Close()
 		_ = os.Remove(outPath)
 		return fmt.Errorf("archiving profile: %w", walkErr)
 	}
@@ -246,18 +288,23 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("finalizing gzip: %w", err)
 	}
 
-	green := color.New(color.FgGreen, color.Bold)
-	green.Printf("✓ Exported %q to %s\n", name, outPath)
+	w := cmd.OutOrStdout()
+	color.New(color.FgGreen, color.Bold).Fprintf(w, "✓ Exported %q to %s\n", name, outPath)
 	if len(skippedHistory) > 0 {
-		fmt.Printf("Session history left out (%s); pass --include-history to bundle it.\n", strings.Join(skippedHistory, ", "))
+		fmt.Fprintf(w, "Session history left out (%s); pass --include-history to bundle it.\n", strings.Join(skippedHistory, ", "))
 	}
 	if len(skippedLinks) > 0 {
-		fmt.Printf("Links outside the ccpm share store left out (e.g. ~/.claude host assets): %s\n", strings.Join(skippedLinks, ", "))
+		fmt.Fprintf(w, "Links outside the ccpm share store left out (e.g. ~/.claude host assets): %s\n", strings.Join(skippedLinks, ", "))
 	}
 	if !exportIncludeCredentials {
-		fmt.Println("Credentials were excluded. Restore, then run `ccpm auth refresh <name>`.")
+		fmt.Fprintln(w, "Credentials were excluded. Restore, then run `ccpm auth refresh <name>`.")
 	} else {
-		color.New(color.FgYellow).Println("Bundle contains credentials — keep it private.")
+		color.New(color.FgYellow).Fprintln(w, "Bundle contains credentials — keep it private.")
+	}
+	if redacted == nil {
+		color.New(color.FgYellow).Fprintln(w, "Bundle contains secret values (settings env, MCP env and headers) — keep it private.")
+	} else if *redacted > 0 {
+		fmt.Fprintf(w, "Replaced %d secret value(s) (settings env, MCP env and headers) with %s; keys kept. Pass --include-secrets to keep them (your own machines only).\n", *redacted, secretPlaceholder)
 	}
 	return nil
 }
@@ -268,13 +315,31 @@ func isWithinDir(root, path string) bool {
 }
 
 // addToTar writes one regular file or directory header (plus content) under
-// the archive name.
-func addToTar(tw *tar.Writer, path string, info os.FileInfo, name string) error {
+// the archive name. With redacted non-nil, a secretFiles entry has its secret
+// values replaced by secretPlaceholder first, and redacted counts them.
+func addToTar(tw *tar.Writer, path string, info os.FileInfo, name string, redacted *int) error {
 	hdr, err := tar.FileInfoHeader(info, "")
 	if err != nil {
 		return err
 	}
 	hdr.Name = name
+	if redacted != nil && !info.IsDir() && slices.Contains(secretFiles, name) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		data, n, err := redactSecrets(name, data)
+		if err != nil {
+			return fmt.Errorf("stripping secrets from %s: %w (fix the file, or pass --include-secrets to bundle it as is)", name, err)
+		}
+		*redacted += n
+		hdr.Size = int64(len(data))
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		_, err = tw.Write(data)
+		return err
+	}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
@@ -309,13 +374,160 @@ func addTreeToTar(tw *tar.Writer, root, prefix string) error {
 		if rel != "." {
 			name += "/" + filepath.ToSlash(rel)
 		}
-		return addToTar(tw, path, info, name)
+		return addToTar(tw, path, info, name, nil)
 	})
+}
+
+// redactSecrets replaces every secret value in data, the bundle file at
+// archive path file, with secretPlaceholder. Empty values and existing
+// placeholders hide nothing and are left alone. A file with nothing to strip
+// comes back byte-for-byte unchanged.
+func redactSecrets(file string, data []byte) ([]byte, int, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber() // numbers keep their original literal
+	var doc map[string]interface{}
+	if err := dec.Decode(&doc); err != nil {
+		return nil, 0, err
+	}
+	n := 0
+	visitSecrets(file, doc, func(_ secretValue, m map[string]interface{}, key string) {
+		switch m[key] {
+		case nil, "", secretPlaceholder:
+			return
+		}
+		m[key] = secretPlaceholder
+		n++
+	})
+	if n == 0 {
+		return data, 0, nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return nil, 0, err
+	}
+	return buf.Bytes(), n, nil
+}
+
+// secretValue locates one secret-bearing value in a bundle: a settings env
+// value (Server empty) or an MCP server's env or header value.
+type secretValue struct {
+	File    string `json:"file"`              // archive path, e.g. ".ccpm-bundle/mcp.json"
+	Project string `json:"project,omitempty"` // .claude.json project the server belongs to
+	Server  string `json:"server,omitempty"`  // MCP server name
+	Field   string `json:"field"`             // "env" or "headers"
+	Key     string `json:"key"`
+}
+
+// visitSecrets calls fn for every secret-bearing value in doc, the parsed
+// bundle file at archive path file: settings env values, and the env and
+// headers values of MCP servers (the same servers bundleRunnables lists).
+// fn gets the map holding the value so it can rewrite it in place.
+func visitSecrets(file string, doc map[string]interface{}, fn func(s secretValue, m map[string]interface{}, key string)) {
+	visitServers := func(project string, servers map[string]interface{}) {
+		for _, name := range slices.Sorted(maps.Keys(servers)) {
+			def, _ := servers[name].(map[string]interface{})
+			for _, field := range []string{"env", "headers"} {
+				m, _ := def[field].(map[string]interface{})
+				for _, k := range slices.Sorted(maps.Keys(m)) {
+					fn(secretValue{File: file, Project: project, Server: name, Field: field, Key: k}, m, k)
+				}
+			}
+		}
+	}
+	switch file {
+	case bundleFragmentsDir + "/mcp.json":
+		visitServers("", doc)
+	case "settings.json", bundleFragmentsDir + "/settings.json":
+		env, _ := doc["env"].(map[string]interface{})
+		for _, k := range slices.Sorted(maps.Keys(env)) {
+			fn(secretValue{File: file, Field: "env", Key: k}, env, k)
+		}
+		servers, _ := doc["mcpServers"].(map[string]interface{})
+		visitServers("", servers)
+	case ".claude.json":
+		servers, _ := doc["mcpServers"].(map[string]interface{})
+		visitServers("", servers)
+		projects, _ := doc["projects"].(map[string]interface{})
+		for _, proj := range slices.Sorted(maps.Keys(projects)) {
+			pm, _ := projects[proj].(map[string]interface{})
+			servers, _ := pm["mcpServers"].(map[string]interface{})
+			visitServers(proj, servers)
+		}
+	}
+}
+
+// bundlePlaceholders lists every value in an extracted bundle that still
+// holds secretPlaceholder, i.e. what the exporter stripped. Never nil.
+func bundlePlaceholders(profileDir string) ([]secretValue, error) {
+	out := []secretValue{}
+	for _, file := range secretFiles {
+		doc, err := settingsmerge.LoadJSON(filepath.Join(profileDir, filepath.FromSlash(file)))
+		if err != nil {
+			return nil, err
+		}
+		visitSecrets(file, doc, func(s secretValue, m map[string]interface{}, key string) {
+			if m[key] == secretPlaceholder {
+				out = append(out, s)
+			}
+		})
+	}
+	return out, nil
+}
+
+// printPlaceholderFixes tells whoever restored profileName which stripped
+// values to fill in and how. Settings env, wherever it sat, is fixed by
+// `ccpm settings set`: the fragment layer wins over the profile's own
+// settings.json. MCP env/headers have no set command, so name the file.
+func printPlaceholderFixes(w io.Writer, holes []secretValue, profileName, profileDir string) error {
+	if len(holes) == 0 {
+		return nil
+	}
+	restored, err := bundleFragments(profileName)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "Values stripped when this bundle was exported hold %s. Fill them in:\n", secretPlaceholder)
+	seenEnv := map[string]bool{}
+	type serverKey struct{ path, project, server string }
+	var order []serverKey
+	fields := map[serverKey][]string{}
+	for _, h := range holes {
+		if h.Server == "" {
+			if !seenEnv[h.Key] {
+				seenEnv[h.Key] = true
+				fmt.Fprintf(w, "  ccpm settings set env.%s <value> --profile %s\n", h.Key, profileName)
+			}
+			continue
+		}
+		path := filepath.Join(profileDir, filepath.FromSlash(h.File))
+		if frag, ok := strings.CutPrefix(h.File, bundleFragmentsDir+"/"); ok {
+			path = restored[frag]
+		}
+		k := serverKey{path, h.Project, h.Server}
+		if _, ok := fields[k]; !ok {
+			order = append(order, k)
+		}
+		fields[k] = append(fields[k], h.Field+"."+h.Key)
+	}
+	for _, k := range order {
+		where := k.path
+		if k.project != "" {
+			where += " (project " + k.project + ")"
+		}
+		fmt.Fprintf(w, "  MCP server %q in %s: %s\n", k.server, where, strings.Join(fields[k], ", "))
+	}
+	if len(order) > 0 {
+		fmt.Fprintf(w, "Edit MCP values in the file named (the next `ccpm run %s` applies them), or re-add the server with `ccpm mcp add <server> --scope profile --profile %s` and --env KEY=VALUE / --header KEY=VALUE.\n", profileName, profileName)
+	}
+	return nil
 }
 
 // addFragmentsToTar carries the profile's share-store settings/MCP fragments
 // under bundleFragmentsDir. Missing fragments are simply absent.
-func addFragmentsToTar(tw *tar.Writer, profileName string) error {
+func addFragmentsToTar(tw *tar.Writer, profileName string, redacted *int) error {
 	frags, err := bundleFragments(profileName)
 	if err != nil {
 		return err
@@ -331,7 +543,7 @@ func addFragmentsToTar(tw *tar.Writer, profileName string) error {
 		if !info.Mode().IsRegular() {
 			continue
 		}
-		if err := addToTar(tw, path, info, bundleFragmentsDir+"/"+archive); err != nil {
+		if err := addToTar(tw, path, info, bundleFragmentsDir+"/"+archive, redacted); err != nil {
 			return err
 		}
 	}
@@ -374,16 +586,33 @@ func restoreBundleFragments(profileDir, profileName string) ([]string, error) {
 // shell command.
 var commandSettings = []string{"statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper"}
 
+// bundleRunnable is one item in a bundle that runs a command or changes
+// where Claude Code connects. Kind is "hook", "command", "env" or "mcp";
+// Source is the bundle file it sits in.
+type bundleRunnable struct {
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+	Detail string `json:"detail"`
+}
+
+func (r bundleRunnable) String() string {
+	kind := r.Kind
+	if kind == "mcp" {
+		kind = "mcp server"
+	}
+	return fmt.Sprintf("%-12s%s %s", kind, r.Source, r.Detail)
+}
+
 // bundleRunnables lists every item in an extracted bundle that runs a
 // command or can redirect Claude Code's traffic on the next `ccpm run`:
 // hook commands, command-valued settings (statusLine, apiKeyHelper, ...),
 // settings env keys, and MCP servers. Malformed JSON is an error, so an
-// unparseable file can't hide what it holds.
-func bundleRunnables(profileDir string) ([]string, error) {
+// unparseable file can't hide what it holds. Never nil.
+func bundleRunnables(profileDir string) ([]bundleRunnable, error) {
 	load := func(rel string) (map[string]interface{}, error) {
 		return settingsmerge.LoadJSON(filepath.Join(profileDir, filepath.FromSlash(rel)))
 	}
-	var out []string
+	out := []bundleRunnable{}
 	for _, rel := range []string{"settings.json", bundleFragmentsDir + "/settings.json"} {
 		doc, err := load(rel)
 		if err != nil {
@@ -402,7 +631,7 @@ func bundleRunnables(profileDir string) ([]string, error) {
 					if body == "" {
 						body, _ = hm["prompt"].(string)
 					}
-					out = append(out, fmt.Sprintf("hook        %s %s[%s]: %s", rel, event, matcher, body))
+					out = append(out, bundleRunnable{"hook", rel, fmt.Sprintf("%s[%s]: %s", event, matcher, body)})
 				}
 			}
 		}
@@ -415,10 +644,10 @@ func bundleRunnables(profileDir string) ([]string, error) {
 			if obj, isObj := v.(map[string]interface{}); isObj {
 				body, _ = obj["command"].(string)
 			}
-			out = append(out, fmt.Sprintf("command     %s %s: %s", rel, key, body))
+			out = append(out, bundleRunnable{"command", rel, key + ": " + body})
 		}
 		if env, _ := doc["env"].(map[string]interface{}); len(env) > 0 {
-			out = append(out, fmt.Sprintf("env         %s: %s", rel, strings.Join(slices.Sorted(maps.Keys(env)), ", ")))
+			out = append(out, bundleRunnable{"env", rel, strings.Join(slices.Sorted(maps.Keys(env)), ", ")})
 		}
 		servers, _ := doc["mcpServers"].(map[string]interface{})
 		out = append(out, mcpRunnables(rel, servers)...)
@@ -445,8 +674,8 @@ func bundleRunnables(profileDir string) ([]string, error) {
 	return out, nil
 }
 
-func mcpRunnables(src string, servers map[string]interface{}) []string {
-	var out []string
+func mcpRunnables(src string, servers map[string]interface{}) []bundleRunnable {
+	var out []bundleRunnable
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		def, _ := servers[name].(map[string]interface{})
 		var parts []string
@@ -462,7 +691,7 @@ func mcpRunnables(src string, servers map[string]interface{}) []string {
 		if env, _ := def["env"].(map[string]interface{}); len(env) > 0 {
 			parts = append(parts, "env="+strings.Join(slices.Sorted(maps.Keys(env)), ","))
 		}
-		out = append(out, fmt.Sprintf("mcp server  %s %s: %s", src, name, strings.Join(parts, " ")))
+		out = append(out, bundleRunnable{"mcp", src, name + ": " + strings.Join(parts, " ")})
 	}
 	return out
 }
@@ -482,7 +711,7 @@ func confirmBundleRunnables(cmd *cobra.Command, profileDir string) error {
 	w := cmd.ErrOrStderr()
 	fmt.Fprintln(w, "This bundle contains items that run commands or change where Claude Code connects, every time the restored profile runs:")
 	for _, it := range items {
-		fmt.Fprintln(w, "  "+it)
+		fmt.Fprintln(w, "  "+it.String())
 	}
 	if trust, _ := cmd.Flags().GetBool("trust-bundle"); trust {
 		fmt.Fprintln(w, "--trust-bundle: restoring them without prompting.")
@@ -516,6 +745,14 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 		base = strings.TrimSuffix(base, ".ccpm")
 		name = base
 	}
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	asJSON, _ := cmd.Flags().GetBool("json")
+	if asJSON && !dryRun {
+		return errors.New("--json works only with --dry-run")
+	}
+	if dryRun {
+		return previewBundle(cmd, bundlePath, name, asJSON)
+	}
 	if err := profile.ValidateName(name); err != nil {
 		return fmt.Errorf("derived profile name %q is invalid; pass --profile: %w", name, err)
 	}
@@ -541,6 +778,12 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 	if err := confirmBundleRunnables(cmd, dstDir); err != nil {
 		_ = profile.Remove(name)
 		return err
+	}
+	// Read before restoreBundleFragments drops the staged fragments.
+	holes, err := bundlePlaceholders(dstDir)
+	if err != nil {
+		_ = profile.Remove(name)
+		return fmt.Errorf("inspecting bundle: %w", err)
 	}
 
 	fragments, err := restoreBundleFragments(dstDir, name)
@@ -574,9 +817,72 @@ func runImportBundle(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	green := color.New(color.FgGreen, color.Bold)
-	green.Printf("✓ Restored profile %q from %s\n", name, bundlePath)
-	fmt.Printf("Authenticate it with:\n  ccpm auth refresh %s\n", name)
+	w := cmd.OutOrStdout()
+	color.New(color.FgGreen, color.Bold).Fprintf(w, "✓ Restored profile %q from %s\n", name, bundlePath)
+	fmt.Fprintf(w, "Authenticate it with:\n  ccpm auth refresh %s\n", name)
+	// The profile is restored either way: a failure here only loses the hint.
+	if err := printPlaceholderFixes(w, holes, name, dstDir); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list the values to fill in: %v\n", err)
+	}
+	return nil
+}
+
+// bundlePreview is `import-bundle --dry-run --json` output: the profile name
+// the import would create, what the bundle runs, and what it left blank.
+type bundlePreview struct {
+	Name         string           `json:"name"`
+	Runnables    []bundleRunnable `json:"runnables"`
+	Placeholders []secretValue    `json:"placeholders"`
+}
+
+// previewBundle extracts the bundle to a scratch dir and reports what
+// importing it would run and which values need filling in. It never creates
+// a profile, writes a fragment or touches config, so it needs no trust.
+func previewBundle(cmd *cobra.Command, bundlePath, name string, asJSON bool) error {
+	tmp, err := os.MkdirTemp("", "ccpm-bundle-preview-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	if err := extractBundle(bundlePath, tmp); err != nil {
+		return err
+	}
+	p := bundlePreview{Name: name}
+	if p.Runnables, err = bundleRunnables(tmp); err != nil {
+		return fmt.Errorf("inspecting bundle: %w", err)
+	}
+	if p.Placeholders, err = bundlePlaceholders(tmp); err != nil {
+		return fmt.Errorf("inspecting bundle: %w", err)
+	}
+
+	w := cmd.OutOrStdout()
+	if asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(p)
+	}
+	fmt.Fprintf(w, "Dry run: nothing was restored. Importing would create profile %q.\n", name)
+	if len(p.Runnables) == 0 {
+		fmt.Fprintln(w, "The bundle has no hooks, MCP servers, command settings or env.")
+	} else {
+		fmt.Fprintln(w, "It would run these, or let them change where Claude Code connects, on every launch:")
+		for _, r := range p.Runnables {
+			fmt.Fprintln(w, "  "+r.String())
+		}
+	}
+	if len(p.Placeholders) > 0 {
+		fmt.Fprintf(w, "Values stripped by the exporter (they hold %s until you fill them in):\n", secretPlaceholder)
+		for _, h := range p.Placeholders {
+			where := h.File
+			if h.Server != "" {
+				where += " server " + h.Server
+			}
+			if h.Project != "" {
+				where += " (project " + h.Project + ")"
+			}
+			fmt.Fprintf(w, "  %s: %s.%s\n", where, h.Field, h.Key)
+		}
+	}
 	return nil
 }
 
