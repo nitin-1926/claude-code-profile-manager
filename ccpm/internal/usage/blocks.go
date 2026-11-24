@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"sort"
 	"time"
@@ -164,6 +165,7 @@ func (a *blockAccum) finish() Block {
 func collectEntries(profileDir string, since time.Time) ([]entry, error) {
 	counted := map[string]Tokens{}
 	byKey := map[string]*entry{}
+	ported := loadPorted(profileDir)
 
 	err := WalkTranscripts(profileDir, func(abs, rel string) error {
 		if fi, serr := os.Stat(abs); serr != nil || fi.ModTime().Before(since) {
@@ -174,6 +176,11 @@ func collectEntries(profileDir string, since time.Time) ([]entry, error) {
 			return nil // skip unreadable (e.g. mid-write)
 		}
 		defer f.Close()
+		// A just-ported session is the recently active one, so its prefix would
+		// land in this profile's active block without this.
+		if _, serr := f.Seek(ported[rel], io.SeekStart); serr != nil {
+			return nil
+		}
 		_ = EachLine(f, func(lineBytes []byte, _ int64) bool {
 			var l transcriptLine
 			if !bytes.Contains(lineBytes, usageField) || json.Unmarshal(lineBytes, &l) != nil {

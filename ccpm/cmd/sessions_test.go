@@ -218,3 +218,113 @@ func TestSessionsListShowsTheActivityItIsSortedBy(t *testing.T) {
 		t.Errorf("table should show the last-active date of the top row:\n%s", out)
 	}
 }
+
+const portTestID = "7392c3d1-59b8-4832-9e0e-fc5d6e62b90a"
+
+// sessionsPortFixture registers profiles "work" and "labs" under a temp HOME, with
+// one session in "work" whose directory exists and has a space in its name.
+func sessionsPortFixture(t *testing.T) (cwd, labsDir string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	profile := func(name string) map[string]any {
+		return map[string]any{"name": name, "dir": filepath.Join(home, "profiles", name), "auth_method": "oauth"}
+	}
+	data, err := json.Marshal(map[string]any{
+		"version": "1", "default_profile": "work",
+		"profiles": map[string]any{"work": profile("work"), "labs": profile("labs")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".ccpm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ccpm", "config.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd = filepath.Join(home, "my repo")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSession(t, filepath.Join(home, "profiles", "work", "projects", usage.EncodeCwd(cwd), portTestID+".jsonl"), portTestID, cwd, "hello")
+	t.Cleanup(func() { sessionsPortFrom, sessionsPortTo, sessionsJSON = "", "", false })
+	sessionsPortFrom, sessionsPortTo, sessionsJSON = "work", "labs", false
+	return cwd, filepath.Join(home, "profiles", "labs")
+}
+
+func TestSessionsPortPrintsTheExactResumeCommand(t *testing.T) {
+	cwd, labsDir := sessionsPortFixture(t)
+	out, err := captureStdoutErr(t, func() error { return runSessionsPort(nil, []string{portTestID}) })
+	if err != nil {
+		t.Fatalf("port: %v", err)
+	}
+	want := "cd '" + cwd + "' && ccpm run labs -- --resume " + portTestID
+	if !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if _, err := os.Stat(filepath.Join(labsDir, "projects", usage.EncodeCwd(cwd), portTestID+".jsonl")); err != nil {
+		t.Errorf("transcript was not copied: %v", err)
+	}
+
+	out, err = captureStdoutErr(t, func() error { return runSessionsPort(nil, []string{portTestID}) })
+	if err != nil || !strings.Contains(out, "already has this session") {
+		t.Errorf("second port: err=%v output:\n%s", err, out)
+	}
+}
+
+func TestSessionsPortJSON(t *testing.T) {
+	cwd, _ := sessionsPortFixture(t)
+	sessionsJSON = true
+	out, err := captureStdoutErr(t, func() error { return runSessionsPort(nil, []string{portTestID}) })
+	if err != nil {
+		t.Fatalf("port: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if got["cwd"] != cwd || got["to"] != "labs" || got["already_ported"] != false || !strings.Contains(got["next_command"].(string), "--resume "+portTestID) {
+		t.Errorf("json = %v", got)
+	}
+}
+
+func TestSessionsPortUnknownProfile(t *testing.T) {
+	sessionsPortFixture(t)
+	sessionsPortTo = "ghost"
+	_, err := captureStdoutErr(t, func() error { return runSessionsPort(nil, []string{portTestID}) })
+	if err == nil || !strings.Contains(err.Error(), `profile "ghost" not found`) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// A cd into a directory that is gone would stop the printed command before it
+// ran, and Claude Code does not need the recorded directory to resume.
+func TestSessionsPortMissingCwdOmitsCd(t *testing.T) {
+	cwd, _ := sessionsPortFixture(t)
+	if err := os.RemoveAll(cwd); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdoutErr(t, func() error { return runSessionsPort(nil, []string{portTestID}) })
+	if err != nil {
+		t.Fatalf("port: %v", err)
+	}
+	if strings.Contains(out, "cd ") || !strings.Contains(out, "no longer exists") || !strings.Contains(out, "ccpm run labs -- --resume "+portTestID) {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestShellArg(t *testing.T) {
+	for in, want := range map[string]string{
+		"/Users/a/repo-1.2_x": "/Users/a/repo-1.2_x",
+		"/a b":                "'/a b'",
+		"/a$(id)":             "'/a$(id)'",
+		"/it's":               `'/it'\''s'`,
+		"":                    "''",
+	} {
+		if got := shellArg(in); got != want {
+			t.Errorf("shellArg(%q) = %s, want %s", in, got, want)
+		}
+	}
+}

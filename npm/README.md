@@ -109,6 +109,7 @@ Release highlights and fixes: **[ccpm.nitingupta.xyz/changelog](https://ccpm.nit
 | `ccpm env set / unset / list`                             | Persist env vars per profile (injected at `ccpm run`)                |
 | `ccpm permissions allow / ask / deny / remove / list / mode` | Manage `permissions.*` rules and defaultMode                       |
 | `ccpm sessions list <profile>`                            | List a profile's sessions for the current directory (`--all` for every project) |
+| `ccpm sessions port <id> --from <A> --to <B>`             | Copy a session into another profile and print the command that continues it there |
 | `ccpm settings set / get / apply / show / statusline / outputstyle` | Manage Claude Code settings per profile                    |
 | `ccpm auth status / refresh / backup / restore`           | Manage authentication and the encrypted vault                        |
 | `ccpm config set / get`                                   | `cascade_auto_adopt`, `check_default_drift`, `statusline`, `usage_tracking`, `default_dir` (get-only) |

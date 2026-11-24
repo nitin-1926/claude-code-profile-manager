@@ -3,11 +3,12 @@ import { api } from '@/lib/api'
 import type { HistorySession, SearchHit } from '@/types'
 import { humanTokens, money, tildePath, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { GitBranch, Play, Search } from 'lucide-react'
+import { ArrowRightLeft, GitBranch, Play, Search } from 'lucide-react'
 import { useToast } from '@/components/ui/Toast'
 import { useGuarded } from '@/lib/useGuarded'
 import { TranscriptReader } from '@/components/history/TranscriptReader'
 import { SearchResults } from '@/components/history/SearchResults'
+import { OpenInProfileModal } from '@/components/history/OpenInProfileModal'
 
 // One input, two scopes. Two separate boxes — a cwd filter beside a full-text
 // search — would look near-identical and behave completely differently, so the
@@ -35,6 +36,7 @@ export function HistoryTab({ profile }: { profile: string }) {
   const [scope, setScope] = useState<ScopeId>('list')
   const [includeToolResults, setIncludeToolResults] = useState(false)
   const [reading, setReading] = useState<Reading | null>(null)
+  const [handoff, setHandoff] = useState<HistorySession | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // The scroll offset of whatever scrolls the list, saved when the reader
   // opens and put back when it closes. The list is hidden rather than
@@ -80,6 +82,7 @@ export function HistoryTab({ profile }: { profile: string }) {
     setQuery('')
     setScope('list')
     setReading(null)
+    setHandoff(null)
     load()
   }, [load])
 
@@ -95,13 +98,16 @@ export function HistoryTab({ profile }: { profile: string }) {
       turnUuid={reading.origin.kind === 'search' ? reading.origin.hit.turnUuid : undefined}
       relPath={reading.relPath}
       onBack={() => setReading(null)}
+      onOpenInProfile={() => setHandoff(reading.session)}
     />
   )
+  const picker = <OpenInProfileModal source={profile} session={handoff} onClose={() => setHandoff(null)} />
 
   if (error) {
     return (
       <>
         {reader}
+        {picker}
         <div hidden={!!reading} className="px-6 py-5 text-sm text-destructive">
           Could not load history: {error}
         </div>
@@ -112,6 +118,7 @@ export function HistoryTab({ profile }: { profile: string }) {
     return (
       <>
         {reader}
+        {picker}
         <div hidden={!!reading} className="px-6 py-5 text-sm text-muted-foreground">
           Loading history…
         </div>
@@ -127,6 +134,7 @@ export function HistoryTab({ profile }: { profile: string }) {
   return (
     <>
       {reader}
+      {picker}
       <div ref={listRef} hidden={!!reading} className="px-6 py-5">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
@@ -182,6 +190,7 @@ export function HistoryTab({ profile }: { profile: string }) {
           filtering={query.trim().length > 0}
           profile={profile}
           onOpen={(s) => openReader({ session: s, origin: { kind: 'list' }, relPath: '' })}
+          onOpenInProfile={setHandoff}
         />
       )}
       </div>
@@ -224,12 +233,14 @@ function SessionList({
   filtering,
   profile,
   onOpen,
+  onOpenInProfile,
 }: {
   sessions: HistorySession[]
   total: number
   filtering: boolean
   profile: string
   onOpen: (s: HistorySession) => void
+  onOpenInProfile: (s: HistorySession) => void
 }) {
   if (total === 0) {
     return (
@@ -270,6 +281,7 @@ function SessionList({
             last={i === sessions.length - 1}
             profile={profile}
             onOpen={() => onOpen(s)}
+            onOpenInProfile={() => onOpenInProfile(s)}
           />
         ))}
       </div>
@@ -285,11 +297,13 @@ function SessionRow({
   last,
   profile,
   onOpen,
+  onOpenInProfile,
 }: {
   s: HistorySession
   last: boolean
   profile: string
   onOpen: () => void
+  onOpenInProfile: () => void
 }) {
   const openable = s.openable
   const toast = useToast()
@@ -371,6 +385,16 @@ function SessionRow({
       </button>
       <div className="flex shrink-0 items-center gap-2 pt-0.5">
         <span className="text-[11px] text-muted-foreground">{timeAgo(s.lastTs)}</span>
+        {openable && (
+          <button
+            title="Open in profile…"
+            aria-label="Open this session in another profile"
+            onClick={onOpenInProfile}
+            className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+          >
+            <ArrowRightLeft className="size-3" />
+          </button>
+        )}
         {openable && (
           <button
             title="Resume this session in Terminal"

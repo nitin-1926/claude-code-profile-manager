@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -445,5 +446,118 @@ func TestDeletedTranscriptSaysSo(t *testing.T) {
 	}
 	if page.Turns == nil {
 		t.Error("Turns must stay non-nil on the error path")
+	}
+}
+
+// labsProfile registers a second profile beside syntheticProfile's and returns
+// its directory.
+func labsProfile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(os.Getenv("HOME"), ".ccpm", "config.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("HOME"), ".ccpm", "profiles", "labs")
+	cfg["profiles"].(map[string]any)["labs"] = map[string]any{
+		"name": "labs", "dir": dir, "auth_method": "oauth",
+		"created_at": "2026-01-01T00:00:00Z", "last_used": "2026-01-01T00:00:00Z",
+	}
+	raw, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestOpenInProfileRefusals(t *testing.T) {
+	h := NewHistory()
+	name := syntheticProfile(t)
+	labsProfile(t)
+	const id = "4245147b-6298-4288-9207-146fb29288b4"
+	for _, c := range []struct{ source, target, id, want string }{
+		{name, "labs", "../../etc/passwd", "implausible"},
+		{"ghost", "labs", id, "unknown profile: ghost"},
+		{name, "ghost", id, "unknown profile: ghost"},
+		{name, name, id, "already in profile"},
+		{name, "labs", id, "has no session"},
+	} {
+		r := h.OpenInProfile(c.source, c.target, c.id)
+		if r.OK || !strings.Contains(r.Error, c.want) {
+			t.Errorf("OpenInProfile(%q, %q, %q) = %+v, want %q", c.source, c.target, c.id, r, c.want)
+		}
+	}
+}
+
+// TestOpenInProfilePortsThenResumesInTarget runs the whole method without opening
+// a Terminal: the recorded directory is gone, so Resume refuses before launching.
+// That refusal is also what the picker shows. The source's sidecar names a
+// different missing directory, so the message says which profile Resume consulted.
+func TestOpenInProfilePortsThenResumesInTarget(t *testing.T) {
+	h := NewHistory()
+	name := syntheticProfile(t)
+	labs := labsProfile(t)
+	const id = "4245147b-6298-4288-9207-146fb29288b4"
+	gone := filepath.Join(t.TempDir(), "gone")
+	rel := usage.EncodeCwd(gone) + "/" + id + ".jsonl"
+	transcriptPath := filepath.Join(profileDir(name), "projects", filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	withCwd := func(line string) string {
+		return strings.ReplaceAll(line, `"cwd":"/repo"`, `"cwd":`+strconv.Quote(gone))
+	}
+	body := withCwd(userLine(t, "u1", id, "hello", "2026-01-02T00:00:00Z")) +
+		withCwd(asstLine(t, "a1", "u1", id, "msg_1", "hi", "2026-01-02T00:00:01Z", false))
+	if err := os.WriteFile(transcriptPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Sessions(name); err != nil {
+		t.Fatal(err)
+	}
+	ix := transcript.LoadIndex(profileDir(name))
+	ix.Entries[id].Cwd = gone + "-as-the-source-records-it"
+	sidecar, err := json.Marshal(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript.IndexPath(profileDir(name)), sidecar, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := h.OpenInProfile(name, "labs", id)
+	if r.OK || r.Error != "that session's directory no longer exists: "+gone {
+		t.Fatalf("OpenInProfile = %+v, want Resume's missing-directory refusal from the target", r)
+	}
+	if _, err := os.Stat(filepath.Join(labs, "projects", filepath.FromSlash(rel))); err != nil {
+		t.Errorf("the transcript was not copied: %v", err)
+	}
+
+	// Discoverable the way the History tab finds and opens it.
+	rows, err := h.Sessions("labs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != id || !rows[0].Openable {
+		t.Errorf("target's History rows = %+v", rows)
+	}
+	page, err := h.Transcript("labs", id, "", 0, 10)
+	if err != nil || page.Total != 2 {
+		t.Errorf("target's reader: %d turns, err %v", page.Total, err)
+	}
+
+	// Different bytes in the target surface as a readable refusal.
+	if err := os.WriteFile(filepath.Join(labs, "projects", filepath.FromSlash(rel)), []byte(body+"{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.OpenInProfile(name, "labs", id); r.OK || !strings.Contains(r.Error, "different content") {
+		t.Errorf("port over a diverged copy = %+v", r)
 	}
 }

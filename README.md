@@ -100,7 +100,7 @@ Release notes live on the docs site: **[ccpm.nitingupta.xyz/changelog](https://c
 
 A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
 
-It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings** (settings JSON, the status line layout, and the usage notch), **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings** (settings JSON, the status line layout, and the usage notch), **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions, and continue one in another profile with "Open in profile…"), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
 
 <p align="center">
   <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
@@ -288,8 +288,11 @@ Trust decides what ccpm's own view (`ccpm settings show`, the desktop app) takes
 | ------------------------------------ | -------------------------------------------------------------------------- |
 | `ccpm sessions list <profile>`       | Sessions scoped to the current working directory, most recently active first (`--limit N`, `--json`) |
 | `ccpm sessions list <profile> --all` | Sessions from every project the profile has worked on                      |
+| `ccpm sessions port <id> --from <A> --to <B>` | Copy a session into another profile and print the command that continues it there (`--json`) |
 
 The table shows each session's LAST ACTIVE time. `--json` gives `started` (the first timestamp) and `last_active`. Subagent transcripts are not listed.
+
+`ccpm sessions port` copies, so the original stays in the source profile and the two copies continue separately. The conversation then runs under the target's account, skills, MCP servers and billing. Switching accounts starts a cold cache, so the next message re-sends the whole conversation and costs more than a normal turn. On Pro and Max, [usage credits](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans) continue past a limit on the same account and are often the better option. `/rewind` checkpoints stay behind with the source profile. Tokens already spent stay with the source: only what is added after the copy counts toward the target's usage.
 
 ### Usage
 
