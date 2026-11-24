@@ -134,29 +134,30 @@ func TestResumeRejectsImplausibleSessionIDs(t *testing.T) {
 	for _, bad := range []string{
 		"", "../../../etc/passwd", "a b", "a;id", "a'b", "a\nb", "a$(id)", strings.Repeat("x", 200),
 	} {
-		r := h.Resume("definitely-not-a-real-profile-xyz", bad)
-		if r.OK {
+		_, err := h.Resume("definitely-not-a-real-profile-xyz", bad)
+		if err == nil {
 			t.Errorf("Resume accepted session id %q", bad)
+			continue
 		}
-		if !strings.Contains(r.Error, "implausible") {
+		if !strings.Contains(err.Error(), "implausible") {
 			t.Errorf("Resume(%q) error = %q, want the session-id gate to reject it "+
-				"(a later check rejecting it means the gate is untested)", bad, r.Error)
+				"(a later check rejecting it means the gate is untested)", bad, err)
 		}
 	}
 	// A well-formed id must get PAST the gate and fail on the profile instead.
-	if r := h.Resume("definitely-not-a-real-profile-xyz", "4245147b-6298-4288-9207-146fb29288b4"); strings.Contains(r.Error, "implausible") {
-		t.Error("a valid UUID was rejected by the session-id gate")
+	if _, err := h.Resume("definitely-not-a-real-profile-xyz", "4245147b-6298-4288-9207-146fb29288b4"); err == nil || strings.Contains(err.Error(), "implausible") {
+		t.Errorf("a valid UUID: err = %v, want it past the session-id gate and refused on the profile", err)
 	}
 }
 
 func TestResumeUnknownProfileAndSession(t *testing.T) {
 	h := NewHistory()
-	if r := h.Resume("definitely-not-a-real-profile-xyz", "4245147b-6298-4288-9207-146fb29288b4"); r.OK {
-		t.Error("Resume succeeded for an unknown profile")
+	if _, err := h.Resume("definitely-not-a-real-profile-xyz", "4245147b-6298-4288-9207-146fb29288b4"); err == nil || !strings.Contains(err.Error(), "unknown profile") {
+		t.Errorf("Resume of an unknown profile: err = %v, want the profile lookup to refuse it", err)
 	}
 	name, _, _, _ := historyFixture(t)
-	if r := h.Resume(name, "00000000-0000-0000-0000-000000000000"); r.OK || !strings.Contains(r.Error, "no transcript on disk") {
-		t.Errorf("Resume of a session with no transcript: %+v, want the session lookup to refuse it", r)
+	if _, err := h.Resume(name, "00000000-0000-0000-0000-000000000000"); err == nil || !strings.Contains(err.Error(), "no transcript on disk") {
+		t.Errorf("Resume of a session with no transcript: err = %v, want the session lookup to refuse it", err)
 	}
 }
 

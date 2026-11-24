@@ -131,15 +131,6 @@ func (s *MutateService) OpenFolder(name string) CmdResult {
 	return CmdResult{OK: true, Output: pc.Dir}
 }
 
-// Launch opens a new Terminal running `ccpm run <name>` (spawns Claude Code with
-// the profile).
-func (s *MutateService) Launch(name string) CmdResult {
-	if err := profile.ValidateName(name); err != nil {
-		return CmdResult{Error: err.Error()}
-	}
-	return s.terminal("", "run", name)
-}
-
 // CreateInTerminal opens a Terminal running `ccpm add <name>` (the interactive
 // auth wizard) — the bridge for in-GUI OAuth being deferred.
 func (s *MutateService) CreateInTerminal(name string) CmdResult {

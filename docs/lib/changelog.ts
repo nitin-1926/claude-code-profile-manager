@@ -37,6 +37,17 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
     releases: [
       {
+        date: "2026-10-26",
+        title: "CCPM Desktop: a terminal inside the app",
+        categories: ["Added"],
+        bullets: [
+          "A new Terminal tab runs Claude Code right inside CCPM. Run on the toolbar opens a session there, and you can open several per profile, each in its own labelled sub-tab.",
+          "Resume in History now continues a past session in that tab, in the folder it was started from, with the full conversation restored.",
+          "Sessions keep running while you switch tabs or profiles and pick up exactly where they were. Copy and paste work as usual, and Shift+Enter adds a new line in Claude Code's prompt.",
+          "Closing a session asks first and ends everything it started, and quitting the app closes every session cleanly.",
+        ],
+      },
+      {
         date: "2026-09-30",
         title: "Security fixes",
         categories: ["Security"],

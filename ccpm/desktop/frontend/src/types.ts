@@ -342,3 +342,30 @@ export interface StatusLineConfig {
    *  without a second round trip. */
   global: StatusLineBuckets
 }
+
+// --- Terminal ------------------------------------------------------------
+// Mirrors ccpm/desktop/services/terminal.go.
+
+export interface TerminalSession {
+  id: string
+  profile: string
+  cwd: string
+  title: string
+  running: boolean
+  /** Meaningful once running is false; -1 means a signal ended it. */
+  exitCode: number
+}
+
+export interface TerminalAttach {
+  session: TerminalSession
+  /** Buffered scrollback, base64 (a PTY read can split a UTF-8 sequence). */
+  data: string
+  /** Byte count `data` ends at; live chunks with seq <= this are already in it. */
+  seq: number
+}
+
+/** Payload of the terminal:data:<id> event. */
+export interface TerminalChunk {
+  data: string
+  seq: number
+}

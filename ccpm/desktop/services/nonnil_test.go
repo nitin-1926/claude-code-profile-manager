@@ -199,6 +199,16 @@ func TestUnknownProfileSafe(t *testing.T) {
 	}
 }
 
+func TestTerminalNoNullArrays(t *testing.T) {
+	b, err := json.Marshal(NewTerminal().List())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("an empty session list marshalled to %s, want []", b)
+	}
+}
+
 func TestStatusLineNoNullArrays(t *testing.T) {
 	for _, name := range []string{syntheticProfile(t), ""} {
 		c := NewStatusLine().Get(name)

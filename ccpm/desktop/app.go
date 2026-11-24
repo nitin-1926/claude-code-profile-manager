@@ -23,12 +23,13 @@ type App struct {
 	// are measured against them for depth and the skip list.
 	watchRoots []string
 	updater    *services.Updater
+	terminal   *services.TerminalService
 	rail       *rail.Controller
 }
 
 // NewApp creates a new App application struct
-func NewApp(updater *services.Updater) *App {
-	return &App{updater: updater, rail: rail.New()}
+func NewApp(updater *services.Updater, terminal *services.TerminalService) *App {
+	return &App{updater: updater, terminal: terminal, rail: rail.New()}
 }
 
 // startup saves the runtime context, hands it to the updater, and starts the
@@ -36,6 +37,7 @@ func NewApp(updater *services.Updater) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.updater.Ctx = ctx
+	a.terminal.Ctx = ctx
 	a.startWatcher()
 	a.startRail()
 }
@@ -110,8 +112,12 @@ func (a *App) onSecondInstanceLaunch(_ options.SecondInstanceData) {
 	runtime.Show(a.ctx)
 }
 
-// shutdown tears the watcher down cleanly.
+// shutdown tears the watcher down cleanly and ends every embedded terminal,
+// so quitting leaves no claude process behind.
 func (a *App) shutdown(_ context.Context) {
+	if a.terminal != nil {
+		a.terminal.CloseAll()
+	}
 	if a.watcher != nil {
 		_ = a.watcher.Close()
 	}

@@ -17,7 +17,8 @@ var assets embed.FS
 
 func main() {
 	updater := services.NewUpdater()
-	app := NewApp(updater)
+	terminal := services.NewTerminal()
+	app := NewApp(updater, terminal)
 	profiles := services.NewProfiles()
 	cascade := services.NewCascade()
 	usage := services.NewUsage()
@@ -32,6 +33,7 @@ func main() {
 	// way the two can drift apart.
 	prefs.OnChange = app.applyRailPrefs
 	history := services.NewHistory()
+	history.Terminal = terminal
 	statusline := services.NewStatusLine()
 
 	err := wails.Run(&options.App{
@@ -80,6 +82,7 @@ func main() {
 			history,
 			statusline,
 			updater,
+			terminal,
 		},
 	})
 
