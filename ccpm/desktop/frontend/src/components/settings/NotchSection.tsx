@@ -187,7 +187,7 @@ export function NotchSection() {
   )
 }
 
-function Row({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
+export function Row({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0">
       <div className="min-w-0 flex-1">

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
 )
@@ -166,6 +167,30 @@ func TestPlanLabel(t *testing.T) {
 		if got := PlanLabel(in); got != want {
 			t.Errorf("PlanLabel(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The frontend renders from these two fields rather than re-deriving them, so the
+// one normalisation point stays in Go.
+func TestLimitsForMarksExpiredAndClosest(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().Unix()
+	if err := usage.SaveLimits(dir, usage.Limits{
+		CapturedAt: now - 60,
+		Windows: []usage.LimitWindow{
+			{Key: usage.KeyFiveHour, Label: usage.LabelFiveHour, UsedPercentage: 95, ResetsAt: now - 1},
+			{Key: usage.KeySevenDay, Label: usage.LabelSevenDay, UsedPercentage: 12, ResetsAt: now + 3600},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := limitsFor("work", dir)
+	if !got.Windows[0].Expired || got.Windows[1].Expired {
+		t.Errorf("expired flags wrong: %+v", got.Windows)
+	}
+	if got.Closest != usage.KeySevenDay {
+		t.Errorf("closest = %q: an expired 95%% must not win over a live 12%%", got.Closest)
 	}
 }
 

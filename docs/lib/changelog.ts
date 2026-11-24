@@ -32,6 +32,24 @@ export type ChangelogSeries = {
 
 export const CHANGELOG: ChangelogSeries[] = [
   {
+    series: "0.9.x",
+    summary:
+      "Know where every profile stands: limits side by side, early warnings before a window runs out, and a notification when a session ends.",
+    releases: [
+      {
+        date: "2026-11-04",
+        title: "Limit alerts, session-end notifications, and every profile's limits at a glance",
+        categories: ["Added"],
+        bullets: [
+          "`ccpm usage --all` now ends with every profile's 5-hour and 7-day limits side by side: percent used, when each renews, which window is closest, and how old the reading is. `--json` adds the same data as a `limits` object on each profile. A profile with no reading shows `unknown`.",
+          "The desktop Usage tab shows the same table, so you can see which profile has headroom from whichever one you are in.",
+          "Limit alerts in the desktop app, off by default: a macOS notification at a warning level you choose (80% by default), at 100%, and when a window renews, for both the 5-hour and 7-day windows of every profile, such as `work is at 80% of its 5-hour limit, renews 15:45`. Each crossing alerts once, restarting the app never repeats one, and alerts use the numbers ccpm already caches, with no network call.",
+          "A session-ended notification in the desktop app, off by default: the profile with its tokens and estimated cost, as soon as a Claude Code session finishes.",
+        ],
+      },
+    ],
+  },
+  {
     series: "0.7.x",
     summary:
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",

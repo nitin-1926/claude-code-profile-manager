@@ -7,6 +7,7 @@ import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { StatusLineSection } from '@/components/settings/StatusLineSection'
 import { NotchSection } from '@/components/settings/NotchSection'
+import { AlertsSection } from '@/components/settings/AlertsSection'
 import { Plus, Save } from 'lucide-react'
 
 export function SettingsTab({ profile, onMutated }: { profile: string; onMutated: () => void }) {
@@ -40,7 +41,12 @@ export function SettingsTab({ profile, onMutated }: { profile: string; onMutated
   // The notch section reads its own service and is app-wide, so it renders in
   // the error and loading branches too: a profile's broken settings.json has
   // no bearing on it.
-  const notch = <NotchSection />
+  const notch = (
+    <>
+      <NotchSection />
+      <AlertsSection />
+    </>
+  )
 
   // Surface the failure instead of an indefinite "Loading…" — useLive
   // reports fetch errors and every consumer must render them.

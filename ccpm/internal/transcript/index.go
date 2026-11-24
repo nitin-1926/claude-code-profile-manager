@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -202,37 +203,9 @@ func BuildIndex(profileDir string) (*Index, error) {
 			slices.Equal(prev.SubPaths, subRels) && stillAt(profileDir, prev.RelPath, rel) {
 			return nil // unchanged since last build
 		}
-		meta, err := Scan(abs)
+		meta, err := scanWithSubagents(abs, subs)
 		if err != nil {
 			return nil
-		}
-		// Fold each subagent transcript's usage into the parent.
-		//
-		// Subagent lines carry the PARENT's sessionId, so internal/usage already
-		// attributes their tokens to this session; skipping them here entirely
-		// would leave History reporting 5-14% less than the Usage tab for the
-		// same session. They are not indexed as sessions of their OWN — that
-		// would bury the real rows — but they ARE searched and readable through
-		// this parent, via SubPaths (see search.go's collectCandidates).
-		//
-		// An earlier version of this comment said their text was duplicated into
-		// the parent as sidechain turns, and that they were not searched. Both
-		// were wrong, and it is the belief this branch exists to correct:
-		// isSidechain is present on 68,167 lines across 77 real parent
-		// transcripts and false on every one, so nothing is copied back.
-		//
-		// Each file is deduped independently, exactly as usage.ingestFile does,
-		// so the two agree by construction.
-		for _, sub := range subs {
-			sm, serr := Scan(sub)
-			if serr != nil {
-				continue
-			}
-			for model, tok := range sm.ByModel {
-				t := meta.ByModel[model]
-				t.Add(tok)
-				meta.ByModel[model] = t
-			}
 		}
 		// Key on the filename, not the sessionId inside the JSON. Claude Code
 		// names each transcript after its session and `--resume` matches on
@@ -539,6 +512,71 @@ func promptText(l rawLine) string {
 // collapseWS flattens newlines and runs of spaces so a multi-line prompt reads
 // as a single-line title.
 func collapseWS(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// scanWithSubagents scans a session's transcript and folds each subagent
+// transcript's usage into it.
+//
+// Subagent lines carry the PARENT's sessionId, so internal/usage already
+// attributes their tokens to this session; skipping them here entirely would
+// leave History reporting 5-14% less than the Usage tab for the same session.
+// They are not indexed as sessions of their OWN — that would bury the real rows
+// — but they ARE searched and readable through this parent, via SubPaths (see
+// search.go's collectCandidates).
+//
+// An earlier version of this comment said their text was duplicated into the
+// parent as sidechain turns, and that they were not searched. Both were wrong,
+// and it is the belief this branch exists to correct: isSidechain is present on
+// 68,167 lines across 77 real parent transcripts and false on every one, so
+// nothing is copied back.
+//
+// Each file is deduped independently, exactly as usage.ingestFile does, so the
+// two agree by construction.
+func scanWithSubagents(abs string, subs []string) (Meta, error) {
+	meta, err := Scan(abs)
+	if err != nil {
+		return meta, err
+	}
+	for _, sub := range subs {
+		sm, serr := Scan(sub)
+		if serr != nil {
+			continue
+		}
+		for model, tok := range sm.ByModel {
+			t := meta.ByModel[model]
+			t.Add(tok)
+			meta.ByModel[model] = t
+		}
+	}
+	return meta, nil
+}
+
+// SessionUsage tallies one session from its transcript, subagents included. It
+// only reads: BuildIndex would answer this too but writes history.json into the
+// tree the desktop watcher covers, and the caller reacts to that watcher.
+//
+// transcriptPath arrives through a file on disk, so it must be a regular file
+// (never a symlink, or a FIFO that would hang the read) under this profile.
+func SessionUsage(profileDir, transcriptPath string) (*Entry, error) {
+	rel, err := filepath.Rel(filepath.Join(profileDir, "projects"), transcriptPath)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsLocal(rel) || filepath.Ext(rel) != ".jsonl" {
+		return nil, fmt.Errorf("%s is not a transcript of this profile", transcriptPath)
+	}
+	fi, err := os.Lstat(transcriptPath)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", transcriptPath)
+	}
+	meta, err := scanWithSubagents(transcriptPath, subagentTranscripts(transcriptPath))
+	if err != nil {
+		return nil, err
+	}
+	return &Entry{ByModel: meta.ByModel}, nil
+}
 
 // Cost returns the estimated USD for an entry, summed across every model it
 // actually used, so a session that switched models is priced at each model's

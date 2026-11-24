@@ -124,6 +124,9 @@ export namespace services {
 	    railMain: string;
 	    railProfiles: Record<string, boolean>;
 	    theme: string;
+	    notifySessionEnd: boolean;
+	    limitAlerts: boolean;
+	    limitAlertThreshold: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DesktopPrefs(source);
@@ -138,6 +141,9 @@ export namespace services {
 	        this.railMain = source["railMain"];
 	        this.railProfiles = source["railProfiles"];
 	        this.theme = source["theme"];
+	        this.notifySessionEnd = source["notifySessionEnd"];
+	        this.limitAlerts = source["limitAlerts"];
+	        this.limitAlertThreshold = source["limitAlertThreshold"];
 	    }
 	}
 	export class McpView {
@@ -356,6 +362,7 @@ export namespace services {
 	    label: string;
 	    usedPercentage: number;
 	    resetsAt: number;
+	    expired: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new LimitWindowDTO(source);
@@ -367,6 +374,7 @@ export namespace services {
 	        this.label = source["label"];
 	        this.usedPercentage = source["usedPercentage"];
 	        this.resetsAt = source["resetsAt"];
+	        this.expired = source["expired"];
 	    }
 	}
 	
@@ -422,6 +430,7 @@ export namespace services {
 	    reason: string;
 	    capturedAt: number;
 	    windows: LimitWindowDTO[];
+	    closest: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileLimits(source);
@@ -436,6 +445,7 @@ export namespace services {
 	        this.reason = source["reason"];
 	        this.capturedAt = source["capturedAt"];
 	        this.windows = this.convertValues(source["windows"], LimitWindowDTO);
+	        this.closest = source["closest"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

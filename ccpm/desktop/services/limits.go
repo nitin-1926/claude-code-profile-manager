@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/usage"
@@ -29,6 +30,10 @@ type LimitWindowDTO struct {
 	UsedPercentage float64 `json:"usedPercentage"`
 	// ResetsAt is Unix seconds; 0 means Claude Code reported no reset clock.
 	ResetsAt int64 `json:"resetsAt"`
+	// Expired means ResetsAt has passed with no newer reading, so UsedPercentage
+	// describes a window that no longer exists. Computed here so the frontend
+	// does not grow a second copy of that rule.
+	Expired bool `json:"expired"`
 }
 
 // ProfileLimits is the per-profile payload behind one ring on the rail.
@@ -45,6 +50,9 @@ type ProfileLimits struct {
 	// CapturedAt is Unix seconds; 0 when there is no reading.
 	CapturedAt int64            `json:"capturedAt"`
 	Windows    []LimitWindowDTO `json:"windows"`
+	// Closest is the key of the window nearest its limit; empty when neither
+	// window has a current reading.
+	Closest string `json:"closest"`
 }
 
 // LimitsService surfaces the per-profile subscription windows cached by
@@ -99,6 +107,7 @@ func limitsFor(profile, dir string) ProfileLimits {
 		return out
 	}
 
+	now := time.Now()
 	windows := make([]LimitWindowDTO, 0, len(l.Windows))
 	for _, w := range l.Windows {
 		windows = append(windows, LimitWindowDTO{
@@ -106,6 +115,7 @@ func limitsFor(profile, dir string) ProfileLimits {
 			Label:          w.Label,
 			UsedPercentage: w.UsedPercentage,
 			ResetsAt:       w.ResetsAt,
+			Expired:        w.Expired(now),
 		})
 	}
 	return ProfileLimits{
@@ -116,6 +126,7 @@ func limitsFor(profile, dir string) ProfileLimits {
 		Reason:     ReasonOK,
 		CapturedAt: l.CapturedAt,
 		Windows:    windows,
+		Closest:    l.Overview(now).Closest,
 	}
 }
 

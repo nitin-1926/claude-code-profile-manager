@@ -1429,7 +1429,7 @@ ccpm statusline configure --row1 profile,model --row2 five_hour,seven_day \\
 ccpm usage work --plain        # static report
 ccpm usage --by-model          # or --by-project, --sessions
 ccpm usage --since 30d         # 168h, 30d, or a date like 2026-06-01
-ccpm usage --all               # every profile
+ccpm usage --all               # every profile, then their plan limits side by side
 ccpm usage --json              # machine-readable`}
             lang="bash"
           />

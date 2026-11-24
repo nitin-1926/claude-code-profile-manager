@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
@@ -36,7 +37,12 @@ transcripts it accumulates under <profileDir>/projects/.
 
 With no argument it uses the active profile ($CCPM_ACTIVE_PROFILE or the profile
 bound to $CLAUDE_CONFIG_DIR), then the configured default. Pass a name to target
-one profile, or --all to aggregate every profile.
+one profile, or --all to report every profile.
+
+--all ends with a table of each profile's 5-hour and 7-day plan limits: percent
+used, when each renews, which is closest to its limit, and how old the reading
+is. They are the last values the profile's status line saw, not live numbers, and
+a profile with no reading shows as unknown.
 
 Counts are raw token totals (input, output, cache-write, cache-read) — no dollar
 cost is computed. The default view shows totals, a contribution heatmap, and a
@@ -61,7 +67,7 @@ var usageSyncCmd = &cobra.Command{
 }
 
 func init() {
-	usageCmd.Flags().BoolVar(&usageAll, "all", false, "aggregate every profile")
+	usageCmd.Flags().BoolVar(&usageAll, "all", false, "report every profile, ending with their 5-hour and 7-day limits side by side")
 	usageCmd.Flags().BoolVar(&usageJSON, "json", false, "machine-readable JSON output")
 	usageCmd.Flags().StringVar(&usageSince, "since", "", "limit to a window: duration (168h), days (30d), or date (2026-06-01)")
 	usageCmd.Flags().BoolVar(&usageByModel, "by-model", false, "break usage down by model")
@@ -135,6 +141,12 @@ func runUsage(cmd *cobra.Command, args []string) error {
 		return runUsageTUI(cfg, sortedProfileNames(cfg), names[0])
 	}
 
+	if usageAll {
+		// Last, so it is what stays on screen under the long per-profile reports,
+		// and deferred, so a profile whose token store fails to load still gets it.
+		defer renderLimitsTable(cmd.OutOrStdout(), cfg, names, time.Now())
+	}
+
 	for i, name := range names {
 		p, ok := cfg.Profiles[name]
 		if !ok {
@@ -168,8 +180,8 @@ func sortedProfileNames(cfg *config.Config) []string {
 }
 
 func runUsageSync(cmd *cobra.Command, args []string) error {
-	// Swallow whatever the hook pipes on stdin (the SessionEnd JSON payload).
-	_, _ = io.Copy(io.Discard, cmd.InOrStdin())
+	// The hook pipes the SessionEnd JSON payload on stdin.
+	payload, _ := io.ReadAll(cmd.InOrStdin())
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -184,6 +196,9 @@ func runUsageSync(cmd *cobra.Command, args []string) error {
 		name = cfg.DefaultProfile
 	}
 	if p, ok := cfg.Profiles[name]; ok {
+		// Marker first: SessionEnd hooks share a 1.5s budget by default, and a
+		// Sync over a large profile can outlast it and get killed.
+		_ = usage.MarkSessionEnd(p.Dir, payload, time.Now())
 		_, _, _ = usage.Sync(p.Dir)
 	}
 	return nil
@@ -218,6 +233,44 @@ func renderUsage(out io.Writer, name string, view usage.View, day *usage.Daily, 
 		fmt.Fprintln(out)
 		renderNamed(out, "MODEL", topN(view.ByModel, 5), 28)
 	}
+}
+
+// renderLimitsTable lists every profile's two limit windows side by side. These
+// are cached status line readings, not live numbers, so the age is always shown.
+// Nothing here can fail: a profile with no reading is simply unknown.
+func renderLimitsTable(out io.Writer, cfg *config.Config, names []string, now time.Time) {
+	bold := color.New(color.Bold).SprintFunc()
+	faint := color.New(color.Faint).SprintFunc()
+	fmt.Fprintf(out, "\n⬢ %s %s\n", bold("Plan limits"), faint("· last reading from each profile's status line, not live"))
+
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "  PROFILE\t5-HOUR\t7-DAY\tCLOSEST\tUPDATED")
+	for _, name := range names {
+		l := usage.LoadLimits(cfg.Profiles[name].Dir)
+		o := l.Overview(now)
+		closest, updated := unknownLimit, unknownLimit
+		if o.Closest != "" {
+			closest = usage.WindowName(o.Closest)
+		}
+		if l.Available() {
+			updated = humanizeTime(time.Unix(l.CapturedAt, 0))
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", name, limitCell(o.Windows[0], now), limitCell(o.Windows[1], now), closest, updated)
+	}
+	_ = tw.Flush()
+}
+
+const unknownLimit = "unknown"
+
+func limitCell(r usage.WindowReading, now time.Time) string {
+	if !r.Known {
+		return unknownLimit
+	}
+	cell := fmt.Sprintf("%d%%", int(r.UsedPercentage))
+	if at := usage.FormatRenewal(r.ResetsAt, now); at != "" {
+		cell += ", renews " + at
+	}
+	return cell
 }
 
 func renderNamed(out io.Writer, title string, rows []usage.NamedTotal, nameW int) {
@@ -308,19 +361,7 @@ func baseName(p string) string {
 	return p
 }
 
-// humanTokens renders a token count compactly (175, 12.3K, 4.20M, 1.10B).
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000_000:
-		return fmt.Sprintf("%.2fB", float64(n)/1e9)
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.2fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1e3)
-	default:
-		return strconv.FormatInt(n, 10)
-	}
-}
+func humanTokens(n int64) string { return usage.HumanTokens(n) }
 
 // humanInt renders a plain integer with thousands separators.
 func humanInt(n int64) string {
@@ -387,6 +428,43 @@ type usageJSONOut struct {
 	ByProject []namedJSON        `json:"by_project"`
 	ByDay     []dayJSON          `json:"by_day"`
 	Sessions  []usageSessionJSON `json:"sessions"`
+	Limits    *limitsJSON        `json:"limits,omitempty"`
+}
+
+// limitsJSON keeps the encoding limits.json stores: used_percentage on a 0-100
+// scale (above 100 on overage plans) and resets_at in epoch seconds, 0 when
+// Claude Code reported no clock. The reading is cached, hence captured_at and
+// age_seconds; both are 0 for a profile that has no reading.
+type limitsJSON struct {
+	CapturedAt int64             `json:"captured_at"`
+	AgeSeconds int64             `json:"age_seconds"`
+	Closest    string            `json:"closest"`
+	Windows    []limitWindowJSON `json:"windows"`
+}
+
+type limitWindowJSON struct {
+	Key            string  `json:"key"`
+	Status         string  `json:"status"` // "ok" or "unknown"
+	UsedPercentage float64 `json:"used_percentage"`
+	ResetsAt       int64   `json:"resets_at"`
+}
+
+func buildLimitsJSON(l usage.Limits, now time.Time) *limitsJSON {
+	o := l.Overview(now)
+	out := &limitsJSON{
+		CapturedAt: l.CapturedAt,
+		AgeSeconds: int64(l.Age(now).Seconds()),
+		Closest:    o.Closest,
+		Windows:    make([]limitWindowJSON, 0, len(o.Windows)),
+	}
+	for _, r := range o.Windows {
+		status := "unknown"
+		if r.Known {
+			status = "ok"
+		}
+		out.Windows = append(out.Windows, limitWindowJSON{r.Key, status, r.UsedPercentage, r.ResetsAt})
+	}
+	return out
 }
 
 func buildUsageJSON(name string, view usage.View, sinceDate string) usageJSONOut {
@@ -434,7 +512,9 @@ func emitUsageJSON(cmd *cobra.Command, cfg *config.Config, names []string, since
 				return fmt.Errorf("reading usage for %q: %w", name, lerr)
 			}
 		}
-		out = append(out, buildUsageJSON(name, usage.BuildView(sess, day, sinceDate), sinceDate))
+		row := buildUsageJSON(name, usage.BuildView(sess, day, sinceDate), sinceDate)
+		row.Limits = buildLimitsJSON(usage.LoadLimits(p.Dir), time.Now())
+		out = append(out, row)
 	}
 
 	enc := json.NewEncoder(cmd.OutOrStdout())

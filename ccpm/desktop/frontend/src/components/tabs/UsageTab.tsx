@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import type { Block, Usage, UsageNamed } from '@/types'
-import { humanMinutes, humanTokens, money } from '@/lib/format'
+import { useLive } from '@/lib/useLive'
+import type { Block, LimitWindow, ProfileLimits, Usage, UsageNamed } from '@/types'
+import { humanMinutes, humanTokens, money, renewal, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { SectionLabel } from '@/components/ui/SectionLabel'
 import { Flame, Timer } from 'lucide-react'
@@ -49,6 +50,8 @@ export function UsageTab({ profile }: { profile: string }) {
 
   return (
     <div className="px-6 py-5">
+      <AllProfileLimits current={profile} />
+
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Token usage
@@ -117,6 +120,70 @@ export function UsageTab({ profile }: { profile: string }) {
         </>
       )}
     </div>
+  )
+}
+
+// AllProfileLimits sets every profile's plan limits side by side, so the one you
+// are not in can be read from the one you are. These are cached readings from each
+// profile's status line, hence the Updated column.
+function AllProfileLimits({ current }: { current: string }) {
+  const [limits, reload, error] = useLive<ProfileLimits[]>(() => api.limits.all(), [])
+  // A window resets with no file write for the watcher to see, and Go decides
+  // what has expired, so ask again on the same minute the notch redraws on.
+  useEffect(() => {
+    const t = setInterval(reload, 60_000)
+    return () => clearInterval(t)
+  }, [reload])
+
+  if (error) return <div className="mb-5 text-sm text-destructive">Could not load plan limits: {error}</div>
+  if (!limits || limits.length === 0) return null
+
+  return (
+    <section className="mb-7">
+      <SectionLabel>Plan limits, every profile</SectionLabel>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <table className="w-full text-xs">
+          <thead className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+            <tr className="border-b border-border">
+              <th className="px-4 py-2 font-medium">Profile</th>
+              <th className="px-4 py-2 font-medium">5-hour</th>
+              <th className="px-4 py-2 font-medium">7-day</th>
+              <th className="px-4 py-2 font-medium">Closest</th>
+              <th className="px-4 py-2 font-medium">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {limits.map((p) => (
+              <tr key={p.profile} className="border-b border-border last:border-b-0">
+                <td className={cn('px-4 py-2', p.profile === current && 'font-semibold text-primary')}>{p.profile}</td>
+                <LimitCell reading={p.windows.find((w) => w.key === 'five_hour')} />
+                <LimitCell reading={p.windows.find((w) => w.key === 'seven_day')} />
+                <td className={cn('px-4 py-2', !p.closest && 'text-muted-foreground')}>
+                  {p.closest === 'five_hour' ? '5-hour' : p.closest === 'seven_day' ? '7-day' : 'unknown'}
+                </td>
+                <td className="px-4 py-2 text-muted-foreground">
+                  {p.available
+                    ? timeAgo(new Date(p.capturedAt * 1000).toISOString())
+                    : p.reason === 'not-subscription-account'
+                      ? 'Plan does not report limits'
+                      : 'No reading yet'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function LimitCell({ reading }: { reading?: LimitWindow }) {
+  if (!reading || reading.expired) return <td className="px-4 py-2 text-muted-foreground">unknown</td>
+  return (
+    <td className="px-4 py-2 tabular-nums">
+      {Math.floor(reading.usedPercentage)}%
+      {reading.resetsAt > 0 && <span className="text-muted-foreground">, renews {renewal(reading.resetsAt)}</span>}
+    </td>
   )
 }
 

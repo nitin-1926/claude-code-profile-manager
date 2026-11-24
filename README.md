@@ -100,7 +100,7 @@ Release notes live on the docs site: **[ccpm.nitingupta.xyz/changelog](https://c
 
 A native desktop GUI for managing profiles lives in [`ccpm/desktop/`](ccpm/desktop). It's built with [Wails](https://wails.io) (Go + native webview) in the same module as the CLI — so it reuses ccpm's own engine for reads and shells out to the `ccpm` CLI for writes (same locking, keychain, and validation). Local-first, no signup.
 
-It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings** (settings JSON, the status line layout, and the usage notch), **Usage** (an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
+It gives you a left sidebar of profiles and, per profile, tabs for **Overview**, **Cascade** (the effective host→global→profile config with provenance badges and shadow/override hints), **Assets**, **MCP & Plugins**, **Permissions** (rules, mode, env), **Settings** (settings JSON, the status line layout, the usage notch, and notifications), **Usage** (every profile's plan limits side by side, and an amber token-usage dashboard mirroring `ccpm usage`), **History** (browse, read and search this profile's past sessions), and **Health** (`ccpm doctor`). Clone / rename / delete / open / run profiles from the toolbar; the view auto-refreshes when the CLI changes things underneath it. Creating a profile or importing `~/.claude` opens a Terminal running the `ccpm add` wizard (in-GUI sign-in is on the roadmap).
 
 <p align="center">
   <img src="docs/public/screenshots/overview.png" alt="CCPM Desktop — profile overview" width="860">
@@ -127,6 +127,13 @@ An optional notch that grows out of a screen edge, with one ring per profile: th
 Configure it in the **Usage notch** section of the **Settings** tab: a switch to show or hide it, and while it is on, whether it opens on hover or stays open, which edge it sits on (Top, Left, Right or Bottom), which window is the main ring, whether to show the percentage under each ring (hiding it gives the rings more room, handy on the top edge with several profiles), and a switch per profile. Turning it off and back on keeps your choices. In hover mode it folds to a slim pill at the screen edge and opens when you reach for it (Reduce Motion turns the animation into a jump).
 
 > **Where the numbers come from.** Claude Code already sends your rate-limit windows to `ccpm statusline`, and ccpm caches them per profile. **No API call, no credentials read.** The trade-off is that a profile's reading only refreshes when you actually use Claude Code on it — so the callout always tells you how old the number is, and says so plainly once it goes stale. A profile you've never run shows an empty ring and "No reading yet" rather than a misleading 0%, and so does a profile with its own custom `statusLine`, because only ccpm's status line records the readings. Only subscription plans (Max/Pro) report limits at all; API-key profiles say so instead of pretending.
+
+### Notifications (macOS)
+
+Two opt-in notifications, in the **Notifications** section of the **Settings** tab. Both are off until you turn them on, and macOS asks for permission the first time. They post while CCPM is running.
+
+- **Session ended** shows the profile with its tokens and estimated cost: `work session ended: 1.2M tokens, about $3.40 at API rates`. It turns on usage tracking, since the `SessionEnd` hook is what reports the ending, and covers sessions started after that with `ccpm run`. `/clear` and `/resume` keep you in the same Claude Code, so they do not count.
+- **Limit alerts** watch each profile's 5-hour and 7-day windows at a warning level you choose (80% by default), at 100%, and when a window renews: `work is at 80% of its 5-hour limit, renews 15:45`. Each crossing alerts once. Alerts read the same cached numbers as the notch, so they need no network call and they never switch accounts for you.
 
 ### Install (macOS)
 
@@ -300,10 +307,22 @@ The table shows each session's LAST ACTIVE time. `--json` gives `started` (the f
 | `ccpm usage [profile] --plain`                           | Static report: totals, a contribution heatmap, and a per-model breakdown |
 | `ccpm usage --by-model` / `--by-project` / `--sessions`  | Swap the report body                                                     |
 | `ccpm usage --since 30d`                                 | Limit to a window: duration (`168h`), days (`30d`), or date (`2026-06-01`) |
-| `ccpm usage --all`                                       | Aggregate every profile                                                  |
+| `ccpm usage --all`                                       | Every profile, ending with their plan limits side by side                |
 | `ccpm usage --json`                                      | Machine-readable output                                                  |
 
 Any of those flags prints a static report instead of the dashboard. Each run reads only the transcript bytes added since the last one. To keep the store warm between runs, `ccpm config set usage_tracking true` injects a `SessionEnd` hook (`ccpm usage sync`) into launched profiles; `ccpm usage` is accurate without it.
+
+`ccpm usage --all` ends with each profile's plan limits, so you can see which one has headroom without leaving the one you are in:
+
+```
+⬢ Plan limits · last reading from each profile's status line, not live
+  PROFILE  5-HOUR             7-DAY                  CLOSEST  UPDATED
+  ci       unknown            unknown                unknown  unknown
+  labs     12%, renews 18:30  41%, renews Sat 09:00  7-day    2h ago
+  work     82%, renews 15:45  64%, renews Thu 11:00  5-hour   3m ago
+```
+
+These are the numbers each profile's status line last saw, not live ones, so `UPDATED` tells you how far to trust them. A profile with no reading, an API-key profile, or a window whose reset has passed shows `unknown`. With `--json`, each profile gains a `limits` object: `captured_at`, `age_seconds`, `closest`, and `windows` with `key`, `status` (`ok` or `unknown`), `used_percentage` on a 0-100 scale (above 100 on overage plans), and `resets_at` in epoch seconds, 0 when unreported.
 
 ### Import
 

@@ -20,6 +20,7 @@ func TestShouldWatch(t *testing.T) {
 		root + "/profiles":                   true,
 		root + "/profiles/work":              true,
 		root + "/profiles/work/skills":       true,
+		root + "/profiles/work/usage":        true,  // limits.json and session-end.json drive alerts
 		root + "/profiles/work/skills/x":     false, // past the depth cap
 		root + "/profiles/work/projects":     false, // transcripts
 		root + "/profiles/work/node_modules": false,
