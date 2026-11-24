@@ -10,6 +10,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/desktop/rail"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/desktop/services"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -24,11 +25,15 @@ type App struct {
 	watchRoots []string
 	updater    *services.Updater
 	rail       *rail.Controller
+	tray       *rail.Tray
+	dock       *rail.DockTile
 }
 
 // NewApp creates a new App application struct
 func NewApp(updater *services.Updater) *App {
-	return &App{updater: updater, rail: rail.New()}
+	a := &App{updater: updater, rail: rail.New(), dock: rail.NewDockTile()}
+	a.tray = rail.NewTray(a.runProfile, a.showWindow)
+	return a
 }
 
 // startup saves the runtime context, hands it to the updater, and starts the
@@ -71,9 +76,10 @@ func (a *App) startRail() {
 	}()
 }
 
-// applyRailPrefs re-reads the preferences and reshapes the rail. Unexported:
-// Wails binds every exported App method to JS, and this runs from Go only —
-// on a preference write (PrefsService.OnChange), a file change, and the clock.
+// applyRailPrefs re-reads the preferences and limits and reshapes the rail, the
+// menu bar item and the Dock meter. Unexported: Wails binds every exported App
+// method to JS, and this runs from Go only — on a preference write
+// (PrefsService.OnChange), a file change, and the clock.
 func (a *App) applyRailPrefs() {
 	if a.rail == nil {
 		return
@@ -97,17 +103,59 @@ func (a *App) applyRailPrefs() {
 	// Hover mode still shows the panel; the reveal is what hover drives. The
 	// master switch is the only thing that takes it off screen entirely.
 	a.rail.SetVisible(prefs.RailOn && len(shown) > 0)
+
+	// Every profile, not shown: the per-profile switches decide who gets a ring
+	// on the notch, not who can be run from the menu.
+	a.tray.SetRows(rail.BuildMenuRows(limits, time.Now()))
+	a.tray.SetVisible(prefs.TrayOn)
+
+	var meter rail.DockMeter
+	if prefs.DockMeter {
+		preferred := ""
+		if cfg, err := config.Load(); err == nil {
+			preferred = cfg.DefaultProfile
+		}
+		meter = rail.BuildDockMeter(shown, preferred, prefs.RailMain, time.Now())
+	}
+	a.dock.Set(meter)
+}
+
+// runProfile starts a session for a menu bar click. It is the one place the
+// menu bar starts anything, and it waits on Terminal, so it runs off the main
+// thread (the rail package sees to that).
+func (a *App) runProfile(name string) {
+	res := services.NewMutate().Launch(name)
+	if res.Error == "" {
+		return
+	}
+	// The window may be hidden and a toast needs it, so a menu click that failed
+	// says so in a dialog rather than appearing to do nothing.
+	a.showWindow()
+	_, _ = runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		Type:    runtime.ErrorDialog,
+		Title:   "Could not run " + name,
+		Message: res.Error,
+	})
+}
+
+// showWindow brings the one window forward from any state. Closing it does not
+// close it: HideWindowOnClose makes that [NSApp hide:], so the app has to be
+// unhidden as well as the window ordered front, and a minimised window needs
+// its own call.
+func (a *App) showWindow() {
+	if a.ctx == nil {
+		return
+	}
+	runtime.WindowUnminimise(a.ctx)
+	runtime.Show(a.ctx)
+	runtime.WindowShow(a.ctx)
 }
 
 // onSecondInstanceLaunch runs when the single-instance lock turns away another
 // launch. Bring the window that is already running to the front so the user
 // sees a response rather than a click that seemingly did nothing.
 func (a *App) onSecondInstanceLaunch(_ options.SecondInstanceData) {
-	if a.ctx == nil {
-		return
-	}
-	runtime.WindowUnminimise(a.ctx)
-	runtime.Show(a.ctx)
+	a.showWindow()
 }
 
 // shutdown tears the watcher down cleanly.
@@ -117,6 +165,9 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.rail != nil {
 		a.rail.Stop()
+	}
+	if a.tray != nil {
+		a.tray.SetVisible(false)
 	}
 }
 

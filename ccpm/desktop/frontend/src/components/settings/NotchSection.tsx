@@ -183,6 +183,24 @@ export function NotchSection() {
           Claude Code, so a profile with a custom statusLine shows a dash.
         </p>
       )}
+
+      <h2 className="mb-3 mt-6 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Menu bar and Dock
+      </h2>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <Row
+          label="Show in menu bar"
+          description="Run a profile, see its 5h and 7d usage, or open this window without leaving what you are doing."
+        >
+          <Switch on={prefs.trayOn} label="Show in menu bar" onClick={() => write({ trayOn: !prefs.trayOn })} />
+        </Row>
+        <Row
+          label="Dock meter"
+          description="A bar over the Dock icon that drains as the main ring's window fills, for your default profile, or the first profile on the notch with a reading."
+        >
+          <Switch on={prefs.dockMeter} label="Dock meter" onClick={() => write({ dockMeter: !prefs.dockMeter })} />
+        </Row>
+      </div>
     </div>
   )
 }

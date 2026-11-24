@@ -128,6 +128,12 @@ Configure it in the **Usage notch** section of the **Settings** tab: a switch to
 
 > **Where the numbers come from.** Claude Code already sends your rate-limit windows to `ccpm statusline`, and ccpm caches them per profile. **No API call, no credentials read.** The trade-off is that a profile's reading only refreshes when you actually use Claude Code on it — so the callout always tells you how old the number is, and says so plainly once it goes stale. A profile you've never run shows an empty ring and "No reading yet" rather than a misleading 0%, and so does a profile with its own custom `statusLine`, because only ccpm's status line records the readings. Only subscription plans (Max/Pro) report limits at all; API-key profiles say so instead of pretending.
 
+### Menu bar and Dock (macOS)
+
+The app adds an icon to your menu bar, listing every profile with its 5-hour and 7-day usage when known. Click a profile to run it in a new Terminal window without opening the app. **Show Window** brings the app back, even after you closed its window, and **Quit** quits it. Turn the icon off with **Show in menu bar** in the **Menu bar and Dock** section of the **Settings** tab.
+
+The same section has an optional **Dock meter**, off by default: a bar over the Dock icon that drains as you use up a limit window, coloured on the notch's thresholds. It follows the notch's main ring (5-hour or weekly), for your default profile, or the first profile enabled on the notch with a reading when the default has none. With no reading the Dock shows the plain icon.
+
 ### Install (macOS)
 
 One line in Terminal. It picks the build for your chip, verifies its checksum and puts **CCPM** in **Applications**, ready to open:

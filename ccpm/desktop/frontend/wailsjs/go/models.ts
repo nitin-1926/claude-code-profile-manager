@@ -123,6 +123,8 @@ export namespace services {
 	    railPercent: boolean;
 	    railMain: string;
 	    railProfiles: Record<string, boolean>;
+	    trayOn: boolean;
+	    dockMeter: boolean;
 	    theme: string;
 	
 	    static createFrom(source: any = {}) {
@@ -137,6 +139,8 @@ export namespace services {
 	        this.railPercent = source["railPercent"];
 	        this.railMain = source["railMain"];
 	        this.railProfiles = source["railProfiles"];
+	        this.trayOn = source["trayOn"];
+	        this.dockMeter = source["dockMeter"];
 	        this.theme = source["theme"];
 	    }
 	}

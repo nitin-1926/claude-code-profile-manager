@@ -76,6 +76,10 @@ type DesktopPrefs struct {
 	// from this map is enabled — so a newly created profile shows up on the
 	// rail without the user having to go and find a switch for it.
 	RailProfiles map[string]bool `json:"railProfiles"`
+	// TrayOn shows the menu bar item.
+	TrayOn bool `json:"trayOn"`
+	// DockMeter draws the headroom meter over the Dock icon.
+	DockMeter bool `json:"dockMeter"`
 	// Theme mirrors the `data-theme` the frontend sets on <html>. The rail is a
 	// native panel and cannot read the frontend's CSS custom properties or its
 	// localStorage, so the theme has to reach Go through the preferences file.
@@ -98,6 +102,7 @@ func DefaultPrefs() DesktopPrefs {
 		RailPercent:  true,
 		RailMain:     RailMainFiveHour,
 		RailProfiles: map[string]bool{},
+		TrayOn:       true,
 		Theme:        ThemeGraphite,
 	}
 }
@@ -236,10 +241,10 @@ func (s *PrefsService) update(edit func(*DesktopPrefs)) (DesktopPrefs, error) {
 	return stored, nil
 }
 
-// SetNotch stores only the notch's own settings from p, leaving the theme and
-// the per-profile choices as they are in the file. The notch settings section
-// sends its whole copy; merging here, under the lock, means a theme change
-// that landed after that copy was read is not put back.
+// SetNotch stores only the settings the notch section owns from p, leaving the
+// theme and the per-profile choices as they are in the file. The section sends
+// its whole copy; merging here, under the lock, means a theme change that
+// landed after that copy was read is not put back.
 func (s *PrefsService) SetNotch(p DesktopPrefs) (DesktopPrefs, error) {
 	return s.update(func(cur *DesktopPrefs) {
 		cur.RailOn = p.RailOn
@@ -247,6 +252,8 @@ func (s *PrefsService) SetNotch(p DesktopPrefs) (DesktopPrefs, error) {
 		cur.RailEdge = p.RailEdge
 		cur.RailPercent = p.RailPercent
 		cur.RailMain = p.RailMain
+		cur.TrayOn = p.TrayOn
+		cur.DockMeter = p.DockMeter
 	})
 }
 

@@ -201,6 +201,10 @@ export interface DesktopPrefs {
   railMain: RailMain
   /** Explicit choices only — a profile absent from this map is enabled. */
   railProfiles: Record<string, boolean>
+  /** Show the menu bar item. */
+  trayOn: boolean
+  /** Draw the headroom meter over the Dock icon. */
+  dockMeter: boolean
   theme: string
 }
 
