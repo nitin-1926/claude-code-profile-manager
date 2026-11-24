@@ -99,6 +99,8 @@ MCP merge: host `~/.claude.json#mcpServers` → `share/mcp/global.json` → `sha
 | API key | All                    | `go-keyring` — service `ccpm`, account `<profile>`                                                                                                      |
 | Vault   | All                    | AES-256-GCM under `~/.ccpm/vault/<profile>.enc`, master key in `go-keyring` (service `ccpm-vault`)                                                      |
 
+**Provider preset profiles** (`ccpm add --preset`, table in `internal/presets`) are `api_key` profiles with `ProfileConfig.KeyEnv` set. The key stays in `go-keyring` under the same service and launches in the named variable. `KeyEnv != ""` is what turns on the isolation: `claude.execEnv` drops inherited routing variables and blanks the other credential variable, and `settingsmerge.profileSettings` strips them from the profile's `settings.json`, because Claude Code applies a settings `env` block over its process env. Verified against the real binary: an `ANTHROPIC_API_KEY` left in settings goes to the provider as `x-api-key` alongside the bearer token, and an `ANTHROPIC_BASE_URL` left there redirects the provider's key. `set-default` and `use` refuse these profiles, since a host `settings.json` default would route every profile through the provider.
+
 Helpers live in `internal/credentials/`. `macos_keychain.go` (build-tagged `darwin`) is the verified reference implementation. `wincred_keychain.go` (build-tagged `windows`) mirrors the macOS surface against `go-keyring`'s wincred backend — theoretical until a Windows user exercises `ccpm set-default <oauth>` and reports back. A stub `macos_keychain_other.go` (build-tagged `!darwin && !windows`) keeps Linux + other builds compiling with no-ops; replace it with a libsecret handler when adding real Linux OAuth-isolation support.
 
 ## 7. MCP authentication model
@@ -151,6 +153,7 @@ Three categories — any new MCP-related feature must document which it targets.
 | Command                                   | What it does                                                            | Side effects                                               |
 | ----------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
 | `ccpm add`                                | Create profile, optionally run import wizard, then auth                 | Writes profile dir, keychain entry, manifest               |
+| `ccpm add --preset` / `ccpm preset list`  | Create a third-party provider profile; list the presets                 | As `add`, skipping the wizard; plus `env` and `key_env`    |
 | `ccpm run`                                | Exec `claude` with `CLAUDE_CONFIG_DIR` set                              | Replaces current process on Unix                           |
 | `ccpm use`                                | Print `export CLAUDE_CONFIG_DIR=...` for shell hook                     | Requires `ccpm shell-init` output in rc file               |
 | `ccpm remove`                             | Delete profile dir, keychain entry, manifest references                 | Irreversible; also deletes the profile's vault backup      |

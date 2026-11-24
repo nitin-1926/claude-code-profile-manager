@@ -5,3 +5,5 @@ import {services} from '../models';
 export function Get(arg1:string):Promise<services.Profile>;
 
 export function List():Promise<Array<services.Profile>>;
+
+export function Presets():Promise<Array<services.Preset>>;

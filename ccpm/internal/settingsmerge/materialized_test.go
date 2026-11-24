@@ -52,6 +52,74 @@ func (e *materializeEnv) write(rel, body string) {
 	}
 }
 
+// A provider profile must not pick up credentials or routing from the host
+// settings every profile inherits: Claude Code applies settings.json env over
+// its process env, so a host ANTHROPIC_API_KEY (which `ccpm set-default` writes)
+// would reach the third party. An ordinary profile keeps inheriting all of it.
+func TestMaterializeStripsRoutingFromProviderProfileOnly(t *testing.T) {
+	e := newMaterializeEnv(t)
+	host := `{"apiKeyHelper":"/bin/key","theme":"dark","env":{
+		"ANTHROPIC_API_KEY":"sk-ant-host","ANTHROPIC_BASE_URL":"https://host.example",
+		"ANTHROPIC_MODEL":"host-model","CLAUDE_CODE_USE_VERTEX":"1","KEEP_ME":"yes"}}`
+	e.write(".claude/settings.json", host)
+	config := func(keyEnv string) {
+		e.write(".ccpm/config.json", `{"version":"1","profiles":{"work":{"name":"work","dir":"`+
+			filepath.ToSlash(e.profileDir)+`","auth_method":"api_key","key_env":"`+keyEnv+`"}}}`)
+	}
+
+	config("ANTHROPIC_AUTH_TOKEN")
+	e.materialize("")
+	got, err := LoadJSON(filepath.Join(e.profileDir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, has := got["apiKeyHelper"]; has {
+		t.Error("apiKeyHelper reached a provider profile")
+	}
+	if got["theme"] != "dark" {
+		t.Errorf("unrelated host setting lost: %v", got)
+	}
+	env, _ := got["env"].(map[string]interface{})
+	if len(env) != 1 || env["KEEP_ME"] != "yes" {
+		t.Errorf("provider profile env = %v, want only KEEP_ME", env)
+	}
+
+	config("")
+	e.materialize("")
+	got, err = LoadJSON(filepath.Join(e.profileDir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ = got["env"].(map[string]interface{})
+	if env["ANTHROPIC_API_KEY"] != "sk-ant-host" || env["ANTHROPIC_BASE_URL"] != "https://host.example" || got["apiKeyHelper"] != "/bin/key" {
+		t.Errorf("ordinary profile lost inherited settings: %v", got)
+	}
+}
+
+// `ccpm import default` merges host settings straight into a profile's
+// settings.json, where they look like the user's own. On a provider profile they
+// still must not survive the rebuild; unrelated keys there must.
+func TestMaterializeStripsRoutingFromProviderProfileSettingsFile(t *testing.T) {
+	e := newMaterializeEnv(t)
+	e.write(".ccpm/config.json", `{"version":"1","profiles":{"work":{"name":"work","dir":"`+
+		filepath.ToSlash(e.profileDir)+`","auth_method":"api_key","key_env":"ANTHROPIC_AUTH_TOKEN"}}}`)
+	if err := os.WriteFile(filepath.Join(e.profileDir, "settings.json"),
+		[]byte(`{"model":"opus","env":{"ANTHROPIC_API_KEY":"sk-ant-imported","MINE":"1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	e.materialize("")
+
+	got, err := LoadJSON(filepath.Join(e.profileDir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := got["env"].(map[string]interface{})
+	if env["ANTHROPIC_API_KEY"] != nil || env["MINE"] != "1" || got["model"] != "opus" {
+		t.Errorf("settings = %v", got)
+	}
+}
+
 func (e *materializeEnv) materialize(projectRoot string) {
 	e.t.Helper()
 	if err := MaterializeAll(e.profileDir, "work", projectRoot); err != nil {

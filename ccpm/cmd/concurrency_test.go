@@ -139,7 +139,7 @@ func TestEnvSetConcurrentKeepsEveryKey(t *testing.T) {
 func TestRunLastUsedStampKeepsConcurrentRegistrations(t *testing.T) {
 	sandboxHome(t, "a")
 	origExec := execClaude
-	execClaude = func(string, string, map[string]string, map[string]string, []string) error { return nil }
+	execClaude = func(string, string, string, map[string]string, map[string]string, []string) error { return nil }
 	t.Cleanup(func() { execClaude = origExec })
 
 	var names []string

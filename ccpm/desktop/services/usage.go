@@ -41,16 +41,20 @@ type UsageSession struct {
 }
 
 type Usage struct {
-	Profile         string         `json:"profile"`
-	Window          string         `json:"window"`
-	TrackingEnabled bool           `json:"trackingEnabled"`
-	Totals          UsageTokens    `json:"totals"`
-	Messages        int64          `json:"messages"`
-	Cost            float64        `json:"cost"`
-	ByDay           []UsageDay     `json:"byDay"`
-	ByModel         []UsageNamed   `json:"byModel"`
-	ByProject       []UsageNamed   `json:"byProject"`
-	Sessions        []UsageSession `json:"sessions"`
+	Profile         string      `json:"profile"`
+	Window          string      `json:"window"`
+	TrackingEnabled bool        `json:"trackingEnabled"`
+	Totals          UsageTokens `json:"totals"`
+	Messages        int64       `json:"messages"`
+	Cost            float64     `json:"cost"`
+	// CostUnknown means the profile sends requests to another endpoint, so
+	// Anthropic's price table can't estimate it: every cost here is 0 and the UI
+	// says so rather than showing $0.00 or a Claude rate for someone else's model.
+	CostUnknown bool           `json:"costUnknown"`
+	ByDay       []UsageDay     `json:"byDay"`
+	ByModel     []UsageNamed   `json:"byModel"`
+	ByProject   []UsageNamed   `json:"byProject"`
+	Sessions    []UsageSession `json:"sessions"`
 }
 
 // UsageService renders per-profile token usage from the same store the CLI uses.
@@ -72,6 +76,11 @@ func (s *UsageService) Blocks(profile string) ([]usage.Block, error) {
 	blocks, err := usage.LoadBlocks(pc.Dir, time.Now())
 	if err != nil || blocks == nil {
 		return []usage.Block{}, nil
+	}
+	if pc.CustomEndpoint() {
+		for i := range blocks {
+			blocks[i].Cost, blocks[i].CostPerHour, blocks[i].ProjectedCost = 0, 0, 0
+		}
 	}
 	return blocks, nil
 }
@@ -147,6 +156,19 @@ func (s *UsageService) Get(profile, window string) (*Usage, error) {
 			Total:    r.Tokens.Total(),
 			Messages: r.Messages,
 		})
+	}
+	if pc.CustomEndpoint() {
+		out.CostUnknown = true
+		out.Cost = 0
+		for i := range out.ByDay {
+			out.ByDay[i].Cost = 0
+		}
+		for i := range out.ByModel {
+			out.ByModel[i].Cost = 0
+		}
+		for i := range out.ByProject {
+			out.ByProject[i].Cost = 0
+		}
 	}
 	return out, nil
 }

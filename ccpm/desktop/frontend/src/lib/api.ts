@@ -1,7 +1,7 @@
 // Single seam between the React app and the generated Wails bindings. Components
 // import from here, never from ../wailsjs directly, so binding-path churn and the
 // `as unknown as` casts stay in one place.
-import { List as ProfilesList, Get as ProfileGet } from '../../wailsjs/go/services/Profiles'
+import { List as ProfilesList, Get as ProfileGet, Presets as ProfilePresets } from '../../wailsjs/go/services/Profiles'
 import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
@@ -14,6 +14,7 @@ import {
   OpenFolder as MOpenFolder,
   Launch as MLaunch,
   CreateInTerminal as MCreate,
+  CreateFromPreset as MCreateFromPreset,
   ImportInTerminal as MImport,
   AddAsset as MAddAsset,
   RemoveAsset as MRemoveAsset,
@@ -59,6 +60,7 @@ import type {
   HistoryPage,
   HistorySession,
   HistoryToolBody,
+  Preset,
   Profile,
   ProfileLimits,
   SearchResult,
@@ -73,6 +75,7 @@ export const api = {
   profiles: {
     list: () => ProfilesList() as unknown as Promise<Profile[]>,
     get: (name: string) => ProfileGet(name) as unknown as Promise<Profile | null>,
+    presets: () => ProfilePresets() as unknown as Promise<Preset[]>,
   },
   cascade: {
     get: (name: string) => CascadeGet(name) as unknown as Promise<Cascade>,
@@ -133,6 +136,8 @@ export const api = {
     openFolder: (name: string) => MOpenFolder(name) as unknown as Promise<CmdResult>,
     launch: (name: string) => MLaunch(name) as unknown as Promise<CmdResult>,
     createInTerminal: (name: string) => MCreate(name) as unknown as Promise<CmdResult>,
+    createFromPreset: (name: string, preset: string, key: string) =>
+      MCreateFromPreset(name, preset, key) as unknown as Promise<CmdResult>,
     importInTerminal: () => MImport() as unknown as Promise<CmdResult>,
     addAsset: (kind: string, path: string, profile: string) =>
       MAddAsset(kind, path, profile) as unknown as Promise<CmdResult>,

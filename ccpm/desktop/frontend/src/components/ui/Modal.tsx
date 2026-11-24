@@ -189,7 +189,7 @@ export function ConfirmModal({
   )
 }
 
-function GhostButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+export function GhostButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -200,7 +200,7 @@ function GhostButton({ children, onClick }: { children: React.ReactNode; onClick
   )
 }
 
-function PrimaryButton({
+export function PrimaryButton({
   children,
   onClick,
   disabled,

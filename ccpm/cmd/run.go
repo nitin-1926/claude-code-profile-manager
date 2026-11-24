@@ -9,7 +9,6 @@ import (
 
 	claudepkg "github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/claude"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
 	profilesync "github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/sync"
 )
@@ -165,7 +164,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Get API key if needed
 	var apiKey string
 	if p.AuthMethod == "api_key" {
-		store := keystore.New()
+		store := newKeystore()
 		apiKey, err = store.GetAPIKey(name)
 		if err != nil {
 			return fmt.Errorf("retrieving API key: %w\nRun 'ccpm auth refresh %s' to re-enter your key", err, name)
@@ -178,10 +177,22 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Launching Claude Code with profile: %s\n", name)
-	fmt.Printf("Config dir: %s\n\n", p.Dir)
+	fmt.Printf("Config dir: %s\n", p.Dir)
+	if p.KeyEnv != "" {
+		baseURL := p.Env["ANTHROPIC_BASE_URL"]
+		if v, ok := extraEnv["ANTHROPIC_BASE_URL"]; ok {
+			baseURL = v
+		}
+		// Without an endpoint the provider's key would go to Anthropic.
+		if baseURL == "" {
+			return fmt.Errorf("profile %q has no ANTHROPIC_BASE_URL. Set it with: ccpm env set ANTHROPIC_BASE_URL=<url> --profile %s", name, name)
+		}
+		fmt.Printf("Provider: %s\n", baseURL)
+	}
+	fmt.Println()
 
 	// Exec replaces this process with claude
-	return execClaude(p.Dir, apiKey, p.Env, extraEnv, claudeArgs)
+	return execClaude(p.Dir, p.KeyEnv, apiKey, p.Env, extraEnv, claudeArgs)
 }
 
 // stampLastUsed records name as just used. The caller must hold the config

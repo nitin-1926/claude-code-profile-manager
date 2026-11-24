@@ -28,7 +28,7 @@ func TestExecEnvReplacesInheritedKeys(t *testing.T) {
 	t.Setenv("CCPM_UNTOUCHED_VAR", "kept")
 
 	profileDir := t.TempDir()
-	_, abs, env, err := execEnv(profileDir, "sk-profile",
+	_, abs, env, err := execEnv(profileDir, "", "sk-profile",
 		map[string]string{"CCPM_PROFILE_VAR": "from-profile", "CCPM_ONESHOT_VAR": "from-profile"},
 		map[string]string{"CCPM_ONESHOT_VAR": "from-cli"})
 	if err != nil {

@@ -32,6 +32,24 @@ export type ChangelogSeries = {
 
 export const CHANGELOG: ChangelogSeries[] = [
   {
+    series: "0.9.x",
+    summary:
+      "Profiles that run Claude Code against other providers, using each provider's own API key.",
+    releases: [
+      {
+        date: "2026-11-04",
+        title: "Provider presets",
+        categories: ["Added"],
+        bullets: [
+          "`ccpm add <name> --preset <id>` creates a profile that runs on a third-party provider: Ollama (local or cloud), OpenRouter, DeepSeek, Z.ai GLM, Moonshot Kimi or DeepInfra. `ccpm preset list` shows them all. Each profile carries a base URL plus that provider's own API key and billing, with the key in your OS keychain. There is no proxy and no subscription login involved. Compatibility is each provider's own claim, and some Claude Code features may behave differently.",
+          "The desktop app's new-profile dialog offers the same presets, with a masked key field and a link to the provider's setup guide.",
+          "A provider profile launches with its own endpoint and key whatever your shell or `~/.claude/settings.json` holds, so an Anthropic key set there never travels to the provider.",
+          "For any profile with its own `ANTHROPIC_BASE_URL`, the desktop Usage tab now shows cost as unknown, and the History tab and status line leave it out, because Anthropic's prices say nothing about another endpoint. The Usage notch settings now tell you an API-key profile does not report limits, rather than waiting for a reading.",
+        ],
+      },
+    ],
+  },
+  {
     series: "0.7.x",
     summary:
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",

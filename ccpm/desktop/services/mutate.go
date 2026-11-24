@@ -58,6 +58,12 @@ func (l *lockedBuffer) Write(p []byte) (int, error) {
 // showing to a person; stdout alone is returned for callers that parse it,
 // since ccpm logs to stderr.
 func execCCPM(timeout time.Duration, args ...string) (r CmdResult, stdout []byte) {
+	return execCCPMStdin(timeout, "", args...)
+}
+
+// execCCPMStdin is execCCPM with input on stdin, which is how a secret reaches
+// the CLI: argv is visible to every local user through `ps`.
+func execCCPMStdin(timeout time.Duration, stdin string, args ...string) (r CmdResult, stdout []byte) {
 	bin := findCCPM()
 	if bin == "" {
 		return CmdResult{Error: "ccpm CLI not found on PATH"}, nil
@@ -66,6 +72,9 @@ func execCCPM(timeout time.Duration, args ...string) (r CmdResult, stdout []byte
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(envWithoutColor(), "NO_COLOR=1")
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	var out bytes.Buffer
 	var combined lockedBuffer
 	cmd.Stdout = io.MultiWriter(&out, &combined)
@@ -147,6 +156,16 @@ func (s *MutateService) CreateInTerminal(name string) CmdResult {
 		return CmdResult{Error: err.Error()}
 	}
 	return s.terminal("", "add", name)
+}
+
+// CreateFromPreset runs `ccpm add <name> --preset <id>`, handing the key over
+// stdin. No Terminal: a provider profile has no browser sign-in to bridge.
+func (s *MutateService) CreateFromPreset(name, preset, key string) CmdResult {
+	if err := profile.ValidateName(name); err != nil {
+		return CmdResult{Error: err.Error()}
+	}
+	r, _ := execCCPMStdin(60*time.Second, key+"\n", "add", "--preset", preset, "--", name)
+	return r
 }
 
 // ImportInTerminal opens a Terminal running the import-from-host wizard.

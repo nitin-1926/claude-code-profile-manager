@@ -15,7 +15,6 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/manifest"
 	"golang.org/x/mod/semver"
 )
@@ -126,7 +125,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		yellow.Println("  ! no profiles yet — create one with 'ccpm add'")
 		warnings++
 	} else {
-		store := keystore.New()
+		store := newKeystore()
 		checker := credentials.NewChecker(store)
 
 		names := make([]string, 0, len(cfg.Profiles))
@@ -160,6 +159,15 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				warnings++
 			}
 			fmt.Printf("  %s %s%s (%s) — %s\n", icon, name, marker, p.AuthMethod, authLine)
+
+			if p.KeyEnv != "" {
+				if base := p.Env["ANTHROPIC_BASE_URL"]; base != "" {
+					dim.Printf("      provider: %s, key in %s (ccpm run only)\n", base, p.KeyEnv)
+				} else {
+					red.Printf("      ✗ provider profile has no ANTHROPIC_BASE_URL; `ccpm run %s` refuses to launch\n", name)
+					issues++
+				}
+			}
 
 			// Transparency for macOS OAuth: surface the namespaced keychain
 			// service so users can inspect it in Keychain Access.

@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { Boxes, Download, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/Toast'
-import { PromptModal } from '@/components/ui/Modal'
-import { validateProfileName } from '@/lib/validate'
+import { CreateProfileModal } from '@/components/CreateProfileModal'
 
 export function EmptyState() {
   const [creating, setCreating] = useState(false)
@@ -42,25 +41,17 @@ export function EmptyState() {
             Import existing ~/.claude config
           </button>
           <span className="mt-1 text-[11px] text-muted-foreground">
-            sign-in completes in a Terminal window
+            account sign-in completes in a Terminal window
           </span>
         </div>
       </div>
 
-      <PromptModal
+      <CreateProfileModal
         open={creating}
         title="Create your first profile"
-        label="Profile name (opens a Terminal to complete sign-in)"
         placeholder="e.g. work"
-        confirmLabel="Create in Terminal"
-        validate={(v) => validateProfileName(v, [])}
-        onCancel={() => setCreating(false)}
-        onConfirm={async (name) => {
-          setCreating(false)
-          const r = await api.mutate.createInTerminal(name)
-          if (r.ok) toast({ kind: 'info', title: 'Opening Terminal to create profile', desc: r.output })
-          else toast({ kind: 'error', title: 'Could not open Terminal', desc: r.error || r.output })
-        }}
+        taken={[]}
+        onClose={() => setCreating(false)}
       />
     </div>
   )

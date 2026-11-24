@@ -22,6 +22,10 @@ export function Clone(arg1, arg2) {
   return window['go']['services']['MutateService']['Clone'](arg1, arg2);
 }
 
+export function CreateFromPreset(arg1, arg2, arg3) {
+  return window['go']['services']['MutateService']['CreateFromPreset'](arg1, arg2, arg3);
+}
+
 export function CreateInTerminal(arg1) {
   return window['go']['services']['MutateService']['CreateInTerminal'](arg1);
 }

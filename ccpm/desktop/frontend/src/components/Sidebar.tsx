@@ -1,10 +1,7 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { timeAgo } from '@/lib/format'
-import { api } from '@/lib/api'
-import { useToast } from '@/components/ui/Toast'
-import { PromptModal } from '@/components/ui/Modal'
-import { validateProfileName } from '@/lib/validate'
+import { CreateProfileModal } from '@/components/CreateProfileModal'
 import type { Profile } from '@/types'
 import { Boxes, KeyRound, Plus, Sparkles } from 'lucide-react'
 
@@ -18,7 +15,6 @@ interface Props {
 
 export function Sidebar({ profiles, selected, onSelect, names, onMutated }: Props) {
   const [creating, setCreating] = useState(false)
-  const toast = useToast()
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-sidebar">
       {/* brand — sits below the titlebar strip, clear of the macOS lights */}
@@ -47,21 +43,13 @@ export function Sidebar({ profiles, selected, onSelect, names, onMutated }: Prop
         </button>
       </div>
 
-      <PromptModal
+      <CreateProfileModal
         open={creating}
         title="Create a new profile"
-        label="Profile name (opens a Terminal to complete sign-in)"
         placeholder="e.g. personal"
-        confirmLabel="Create in Terminal"
-        validate={(v) => validateProfileName(v, names)}
-        onCancel={() => setCreating(false)}
-        onConfirm={async (name) => {
-          setCreating(false)
-          const r = await api.mutate.createInTerminal(name)
-          if (r.ok) toast({ kind: 'info', title: 'Opening Terminal to create profile', desc: r.output })
-          else toast({ kind: 'error', title: 'Could not open Terminal', desc: r.error || r.output })
-          onMutated()
-        }}
+        taken={names}
+        onClose={() => setCreating(false)}
+        onCreated={onMutated}
       />
 
       <nav className="flex-1 overflow-y-auto px-2 pb-3">
@@ -124,7 +112,7 @@ function ProfileRow({
           </span>
           <span className="inline-flex items-center gap-1">
             <KeyRound className="size-3" />
-            {profile.authMethod || 'none'}
+            {profile.preset || profile.authMethod || 'none'}
           </span>
           <span className="ml-auto tabular-nums">{timeAgo(profile.lastUsed)}</span>
         </div>

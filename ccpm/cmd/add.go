@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 
@@ -16,8 +17,8 @@ import (
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/config"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/credentials"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/defaultclaude"
-	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/keystore"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/picker"
+	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/presets"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profile"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/profilelife"
 	"github.com/nitin-1926/claude-code-profile-manager/ccpm/internal/settingsmerge"
@@ -28,12 +29,25 @@ import (
 var addCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Create a new profile and set up authentication",
-	Long:  "Creates a new Claude Code profile directory and guides you through OAuth or API key authentication.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAdd,
+	Long: `Creates a new Claude Code profile directory and guides you through OAuth or API key authentication.
+
+With --preset the profile runs against a third-party provider instead, using
+that provider's own API key and billing. See ` + "`ccpm preset list`" + `. The key is
+prompted for and kept in the OS keychain; to script it, pipe it on stdin:
+
+  ccpm add router --preset openrouter
+  printf '%s\n' "$KEY" | ccpm add router --preset openrouter
+
+A preset profile skips the import wizard. Assets in ~/.claude still cascade in
+at launch, and ` + "`ccpm import`" + ` works as usual.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAdd,
 }
 
+var addPresetID string
+
 func init() {
+	addCmd.Flags().StringVar(&addPresetID, "preset", "", "create the profile from a provider preset (see `ccpm preset list`)")
 	rootCmd.AddCommand(addCmd)
 }
 
@@ -42,6 +56,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	if err := profile.ValidateName(name); err != nil {
 		return err
+	}
+
+	var preset *presets.Preset
+	if addPresetID != "" {
+		p, err := presets.Get(addPresetID)
+		if err != nil {
+			return err
+		}
+		preset = &p
 	}
 
 	cfg, err := config.Load()
@@ -58,9 +81,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	// The wizard's own bufio.NewReader returns this same reader.
 	stdin := bufio.NewReader(os.Stdin)
 
-	authMethod, err := pickAuthMethod(stdin)
-	if err != nil {
-		return err
+	// A preset is always api_key: the credential ccpm injects is the only one
+	// the profile holds, so no cached claude.ai login can stand in for it.
+	authMethod := "api_key"
+	if preset == nil {
+		authMethod, err = pickAuthMethod(stdin)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Drop settings/MCP fragments and manifest refs left under this name by a
@@ -104,7 +132,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	// are surfaced as warnings — the profile is already created and the
 	// user can still import later.
 	existing := config.ProfileNames(cfg)
-	if defaultclaude.Exists() || len(existing) > 0 {
+	// Skipped for a preset: the wizard reads stdin, which would swallow a piped
+	// key, and nothing it imports is needed before the first launch.
+	if preset == nil && (defaultclaude.Exists() || len(existing) > 0) {
 		fmt.Println()
 		decision, err := wizard.PromptImportSource(stdin, os.Stdout, existing, defaultclaude.Exists())
 		if err != nil {
@@ -134,44 +164,56 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		rollback = append(rollback, func() { _ = credentials.DeleteMacKeychainOAuth(dir) })
 
 	case "api_key":
-		fmt.Println()
-		bold.Println("API Key Authentication")
-		fmt.Print("Enter your Anthropic API key: ")
-
 		var key string
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Println()
-			if err != nil {
-				runRollback()
-				return fmt.Errorf("reading API key: %w", err)
-			}
-			key = strings.TrimSpace(string(keyBytes))
+		if preset != nil && !preset.KeyRequired {
+			key = preset.KeyValue
 		} else {
-			line, err := stdin.ReadString('\n')
-			key = strings.TrimSpace(line)
-			if err != nil && !errors.Is(err, io.EOF) {
-				// Surface real I/O errors (broken pipe, EOF mid-read) instead
-				// of collapsing them into the generic "API key cannot be
-				// empty" path below.
+			fmt.Println()
+			bold.Println("API Key Authentication")
+			keyLabel := "Anthropic"
+			if preset != nil {
+				keyLabel = preset.Label
+			}
+			fmt.Printf("Enter your %s API key: ", keyLabel)
+
+			if term.IsTerminal(int(os.Stdin.Fd())) {
+				keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Println()
+				if err != nil {
+					runRollback()
+					return fmt.Errorf("reading API key: %w", err)
+				}
+				key = strings.TrimSpace(string(keyBytes))
+			} else {
+				line, err := stdin.ReadString('\n')
+				key = strings.TrimSpace(line)
+				if err != nil && !errors.Is(err, io.EOF) {
+					// Surface real I/O errors (broken pipe, EOF mid-read) instead
+					// of collapsing them into the generic "API key cannot be
+					// empty" path below.
+					runRollback()
+					return fmt.Errorf("reading API key: %w", err)
+				}
+			}
+
+			if err := validateAPIKey(key); err != nil {
 				runRollback()
-				return fmt.Errorf("reading API key: %w", err)
+				return err
 			}
 		}
 
-		if err := validateAPIKey(key); err != nil {
-			runRollback()
-			return err
-		}
-
-		store := keystore.New()
+		store := newKeystore()
 		if err := store.SetAPIKey(name, key); err != nil {
 			runRollback()
 			return fmt.Errorf("storing API key: %w", err)
 		}
 		rollback = append(rollback, func() { _ = store.DeleteAPIKey(name) })
 
-		green.Printf("✓ Profile %q authenticated via API key\n", name)
+		if preset != nil {
+			green.Printf("✓ Profile %q set up for %s\n", name, preset.Label)
+		} else {
+			green.Printf("✓ Profile %q authenticated via API key\n", name)
+		}
 	}
 
 	// Persist the new profile under the global lock (re-loading config inside
@@ -184,8 +226,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("reloading config: %w", err)
 		}
-		isFirstProfile = len(freshCfg.Profiles) == 0
+		// A provider profile can't be the machine default; see applySetDefault.
+		isFirstProfile = len(freshCfg.Profiles) == 0 && preset == nil
 		freshCfg.AddProfile(name, dir, authMethod)
+		if preset != nil {
+			p := freshCfg.Profiles[name]
+			p.Preset, p.KeyEnv, p.Env = preset.ID, preset.KeyEnv, maps.Clone(preset.Env)
+			freshCfg.Profiles[name] = p
+		}
 		if isFirstProfile {
 			freshCfg.DefaultProfile = name
 		}
@@ -207,6 +255,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: could not apply global installs: %v\n", err)
 	}
 
+	if preset != nil {
+		fmt.Printf("\n%s\nCompatibility and billing are %s's own: %s\n", preset.Description, preset.Label, preset.SourceURL)
+	}
 	fmt.Printf("\nRun claude with this profile:\n  ccpm run %s\n", name)
 	return nil
 }

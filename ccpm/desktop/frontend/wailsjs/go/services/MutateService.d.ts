@@ -12,6 +12,8 @@ export function AddStdioMCP(arg1:string,arg2:string,arg3:string):Promise<service
 
 export function Clone(arg1:string,arg2:string):Promise<services.CmdResult>;
 
+export function CreateFromPreset(arg1:string,arg2:string,arg3:string):Promise<services.CmdResult>;
+
 export function CreateInTerminal(arg1:string):Promise<services.CmdResult>;
 
 export function ImportInTerminal():Promise<services.CmdResult>;

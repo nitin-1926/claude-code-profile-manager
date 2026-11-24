@@ -196,6 +196,31 @@ Enter choice [1/2]: 1
             lang="bash"
           />
 
+          <H3 id="profiles-preset">ccpm add &lt;name&gt; --preset &lt;id&gt;</H3>
+          <p>
+            Create a profile that runs Claude Code against a third-party
+            provider, using that provider&apos;s own API key and billing. The
+            key goes to your OS keychain, with no proxy and no Pro or Max login
+            involved. Launch it with <code>ccpm run</code>. Each provider&apos;s
+            compatibility is its own claim, and some Claude Code features may
+            behave differently, so <code>ccpm preset list</code> links each
+            provider&apos;s page.
+          </p>
+          <CodeBlock
+            code={`ccpm preset list
+ccpm add router --preset openrouter
+
+# scripted: pipe the key on stdin
+printf '%s\\n' "$KEY" | ccpm add router --preset openrouter
+
+ccpm run router
+
+# local Ollama needs no key; choose a model when launching
+ccpm add local --preset ollama
+ccpm run local --model <model>`}
+            lang="bash"
+          />
+
           <H3 id="profiles-list">ccpm list</H3>
           <p>
             List all profiles with their authentication status. Also available
