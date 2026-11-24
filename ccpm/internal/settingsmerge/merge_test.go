@@ -407,6 +407,49 @@ func TestMaterializeMCPProfileFragmentOverridesHost(t *testing.T) {
 	}
 }
 
+// EffectiveMCP attributes each server to the highest layer defining it, in
+// the order the merge applies them, and returns the winning definition.
+func TestEffectiveMCPLayers(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+
+	os.WriteFile(filepath.Join(tmp, ".claude.json"), []byte(`{"mcpServers":{
+		"h": {"command": "host"},
+		"hg": {"command": "host"},
+		"gp": {"command": "host"}
+	}}`), 0644)
+	mcpDir := filepath.Join(tmp, ".ccpm", "share", "mcp")
+	os.MkdirAll(mcpDir, 0755)
+	os.WriteFile(filepath.Join(mcpDir, "global.json"), []byte(`{"hg":{"command":"global"},"gp":{"command":"global"}}`), 0644)
+	os.WriteFile(filepath.Join(mcpDir, "work.json"), []byte(`{"gp":{"command":"profile"}}`), 0644)
+	// Another profile's fragment must never be read.
+	os.WriteFile(filepath.Join(mcpDir, "other.json"), []byte(`{"leak":{"command":"x"}}`), 0644)
+	profileDir := filepath.Join(tmp, ".ccpm", "profiles", "work")
+	os.MkdirAll(profileDir, 0755)
+	os.WriteFile(filepath.Join(profileDir, ".claude.json"), []byte(`{"mcpServers":{"session":{"command":"user"}}}`), 0644)
+
+	servers, layers, err := EffectiveMCP(profileDir, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]string{
+		"h":       {"host", "host"},
+		"hg":      {"global", "global"},
+		"gp":      {"profile", "profile"},
+		"session": {"profile", "user"},
+	}
+	if len(servers) != len(want) || len(layers) != len(want) {
+		t.Fatalf("servers = %v layers = %v, want exactly %v", servers, layers, want)
+	}
+	for name, w := range want {
+		def, _ := servers[name].(map[string]interface{})
+		if layers[name] != w[0] || def["command"] != w[1] {
+			t.Errorf("%s: layer=%q command=%v, want layer=%q command=%q", name, layers[name], def["command"], w[0], w[1])
+		}
+	}
+}
+
 // TestMaterializeMCPCleansStaleSettings makes sure older ccpm versions that
 // wrote mcpServers into settings.json get cleaned up when the profile is
 // re-materialized. Stale data there is confusing — Claude Code never read it.

@@ -37,6 +37,16 @@ export const CHANGELOG: ChangelogSeries[] = [
       "Session history you can read and search, a two-row status line you choose the segments of, a usage notch for the desktop app, and one-line installers that work.",
     releases: [
       {
+        date: "2026-10-26",
+        title: "CCPM Desktop: compare two profiles",
+        categories: ["Added"],
+        bullets: [
+          "A new Compare tab puts the selected profile side by side with any other: skills, agents, commands, rules, hooks, MCP servers, plugins, permissions, env and settings. Each item shows where it comes from (profile, global or host) and whether it is the same, different, or only on one side, so \"why does this profile behave differently?\" takes one look.",
+          "Identical rows are hidden by default and every category shows how many items differ. Assets kept as a copy in each profile are compared by content, so two identical copies count as the same.",
+          "Env values stay masked until you reveal them, and MCP servers are summarised without their secrets.",
+        ],
+      },
+      {
         date: "2026-09-30",
         title: "Security fixes",
         categories: ["Security"],

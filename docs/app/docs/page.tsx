@@ -44,6 +44,8 @@ export default async function DocsPage() {
             keychain, and validation). A left sidebar of profiles, and per
             profile: <strong>Overview</strong>, <strong>Cascade</strong> (the
             effective host→global→profile config with provenance badges),{" "}
+            <strong>Compare</strong> (this profile side by side with any other,
+            each item with where it comes from),{" "}
             <strong>Assets</strong>, <strong>MCP &amp; Plugins</strong>,{" "}
             <strong>Permissions</strong>, <strong>Settings</strong> (settings
             JSON, the <a href="#statusline">status line</a> layout, and the

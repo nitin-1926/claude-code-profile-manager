@@ -44,6 +44,34 @@ export interface Cascade {
   settings: CascadeSetting[]
 }
 
+export type CompareStatus = 'same' | 'changed' | 'only-left' | 'only-right'
+
+// One name in one category, side by side. An absent side has value '' and layer ''.
+export interface CompareRow {
+  name: string
+  status: CompareStatus
+  left: string
+  leftLayer: Layer | ''
+  right: string
+  rightLayer: Layer | ''
+}
+
+export interface CompareCategory {
+  id: string
+  label: string
+  // Values are secrets (env vars): mask until the user reveals them.
+  secret: boolean
+  rows: CompareRow[]
+}
+
+export interface Comparison {
+  left: string
+  right: string
+  // Non-empty when nothing could be compared (an unknown profile).
+  message: string
+  categories: CompareCategory[]
+}
+
 export interface UsageTokens {
   input: number
   output: number

@@ -10,6 +10,7 @@ import { validateProfileName } from '@/lib/validate'
 import { Copy, FolderOpen, KeyRound, type LucideIcon, Pencil, Play, Trash2 } from 'lucide-react'
 import { OverviewTab } from './tabs/OverviewTab'
 import { CascadeTab } from './tabs/CascadeTab'
+import { CompareTab } from './tabs/CompareTab'
 import { UsageTab } from './tabs/UsageTab'
 import { HistoryTab } from './tabs/HistoryTab'
 import { HealthTab } from './tabs/HealthTab'
@@ -22,6 +23,7 @@ import { ErrorBoundary } from './ui/ErrorBoundary'
 const TABS = [
   { id: 'Overview', enabled: true },
   { id: 'Cascade', enabled: true },
+  { id: 'Compare', enabled: true },
   { id: 'Assets', enabled: true },
   { id: 'MCP & Plugins', enabled: true },
   { id: 'Permissions', enabled: true },
@@ -148,6 +150,7 @@ export function ProfileView({
         <ErrorBoundary key={profile.name} resetKey={`${profile.name}:${tab}:${refreshKey}`}>
           {tab === 'Overview' && <OverviewTab profile={profile} />}
           {tab === 'Cascade' && <CascadeTab profile={profile.name} />}
+          {tab === 'Compare' && <CompareTab profile={profile.name} names={names} />}
           {tab === 'Assets' && <AssetsTab profile={profile.name} onMutated={onMutated} />}
           {tab === 'MCP & Plugins' && <McpPluginsTab profile={profile.name} onMutated={onMutated} />}
           {tab === 'Permissions' && <PermissionsTab profile={profile.name} onMutated={onMutated} />}

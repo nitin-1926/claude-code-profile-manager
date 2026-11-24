@@ -3,6 +3,7 @@
 // `as unknown as` casts stay in one place.
 import { List as ProfilesList, Get as ProfileGet } from '../../wailsjs/go/services/Profiles'
 import { Get as CascadeGet } from '../../wailsjs/go/services/CascadeService'
+import { Compare as CompareProfiles } from '../../wailsjs/go/services/CompareService'
 import { Get as UsageGet, Blocks as UsageBlocks } from '../../wailsjs/go/services/UsageService'
 import { Doctor } from '../../wailsjs/go/services/HealthService'
 import { All as LimitsAll, Get as LimitsGet } from '../../wailsjs/go/services/LimitsService'
@@ -53,6 +54,7 @@ import type {
   Block,
   Cascade,
   CmdResult,
+  Comparison,
   DesktopPrefs,
   Details,
   HealthResult,
@@ -76,6 +78,9 @@ export const api = {
   },
   cascade: {
     get: (name: string) => CascadeGet(name) as unknown as Promise<Cascade>,
+  },
+  compare: {
+    get: (left: string, right: string) => CompareProfiles(left, right) as unknown as Promise<Comparison>,
   },
   usage: {
     get: (name: string, window: string) => UsageGet(name, window) as unknown as Promise<Usage>,
